@@ -1,0 +1,11 @@
+node_modules
+dist
+.tmp
+.vercel
+.env
+.env.local
+.env.*.local
+android/keystore.properties
+android/app/*.jks
+supabase/.temp
+*.tsbuildinfo
