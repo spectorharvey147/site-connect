@@ -20,20 +20,45 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    const savedToken = localStorage.getItem(TOKEN_STORAGE_KEY);
-    if (savedToken) {
-      verifyToken(savedToken).then(u => {
-        if (u) {
-          setUser(u);
+    let cancelled = false;
+
+    const finishLoading = () => {
+      if (!cancelled) setLoading(false);
+    };
+
+    const loadSavedSession = async () => {
+      const savedToken = localStorage.getItem(TOKEN_STORAGE_KEY);
+      if (!savedToken) {
+        finishLoading();
+        return;
+      }
+
+      try {
+        const userFromToken = await Promise.race([
+          verifyToken(savedToken),
+          new Promise<null>((resolve) => window.setTimeout(() => resolve(null), 8000)),
+        ]);
+
+        if (cancelled) return;
+
+        if (userFromToken) {
+          setUser(userFromToken);
           setToken(savedToken);
         } else {
           localStorage.removeItem(TOKEN_STORAGE_KEY);
         }
-        setLoading(false);
-      });
-    } else {
-      setLoading(false);
-    }
+      } catch {
+        localStorage.removeItem(TOKEN_STORAGE_KEY);
+      } finally {
+        finishLoading();
+      }
+    };
+
+    loadSavedSession();
+
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   const login = useCallback(async (email: string, password: string) => {
