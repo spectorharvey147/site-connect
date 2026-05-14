@@ -17,6 +17,7 @@
   },
   "dependencies": {
     "@capacitor/android": "^7.4.2",
+    "@capacitor/camera": "^7.0.0",
     "@capacitor/core": "^7.4.2",
     "@hookform/resolvers": "^3.10.0",
     "@radix-ui/react-accordion": "^1.2.11",
