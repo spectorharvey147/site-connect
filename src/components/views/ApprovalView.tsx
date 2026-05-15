@@ -21,6 +21,61 @@ interface ApprovalViewProps {
   type: 'manager' | 'admin' | 'super-admin';
 }
 
+function ClaimExpenseDetails({ claim }: { claim: any }) {
+  if (!claim?.expenses?.length) return null;
+
+  return (
+    <>
+      <div className="block space-y-2 sm:hidden">
+        {claim.expenses.map((expense: any, i: number) => (
+          <div key={i} className="space-y-1 rounded border border-border bg-card p-3 text-sm">
+            <div className="flex justify-between gap-4"><span className="text-muted-foreground">Category</span><span className="font-medium text-right">{expense.category}</span></div>
+            <div className="flex justify-between gap-4"><span className="text-muted-foreground">Code</span><span className="text-right">{expense.projectCode || '-'}</span></div>
+            {expense.description && <div className="flex justify-between gap-4"><span className="text-muted-foreground">Description</span><span className="max-w-[60%] text-right">{expense.description}</span></div>}
+            <div className="mt-1 flex justify-between border-t border-border pt-1">
+              <span className="text-muted-foreground">Total</span>
+              <span className="font-bold text-primary">Rs. {(expense.amount ?? 0).toFixed(2)}</span>
+            </div>
+          </div>
+        ))}
+      </div>
+
+      <div className="hidden overflow-x-auto sm:block">
+        <table className="w-full border text-sm">
+          <thead>
+            <tr className="bg-muted">
+              <th className="border p-2 text-left">Category</th>
+              <th className="border p-2 text-left">Code</th>
+              <th className="border p-2 text-left">Description</th>
+              <th className="border p-2 text-right">With Bill (Rs.)</th>
+              <th className="border p-2 text-right">Without Bill (Rs.)</th>
+              <th className="border p-2 text-right">Total (Rs.)</th>
+            </tr>
+          </thead>
+          <tbody>
+            {claim.expenses.map((expense: any, i: number) => (
+              <tr key={i} className="border-t">
+                <td className="border p-2">{expense.category}</td>
+                <td className="border p-2">{expense.projectCode}</td>
+                <td className="border p-2">{expense.description}</td>
+                <td className="border p-2 text-right">Rs. {(expense.amountWithBill ?? 0).toFixed(2)}</td>
+                <td className="border p-2 text-right">Rs. {(expense.amountWithoutBill ?? 0).toFixed(2)}</td>
+                <td className="border p-2 text-right font-medium">Rs. {(expense.amount ?? 0).toFixed(2)}</td>
+              </tr>
+            ))}
+            <tr className="bg-muted/50 font-bold">
+              <td colSpan={3} className="border p-2 text-right">TOTAL</td>
+              <td className="border p-2 text-right">Rs. {(claim.totalWithBill ?? 0).toFixed(2)}</td>
+              <td className="border p-2 text-right">Rs. {(claim.totalWithoutBill ?? 0).toFixed(2)}</td>
+              <td className="border p-2 text-right">Rs. {(claim.amount ?? 0).toFixed(2)}</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </>
+  );
+}
+
 export default function ApprovalView({ type }: ApprovalViewProps) {
   const { user } = useAuth();
   const [claims, setClaims] = useState<any[]>([]);
@@ -283,6 +338,12 @@ export default function ApprovalView({ type }: ApprovalViewProps) {
               )}
             </div>
           )}
+          {approveDetails?.expenses?.length > 0 && (
+            <div className="rounded-lg border border-border bg-muted/20 p-3">
+              <h4 className="mb-3 text-sm font-semibold">Expense Details</h4>
+              <ClaimExpenseDetails claim={approveDetails} />
+            </div>
+          )}
           {(type === 'admin' || type === 'manager' || type === 'super-admin') && (
             <div>
               <Label>Final Approved Amount *</Label>
@@ -383,52 +444,7 @@ export default function ApprovalView({ type }: ApprovalViewProps) {
               </div>
             )}
 
-            <div className="block space-y-2 sm:hidden">
-              {viewClaim.expenses?.map((expense: any, i: number) => (
-                <div key={i} className="space-y-1 rounded border border-border bg-card p-3 text-sm">
-                  <div className="flex justify-between"><span className="text-muted-foreground">Category</span><span className="font-medium">{expense.category}</span></div>
-                  <div className="flex justify-between"><span className="text-muted-foreground">Code</span><span>{expense.projectCode || '-'}</span></div>
-                  {expense.description && <div className="flex justify-between gap-4"><span className="text-muted-foreground">Description</span><span className="max-w-[60%] text-right">{expense.description}</span></div>}
-                  <div className="mt-1 flex justify-between border-t border-border pt-1">
-                    <span className="text-muted-foreground">Total</span>
-                    <span className="font-bold text-primary">Rs. {(expense.amount ?? 0).toFixed(2)}</span>
-                  </div>
-                </div>
-              ))}
-            </div>
-
-            <div className="hidden overflow-x-auto sm:block">
-              <table className="w-full border text-sm">
-                <thead>
-                  <tr className="bg-muted">
-                    <th className="border p-2 text-left">Category</th>
-                    <th className="border p-2 text-left">Code</th>
-                    <th className="border p-2 text-left">Description</th>
-                    <th className="border p-2 text-right">With Bill (Rs.)</th>
-                    <th className="border p-2 text-right">Without Bill (Rs.)</th>
-                    <th className="border p-2 text-right">Total (Rs.)</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {viewClaim.expenses?.map((expense: any, i: number) => (
-                    <tr key={i} className="border-t">
-                      <td className="border p-2">{expense.category}</td>
-                      <td className="border p-2">{expense.projectCode}</td>
-                      <td className="border p-2">{expense.description}</td>
-                      <td className="border p-2 text-right">Rs. {(expense.amountWithBill ?? 0).toFixed(2)}</td>
-                      <td className="border p-2 text-right">Rs. {(expense.amountWithoutBill ?? 0).toFixed(2)}</td>
-                      <td className="border p-2 text-right font-medium">Rs. {(expense.amount ?? 0).toFixed(2)}</td>
-                    </tr>
-                  ))}
-                  <tr className="bg-muted/50 font-bold">
-                    <td colSpan={3} className="border p-2 text-right">TOTAL</td>
-                    <td className="border p-2 text-right">Rs. {(viewClaim.totalWithBill ?? 0).toFixed(2)}</td>
-                    <td className="border p-2 text-right">Rs. {(viewClaim.totalWithoutBill ?? 0).toFixed(2)}</td>
-                    <td className="border p-2 text-right">Rs. {(viewClaim.amount ?? 0).toFixed(2)}</td>
-                  </tr>
-                </tbody>
-              </table>
-            </div>
+            <ClaimExpenseDetails claim={viewClaim} />
           </div>
         )}
       </ResponsiveOverlay>

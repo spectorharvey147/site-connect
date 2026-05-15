@@ -74,6 +74,95 @@ function isValidEmail(value: unknown): value is string {
   return typeof value === 'string' && EMAIL_REGEX.test(value.trim());
 }
 
+function escapePdfText(value: unknown) {
+  return String(value ?? '')
+    .replace(/\\/g, '\\\\')
+    .replace(/\(/g, '\\(')
+    .replace(/\)/g, '\\)')
+    .replace(/[\r\n]+/g, ' ');
+}
+
+function truncate(value: unknown, max = 74) {
+  const text = String(value ?? '');
+  return text.length > max ? `${text.slice(0, max - 3)}...` : text;
+}
+
+function formatAmount(value: unknown) {
+  return Number(value || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
+function buildClaimReportPdf(data: any) {
+  const claimNumber = data.claim_number || data.claim_id || 'claim';
+  const lines = [
+    'Claim Report',
+    `Claim Number: ${claimNumber}`,
+    `Submitted By: ${data.submitted_by || data.employee_name || ''}`,
+    `Employee Email: ${data.employee_email || ''}`,
+    `Submission Date: ${data.submission_date || data.generated_on || ''}`,
+    `Project / Site: ${data.project_site || ''}`,
+    `Primary Project Code: ${data.primary_project_code || ''}`,
+    `Status: ${data.status || data.admin_status || data.manager_status || ''}`,
+    `Total With Bill: Rs. ${formatAmount(data.total_with_bill)}`,
+    `Total Without Bill: Rs. ${formatAmount(data.total_without_bill)}`,
+    `Total Amount: Rs. ${formatAmount(data.total_amount)}`,
+    '',
+    'Expense Details',
+    'Category | Project Code | Date | Description | With Bill | Without Bill | Total',
+    ...((Array.isArray(data.items) ? data.items : []).map((item: any) => [
+      truncate(item.category, 16),
+      truncate(item.projectCode, 18),
+      truncate(item.claimDate, 12),
+      truncate(item.description, 28),
+      formatAmount(item.amountWithBill),
+      formatAmount(item.amountWithoutBill),
+      formatAmount(item.totalAmount ?? item.amount),
+    ].join(' | '))),
+  ];
+
+  const contentLines = lines.flatMap((line) => {
+    const text = String(line || '');
+    const chunks = text.match(/.{1,110}/g);
+    return chunks || [''];
+  });
+  const stream = [
+    'BT',
+    '/F1 10 Tf',
+    '50 790 Td',
+    '14 TL',
+    ...contentLines.slice(0, 52).map((line, index) => `${index === 0 ? '' : 'T*'}(${escapePdfText(line)}) Tj`),
+    'ET',
+  ].join('\n');
+
+  const encoder = new TextEncoder();
+  const streamLength = encoder.encode(stream).length;
+  const objects = [
+    '1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n',
+    '2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n',
+    '3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>\nendobj\n',
+    '4 0 obj\n<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>\nendobj\n',
+    `5 0 obj\n<< /Length ${streamLength} >>\nstream\n${stream}\nendstream\nendobj\n`,
+  ];
+  let pdf = '%PDF-1.4\n';
+  const offsets = [0];
+  for (const object of objects) {
+    offsets.push(encoder.encode(pdf).length);
+    pdf += object;
+  }
+  const xrefOffset = encoder.encode(pdf).length;
+  pdf += `xref\n0 ${objects.length + 1}\n`;
+  pdf += '0000000000 65535 f \n';
+  for (let i = 1; i < offsets.length; i++) {
+    pdf += `${String(offsets[i]).padStart(10, '0')} 00000 n \n`;
+  }
+  pdf += `trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xrefOffset}\n%%EOF`;
+
+  return {
+    filename: `Claim-Report-${String(claimNumber).replace(/[^a-z0-9_-]+/gi, '-')}.pdf`,
+    content: encoder.encode(pdf),
+    contentType: 'application/pdf',
+  };
+}
+
 Deno.serve(async (req) => {
   const corsHeaders = resolveCorsHeaders(req);
 
@@ -153,12 +242,16 @@ Deno.serve(async (req) => {
     });
 
     const template = getTemplate(type, data);
+    const attachments = String(type).startsWith('claim_submitted')
+      ? [buildClaimReportPdf(data)]
+      : [];
 
     const mailResult = await transporter.sendMail({
       from: `"${emailFromName}" <${gmailUser}>`,
       to: recipientEmail,
       subject: template.subject,
       html: template.html,
+      attachments,
     });
 
     console.log(`Email sent: type=${type}, recipient=${recipientEmail}`);

@@ -31,9 +31,9 @@ const footerStyles = 'padding: 18px 28px 26px; border-top: 1px solid #e5e7eb; fo
 const buttonSecondary = 'display: inline-block; padding: 12px 18px; margin: 0 12px 12px 0; border-radius: 10px; font-weight: 700; text-decoration: none; color: #0f172a; font-size: 13px; background: #e2e8f0; border: 1px solid #cbd5e1;';
 const buttonDanger = 'display: inline-block; padding: 12px 18px; margin: 0 12px 12px 0; border-radius: 10px; font-weight: 700; text-decoration: none; color: #ffffff; font-size: 13px; background: #dc2626;';
 const buttonSuccess = 'display: inline-block; padding: 12px 18px; margin: 0 12px 12px 0; border-radius: 10px; font-weight: 700; text-decoration: none; color: #ffffff; font-size: 13px; background: #16a34a;';
-const tableStyles = 'width: 100%; border-collapse: collapse; margin: 18px 0 6px; background: #ffffff; border: 1px solid #dbe4ee; table-layout: fixed;';
-const thStyles = 'background: #eff6ff; padding: 10px; border: 1px solid #dbe4ee; text-align: left; font-size: 13px; color: #0f172a; vertical-align: top;';
-const tdStyles = 'padding: 10px; border: 1px solid #dbe4ee; font-size: 13px; vertical-align: top;';
+const tableStyles = 'width: 100%; border-collapse: collapse; margin: 18px 0 6px; background: #ffffff; border: 1px solid #dbe4ee; table-layout: auto;';
+const thStyles = 'background: #eff6ff; padding: 9px; border: 1px solid #dbe4ee; text-align: left; font-size: 12px; color: #0f172a; vertical-align: top; line-height: 1.35; overflow-wrap: anywhere; word-break: break-word;';
+const tdStyles = 'padding: 9px; border: 1px solid #dbe4ee; font-size: 12px; vertical-align: top; line-height: 1.4; overflow-wrap: anywhere; word-break: break-word;';
 const softCardStyles = 'padding: 16px; background: #f8fafc; border: 1px solid #e2e8f0; border-left: 4px solid #0284c7; border-radius: 12px; margin: 16px 0;';
 
 function escapeHtml(value: unknown) {
@@ -272,7 +272,7 @@ export function claimSubmittedUserTemplate(data: {
     <tr>
       <td style="${tdStyles}; width: 22%; word-break: break-word;">${safeText(item.category)}</td>
       <td style="${tdStyles}; width: 18%; word-break: break-word;">${safeText(item.projectCode || '')}</td>
-      <td style="${tdStyles}; width: 16%; white-space: nowrap;">${safeText(item.claimDate || '')}</td>
+      <td style="${tdStyles}; width: 16%;">${safeText(item.claimDate || '')}</td>
       <td style="${tdStyles}; width: 24%; word-break: break-word;">${safeText(item.description)}</td>
       <td style="${tdStyles}; text-align: right;">${fmtAmount(item.amountWithBill, info.currency)}</td>
       <td style="${tdStyles}; text-align: right;">${fmtAmount(item.amountWithoutBill, info.currency)}</td>
@@ -355,7 +355,7 @@ export function claimSubmittedManagerTemplate(data: {
     <tr>
       <td style="${tdStyles}; width: 22%; word-break: break-word;">${safeText(item.category)}</td>
       <td style="${tdStyles}; width: 18%; word-break: break-word;">${safeText(item.projectCode || '')}</td>
-      <td style="${tdStyles}; width: 16%; white-space: nowrap;">${safeText(item.claimDate || '')}</td>
+      <td style="${tdStyles}; width: 16%;">${safeText(item.claimDate || '')}</td>
       <td style="${tdStyles}; width: 24%; word-break: break-word;">${safeText(item.description)}</td>
       <td style="${tdStyles}; text-align: right;">${fmtAmount(item.amountWithBill, info.currency)}</td>
       <td style="${tdStyles}; text-align: right;">${fmtAmount(item.amountWithoutBill, info.currency)}</td>

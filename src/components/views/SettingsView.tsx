@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { getCompanySettings, updateCompanySettings, getAppLists, addAppListItem, deleteAppListItem, getDropdownOptions } from '@/lib/claims-api';
+import { getCompanySettings, updateCompanySettings, getAppLists, addAppListItem, deleteAppListItem, getDropdownOptions, getAllUsers, createUser } from '@/lib/claims-api';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -7,7 +7,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Switch } from '@/components/ui/switch';
-import { Settings, Save, Loader2, Plus, Trash2, Building2, List, Bell } from 'lucide-react';
+import { Settings, Save, Loader2, Plus, Trash2, Building2, List, Bell, Download, Upload } from 'lucide-react';
 import { toast } from 'sonner';
 import ImageUpload from '@/components/ImageUpload';
 
@@ -20,6 +20,63 @@ const emptyNewItem = {
   expense_categories: [] as string[],
 };
 
+const userCsvHeaders = ['name', 'email', 'password', 'role', 'advance', 'manager_email', 'employee_id', 'mobile_number', 'date_of_joining'];
+const masterCsvHeaders = ['type', 'value', 'project_code', 'project', 'allows_all_categories', 'expense_categories'];
+
+function parseCsv(text: string) {
+  const rows: string[][] = [];
+  let current = '';
+  let row: string[] = [];
+  let quoted = false;
+
+  for (let i = 0; i < text.length; i++) {
+    const char = text[i];
+    const next = text[i + 1];
+    if (char === '"' && quoted && next === '"') {
+      current += '"';
+      i++;
+    } else if (char === '"') {
+      quoted = !quoted;
+    } else if (char === ',' && !quoted) {
+      row.push(current);
+      current = '';
+    } else if ((char === '\n' || char === '\r') && !quoted) {
+      if (char === '\r' && next === '\n') i++;
+      row.push(current);
+      if (row.some((cell) => cell.trim())) rows.push(row);
+      row = [];
+      current = '';
+    } else {
+      current += char;
+    }
+  }
+
+  row.push(current);
+  if (row.some((cell) => cell.trim())) rows.push(row);
+  if (rows.length === 0) return [];
+  const headers = rows[0].map((cell) => cell.trim().toLowerCase());
+  return rows.slice(1).map((cells) => Object.fromEntries(headers.map((header, index) => [header, (cells[index] || '').trim()])));
+}
+
+function csvEscape(value: unknown) {
+  const text = String(value ?? '');
+  return /[",\n\r]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
+}
+
+function downloadCsv(filename: string, headers: string[], rows: Record<string, unknown>[]) {
+  const content = [
+    headers.join(','),
+    ...rows.map((row) => headers.map((header) => csvEscape(row[header])).join(',')),
+  ].join('\n');
+  const blob = new Blob([content], { type: 'text/csv;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = filename;
+  link.click();
+  URL.revokeObjectURL(url);
+}
+
 export default function SettingsView() {
   const [settings, setSettings] = useState<any>({});
   const [loading, setLoading] = useState(true);
@@ -28,6 +85,7 @@ export default function SettingsView() {
   const [projects, setProjects] = useState<any[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [newItem, setNewItem] = useState(emptyNewItem);
+  const [bulkProcessing, setBulkProcessing] = useState(false);
 
   const categories = [...new Set(
     lists
@@ -137,6 +195,111 @@ export default function SettingsView() {
         ? [...new Set([...prev.expense_categories, category])].sort((a, b) => a.localeCompare(b))
         : prev.expense_categories.filter((item) => item !== category),
     }));
+  };
+
+  const handleDownloadUserTemplate = () => {
+    downloadCsv('users-import-template.csv', userCsvHeaders, [{
+      name: 'Employee Name',
+      email: 'employee@example.com',
+      password: 'Temp@12345',
+      role: 'User',
+      advance: '0',
+      manager_email: 'manager@example.com',
+      employee_id: 'EMP001',
+      mobile_number: '9876543210',
+      date_of_joining: '2026-05-15',
+    }]);
+  };
+
+  const handleExportUsers = async () => {
+    const users = await getAllUsers();
+    downloadCsv('users-export.csv', userCsvHeaders.filter((header) => header !== 'password'), users.map((user: any) => ({
+      name: user.name,
+      email: user.email,
+      role: user.role,
+      advance: user.advance,
+      manager_email: user.manager,
+      employee_id: user.employee_id || '',
+      mobile_number: user.mobile_number || '',
+      date_of_joining: user.date_of_joining || '',
+    })));
+  };
+
+  const handleImportUsers = async (file?: File) => {
+    if (!file) return;
+    setBulkProcessing(true);
+    try {
+      const rows = parseCsv(await file.text());
+      let created = 0;
+      for (const row of rows) {
+        if (!row.email || !row.name || !row.password) continue;
+        await createUser({
+          name: row.name,
+          email: row.email,
+          password: row.password,
+          role: row.role || 'User',
+          advance: parseFloat(row.advance || '0') || 0,
+          manager: row.manager_email || '',
+          employee_id: row.employee_id || '',
+          mobile_number: row.mobile_number || '',
+          date_of_joining: row.date_of_joining || '',
+        });
+        created++;
+      }
+      toast.success(`${created} user(s) imported`);
+      await loadSettings();
+    } catch (err: any) {
+      toast.error(err.message || 'User import failed');
+    }
+    setBulkProcessing(false);
+  };
+
+  const handleDownloadMasterTemplate = () => {
+    downloadCsv('master-data-import-template.csv', masterCsvHeaders, [
+      { type: 'category', value: 'Travel', project_code: '', project: '', allows_all_categories: '', expense_categories: '' },
+      { type: 'project', value: 'Site A', project_code: 'SA', project: '', allows_all_categories: '', expense_categories: '' },
+      { type: 'projectcode', value: 'Material Purchase', project_code: 'SA-MAT', project: 'Site A', allows_all_categories: 'false', expense_categories: 'Travel|Material' },
+    ]);
+  };
+
+  const handleExportMasterData = () => {
+    downloadCsv('master-data-export.csv', masterCsvHeaders, lists.map((item) => ({
+      type: item.type,
+      value: item.value,
+      project_code: item.project_code || '',
+      project: item.project || '',
+      allows_all_categories: item.allows_all_categories ?? '',
+      expense_categories: Array.isArray(item.expense_categories) ? item.expense_categories.join('|') : '',
+    })));
+  };
+
+  const handleImportMasterData = async (file?: File) => {
+    if (!file) return;
+    setBulkProcessing(true);
+    try {
+      const rows = parseCsv(await file.text());
+      let added = 0;
+      for (const row of rows) {
+        const type = String(row.type || '').toLowerCase();
+        if (!type || !row.value) continue;
+        await addAppListItem({
+          type,
+          value: row.value,
+          project_code: row.project_code || undefined,
+          project: type === 'projectcode' ? row.project || undefined : undefined,
+          allows_all_categories: type === 'projectcode' ? String(row.allows_all_categories || 'true').toLowerCase() !== 'false' : undefined,
+          expense_categories: type === 'projectcode' && row.expense_categories
+            ? row.expense_categories.split('|').map((item: string) => item.trim()).filter(Boolean)
+            : [],
+        });
+        added++;
+      }
+      toast.success(`${added} master data item(s) imported`);
+      await loadSettings();
+    } catch (err: any) {
+      toast.error(err.message || 'Master data import failed');
+    }
+    setBulkProcessing(false);
   };
 
   if (loading) return <div className="text-center p-8 text-muted-foreground">Loading settings...</div>;
@@ -251,6 +414,33 @@ export default function SettingsView() {
 
       <div className="glass-card p-6">
         <h2 className="mb-4 flex items-center gap-2 text-xl font-bold"><List className="h-5 w-5 text-primary" /> Dropdown Master Data</h2>
+
+        <div className="mb-5 grid gap-3 rounded-lg border border-border bg-muted/20 p-4 md:grid-cols-2">
+          <div>
+            <p className="font-medium text-foreground">Users CSV</p>
+            <p className="text-sm text-muted-foreground">Import creates users with hashed passwords and sends the welcome email when notifications are enabled.</p>
+            <div className="mt-3 flex flex-wrap gap-2">
+              <Button type="button" variant="outline" size="sm" onClick={handleDownloadUserTemplate}><Download className="mr-1 h-4 w-4" /> Template</Button>
+              <Button type="button" variant="outline" size="sm" onClick={() => void handleExportUsers()}><Download className="mr-1 h-4 w-4" /> Export</Button>
+              <Label className="inline-flex h-9 cursor-pointer items-center rounded-md border border-input bg-background px-3 text-sm font-medium shadow-sm hover:bg-accent hover:text-accent-foreground">
+                <Upload className="mr-1 h-4 w-4" /> Import
+                <Input type="file" accept=".csv,text/csv" className="hidden" disabled={bulkProcessing} onChange={(e) => void handleImportUsers(e.target.files?.[0])} />
+              </Label>
+            </div>
+          </div>
+          <div>
+            <p className="font-medium text-foreground">Master Data CSV</p>
+            <p className="text-sm text-muted-foreground">Import expense categories, projects, and project cost codes in one upload.</p>
+            <div className="mt-3 flex flex-wrap gap-2">
+              <Button type="button" variant="outline" size="sm" onClick={handleDownloadMasterTemplate}><Download className="mr-1 h-4 w-4" /> Template</Button>
+              <Button type="button" variant="outline" size="sm" onClick={handleExportMasterData}><Download className="mr-1 h-4 w-4" /> Export</Button>
+              <Label className="inline-flex h-9 cursor-pointer items-center rounded-md border border-input bg-background px-3 text-sm font-medium shadow-sm hover:bg-accent hover:text-accent-foreground">
+                <Upload className="mr-1 h-4 w-4" /> Import
+                <Input type="file" accept=".csv,text/csv" className="hidden" disabled={bulkProcessing} onChange={(e) => void handleImportMasterData(e.target.files?.[0])} />
+              </Label>
+            </div>
+          </div>
+        </div>
 
         <div className="mb-4 flex flex-wrap items-end gap-3">
           <div>
