@@ -322,10 +322,12 @@ async function getAdminApproverEmails() {
   const { data } = await supabase
     .from('users')
     .select('email')
-    .in('role', ['Admin', 'Super Admin'])
+    .eq('role', 'Admin')
     .eq('active', true);
 
-  return [...new Set((data || []).map((user: any) => user.email).filter(Boolean))];
+  const adminEmails = [...new Set((data || []).map((user: any) => user.email).filter(Boolean))];
+  if (adminEmails.length > 0) return adminEmails;
+  return getSuperAdminApproverEmails();
 }
 
 async function getAdminVerifierEmails() {
@@ -732,7 +734,7 @@ export async function submitClaim(claim: {
       approve_link: buildClaimActionLink(appUrl, claimID, 'approve', 'manager', managerEmail),
       reject_link: buildClaimActionLink(appUrl, claimID, 'reject', 'manager', managerEmail)
     });
-    const superAdminApprovers = await getSuperAdminApproverEmails();
+    const superAdminApprovers: string[] = [];
     await Promise.all(superAdminApprovers.map((email) =>
       sendEmailNotification('claim_submitted_manager', email, {
         claim_id: claimID,
@@ -1741,18 +1743,21 @@ export async function getAuditLogs() {
 export async function getDashboardChartData(userEmail: string, userRole: string) {
   if (isDemoEmail(userEmail)) {
     const claims = visibleDemoClaims(userEmail, userRole);
+    const catMap = claims.reduce<Record<string, number>>((acc, claim) => {
+      claim.expenses.forEach((expense) => {
+        const category = expense.category || 'Other';
+        acc[category] = (acc[category] || 0) + expense.amount;
+      });
+      return acc;
+    }, {});
+
     return {
       monthly: [
         { month: 'Jan 26', withBill: 18000, withoutBill: 2500, total: 20500, count: 3 },
         { month: 'Feb 26', withBill: 24000, withoutBill: 3200, total: 27200, count: 4 },
         { month: 'Mar 26', withBill: 65000, withoutBill: 4200, total: 69200, count: claims.length },
       ],
-      byCategory: [
-        { name: 'Material', value: 65000 },
-        { name: 'Food & Beverage', value: 12600 },
-        { name: 'Travel', value: 4200 },
-        { name: 'Fuel', value: 3200 },
-      ],
+      byCategory: Object.entries(catMap).map(([name, value]) => ({ name, value })).sort((a, b) => b.value - a.value),
       byStatus: Object.entries(claims.reduce<Record<string, number>>((acc, claim) => {
         acc[claim.status] = (acc[claim.status] || 0) + 1;
         return acc;
@@ -1774,6 +1779,7 @@ export async function getDashboardChartData(userEmail: string, userRole: string)
 
   const { data: claims } = await claimsQuery;
   if (!claims) return { monthly: [], byCategory: [], byStatus: [] };
+  if (claims.length === 0) return { monthly: [], byCategory: [], byStatus: [] };
 
   // Monthly trend: show only months that actually have claims, capped to the latest 6.
   // This keeps new deployments from showing a mostly empty chart.
@@ -1800,8 +1806,12 @@ export async function getDashboardChartData(userEmail: string, userRole: string)
     statusCount[status] = (statusCount[status] || 0) + 1;
   }
 
-  // By category from expense_items
-  const { data: expenses } = await supabase.from('expense_items').select('category, amount_with_bill, amount_without_bill');
+  // By category from the same claim scope used by the dashboard.
+  const claimIds = (claims as any[]).map((claim) => claim.claim_id).filter(Boolean);
+  const { data: expenses } = await supabase
+    .from('expense_items')
+    .select('category, amount_with_bill, amount_without_bill')
+    .in('claim_id', claimIds);
   const catMap: Record<string, number> = {};
   for (const e of (expenses || []) as any[]) {
     const cat = e.category || 'Other';

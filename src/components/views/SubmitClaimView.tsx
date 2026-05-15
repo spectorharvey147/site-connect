@@ -5,7 +5,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { PlusCircle, Trash2, Send, Loader2 } from 'lucide-react';
+import { ChevronDown, ChevronRight, PlusCircle, Trash2, Send, Loader2 } from 'lucide-react';
 import { toast } from 'sonner';
 import FileUpload, { FileUploadHandle } from '@/components/views/FileUpload';
 import RupeeIcon from '@/components/icons/RupeeIcon';
@@ -41,8 +41,11 @@ function parseAmountInput(value: string) {
 export default function SubmitClaimView() {
   const { user } = useAuth();
   const fileUploadRef = useRef<FileUploadHandle>(null);
+  const expenseCardRefs = useRef<Record<string, HTMLDivElement | null>>({});
+  const pendingExpenseFocusRef = useRef<string | null>(null);
   const [site, setSite] = useState('');
   const [expenses, setExpenses] = useState<ExpenseRow[]>([emptyExpenseRow()]);
+  const [activeExpenseId, setActiveExpenseId] = useState(() => expenses[0]?.id || '');
   const [loading, setLoading] = useState(false);
   const [dropdown, setDropdown] = useState<any>({ projects: [], categories: [], projectCodes: [], byProject: {} });
   const [tempClaimId, setTempClaimId] = useState(() => 'C-' + Date.now());
@@ -74,12 +77,20 @@ export default function SubmitClaimView() {
   };
 
   const addRow = () => {
-    setExpenses([...expenses, emptyExpenseRow()]);
+    const nextRow = emptyExpenseRow();
+    pendingExpenseFocusRef.current = nextRow.id;
+    setExpenses((prev) => [...prev, nextRow]);
+    setActiveExpenseId(nextRow.id);
   };
 
   const removeRow = (id: string) => {
     if (expenses.length <= 1) return;
-    setExpenses(expenses.filter((expense) => expense.id !== id));
+    const removedIndex = expenses.findIndex((expense) => expense.id === id);
+    const nextExpenses = expenses.filter((expense) => expense.id !== id);
+    setExpenses(nextExpenses);
+    if (activeExpenseId === id) {
+      setActiveExpenseId(nextExpenses[Math.max(0, removedIndex - 1)]?.id || nextExpenses[0]?.id || '');
+    }
   };
 
   const updateRow = (id: string, field: keyof ExpenseRow, value: string | number) => {
@@ -104,6 +115,14 @@ export default function SubmitClaimView() {
   useEffect(() => {
     setExpenses((prev) => prev.map((expense) => ({ ...expense, projectCode: '' })));
   }, [site]);
+
+  useEffect(() => {
+    const focusId = pendingExpenseFocusRef.current;
+    if (!focusId) return;
+
+    expenseCardRefs.current[focusId]?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    pendingExpenseFocusRef.current = null;
+  }, [expenses, activeExpenseId]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -146,7 +165,9 @@ export default function SubmitClaimView() {
       if (result.ok) {
         toast.success(result.message);
         setSite('');
-        setExpenses([emptyExpenseRow()]);
+        const nextRow = emptyExpenseRow();
+        setExpenses([nextRow]);
+        setActiveExpenseId(nextRow.id);
         setTempClaimId('C-' + Date.now());
         setFileUploadKey((prev) => prev + 1);
         if (user) getCurrentBalance(user.email).then(setBalance);
@@ -213,85 +234,110 @@ export default function SubmitClaimView() {
           <div className="mb-4 block space-y-4 md:hidden">
             {expenses.map((expense, idx) => {
               const filteredCodes = getFilteredProjectCodes(expense.category);
+              const isActive = expense.id === activeExpenseId;
+              const subtotal = (expense.amountWithBill || 0) + (expense.amountWithoutBill || 0);
               return (
-                <div key={expense.id} className="rounded-lg border border-border bg-card p-4 space-y-3">
-                  <div className="flex items-center justify-between">
-                    <span className="text-sm font-semibold">Expense #{idx + 1}</span>
+                <div
+                  key={expense.id}
+                  ref={(node) => { expenseCardRefs.current[expense.id] = node; }}
+                  className="rounded-lg border border-border bg-card p-4 space-y-3"
+                >
+                  <div className="flex items-center justify-between gap-2">
+                    <button
+                      type="button"
+                      className="flex min-w-0 flex-1 items-center gap-2 text-left"
+                      onClick={() => setActiveExpenseId(expense.id)}
+                    >
+                      {isActive ? <ChevronDown className="h-4 w-4 flex-shrink-0 text-muted-foreground" /> : <ChevronRight className="h-4 w-4 flex-shrink-0 text-muted-foreground" />}
+                      <span className="min-w-0 flex-1">
+                        <span className="block text-sm font-semibold">Expense #{idx + 1}</span>
+                        {!isActive && (
+                          <span className="mt-1 block truncate text-xs text-muted-foreground">
+                            {expense.category || 'No category'}{expense.projectCode ? ` - ${expense.projectCode}` : ''} - Rs. {subtotal.toFixed(2)}
+                          </span>
+                        )}
+                      </span>
+                    </button>
                     {expenses.length > 1 && (
                       <Button type="button" variant="ghost" size="icon" className="text-destructive" onClick={() => removeRow(expense.id)}>
                         <Trash2 className="h-4 w-4" />
                       </Button>
                     )}
                   </div>
-                  <div className="grid grid-cols-2 gap-3">
-                    <div className="space-y-1">
-                      <Label className="text-xs">Category</Label>
-                      <Select value={expense.category} onValueChange={(value) => updateRow(expense.id, 'category', value)}>
-                        <SelectTrigger><SelectValue placeholder="Select" /></SelectTrigger>
-                        <SelectContent>
-                          {dropdown.categories.map((category: string) => (
-                            <SelectItem key={category} value={category}>{category}</SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                    </div>
-                    <div className="space-y-1">
-                      <Label className="text-xs">Date</Label>
-                      <Input type="date" value={expense.claimDate} onChange={e => updateRow(expense.id, 'claimDate', e.target.value)} />
-                    </div>
-                  </div>
-                  <div className="space-y-1">
-                    <Label className="text-xs">Project Code</Label>
-                    <Select
-                      value={expense.projectCode}
-                      onValueChange={(value) => updateRow(expense.id, 'projectCode', value)}
-                      disabled={!site || !expense.category}
-                    >
-                      <SelectTrigger>
-                        <SelectValue placeholder={!site ? 'Select site first' : !expense.category ? 'Select category first' : 'Select code'} />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {filteredCodes.length === 0 ? (
-                          <SelectItem value="none" disabled>No matching cost codes</SelectItem>
-                        ) : filteredCodes.map((code) => (
-                          <SelectItem key={`${code.project}-${code.code}`} value={code.code}>{code.code} - {code.label}</SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                    <p className="text-xs text-muted-foreground">Cost codes now follow the selected expense category automatically.</p>
-                  </div>
-                  <div className="space-y-1">
-                    <Label className="text-xs">Description</Label>
-                    <Input value={expense.description} onChange={e => updateRow(expense.id, 'description', e.target.value)} placeholder="Enter description" />
-                  </div>
-                  <div className="grid grid-cols-2 gap-3">
-                    <div className="space-y-1">
-                      <Label className="text-xs">With Bill (Rs.)</Label>
-                      <Input
-                        type="text"
-                        inputMode="decimal"
-                        pattern="[0-9]*[.]?[0-9]*"
-                        value={expense.amountWithBill || ''}
-                        onChange={e => updateRow(expense.id, 'amountWithBill', parseAmountInput(e.target.value))}
-                        placeholder="0.00"
-                      />
-                    </div>
-                    <div className="space-y-1">
-                      <Label className="text-xs">Without Bill (Rs.)</Label>
-                      <Input
-                        type="text"
-                        inputMode="decimal"
-                        pattern="[0-9]*[.]?[0-9]*"
-                        value={expense.amountWithoutBill || ''}
-                        onChange={e => updateRow(expense.id, 'amountWithoutBill', parseAmountInput(e.target.value))}
-                        placeholder="0.00"
-                      />
-                    </div>
-                  </div>
-                  <div className="flex items-center justify-between border-t border-border pt-2">
-                    <span className="text-sm text-muted-foreground">Subtotal</span>
-                    <span className="text-lg font-bold text-primary">Rs. {((expense.amountWithBill || 0) + (expense.amountWithoutBill || 0)).toFixed(2)}</span>
-                  </div>
+
+                  {isActive && (
+                    <>
+                      <div className="grid grid-cols-2 gap-3">
+                        <div className="space-y-1">
+                          <Label className="text-xs">Category</Label>
+                          <Select value={expense.category} onValueChange={(value) => updateRow(expense.id, 'category', value)}>
+                            <SelectTrigger><SelectValue placeholder="Select" /></SelectTrigger>
+                            <SelectContent>
+                              {dropdown.categories.map((category: string) => (
+                                <SelectItem key={category} value={category}>{category}</SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        </div>
+                        <div className="space-y-1">
+                          <Label className="text-xs">Date</Label>
+                          <Input type="date" value={expense.claimDate} onChange={e => updateRow(expense.id, 'claimDate', e.target.value)} />
+                        </div>
+                      </div>
+                      <div className="space-y-1">
+                        <Label className="text-xs">Project Code</Label>
+                        <Select
+                          value={expense.projectCode}
+                          onValueChange={(value) => updateRow(expense.id, 'projectCode', value)}
+                          disabled={!site || !expense.category}
+                        >
+                          <SelectTrigger>
+                            <SelectValue placeholder={!site ? 'Select site first' : !expense.category ? 'Select category first' : 'Select code'} />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {filteredCodes.length === 0 ? (
+                              <SelectItem value="none" disabled>No matching cost codes</SelectItem>
+                            ) : filteredCodes.map((code) => (
+                              <SelectItem key={`${code.project}-${code.code}`} value={code.code}>{code.code} - {code.label}</SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                        <p className="text-xs text-muted-foreground">Cost codes now follow the selected expense category automatically.</p>
+                      </div>
+                      <div className="space-y-1">
+                        <Label className="text-xs">Description</Label>
+                        <Input value={expense.description} onChange={e => updateRow(expense.id, 'description', e.target.value)} placeholder="Enter description" />
+                      </div>
+                      <div className="grid grid-cols-2 gap-3">
+                        <div className="space-y-1">
+                          <Label className="text-xs">With Bill (Rs.)</Label>
+                          <Input
+                            type="text"
+                            inputMode="decimal"
+                            pattern="[0-9]*[.]?[0-9]*"
+                            value={expense.amountWithBill || ''}
+                            onChange={e => updateRow(expense.id, 'amountWithBill', parseAmountInput(e.target.value))}
+                            placeholder="0.00"
+                          />
+                        </div>
+                        <div className="space-y-1">
+                          <Label className="text-xs">Without Bill (Rs.)</Label>
+                          <Input
+                            type="text"
+                            inputMode="decimal"
+                            pattern="[0-9]*[.]?[0-9]*"
+                            value={expense.amountWithoutBill || ''}
+                            onChange={e => updateRow(expense.id, 'amountWithoutBill', parseAmountInput(e.target.value))}
+                            placeholder="0.00"
+                          />
+                        </div>
+                      </div>
+                      <div className="flex items-center justify-between border-t border-border pt-2">
+                        <span className="text-sm text-muted-foreground">Subtotal</span>
+                        <span className="text-lg font-bold text-primary">Rs. {subtotal.toFixed(2)}</span>
+                      </div>
+                    </>
+                  )}
                 </div>
               );
             })}
@@ -310,6 +356,10 @@ export default function SubmitClaimView() {
                 <span className="text-primary">Rs. {grandTotal.toFixed(2)}</span>
               </div>
             </div>
+            <Button type="button" variant="outline" className="w-full" onClick={addRow}>
+              <PlusCircle className="mr-2 h-4 w-4" />
+              Add Expense
+            </Button>
           </div>
 
           <div className="mb-4 hidden overflow-x-auto rounded-lg border border-border md:block">

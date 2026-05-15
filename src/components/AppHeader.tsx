@@ -8,10 +8,21 @@ import { getCompanySettings } from '@/lib/claims-api';
 import { useTheme } from '@/contexts/ThemeContext';
 import { Sun, Moon } from 'lucide-react';
 
+function formatHeaderDateTime(date: Date) {
+  return date.toLocaleString('en-IN', {
+    day: '2-digit',
+    month: 'short',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+}
+
 export default function AppHeader() {
   const { user, logout } = useAuth();
   const { theme, setTheme } = useTheme();
   const [brand, setBrand] = useState({ name: 'ClaimFlow Pro', subtitle: 'Claims Management System', logo: '/ipi-logo.jpg' });
+  const [now, setNow] = useState(() => new Date());
 
   useEffect(() => {
     getCompanySettings()
@@ -26,6 +37,11 @@ export default function AppHeader() {
       .catch(() => {});
   }, []);
 
+  useEffect(() => {
+    const timer = window.setInterval(() => setNow(new Date()), 30000);
+    return () => window.clearInterval(timer);
+  }, []);
+
   return (
     <header className="glass-card sticky top-0 z-40 mx-3 mb-4 mt-[env(safe-area-inset-top,12px)] flex select-none items-center justify-between bg-card/95 px-3 py-3 backdrop-blur-md sm:mx-4 sm:mb-6 sm:mt-4 sm:px-6 sm:py-4">
       <div className="flex min-w-0 flex-1 items-center gap-2 sm:gap-3">
@@ -35,7 +51,10 @@ export default function AppHeader() {
           className="h-10 w-10 flex-shrink-0 rounded-md border border-border bg-white p-1 object-contain"
         />
         <div className="min-w-0">
-          <h1 className="truncate text-sm font-bold text-foreground sm:text-lg">{brand.name}</h1>
+          <h1 className="flex min-w-0 flex-wrap items-baseline gap-x-2 gap-y-0.5 text-sm font-bold text-foreground sm:text-lg">
+            <span className="min-w-0 truncate">{brand.name}</span>
+            <span className="shrink-0 text-[11px] font-medium text-muted-foreground sm:text-xs">{formatHeaderDateTime(now)}</span>
+          </h1>
           <p className="truncate text-xs text-muted-foreground sm:text-sm">
             <span className="font-medium text-foreground">{user?.name}</span>
             <span className="hidden md:inline"> | {brand.subtitle}</span>

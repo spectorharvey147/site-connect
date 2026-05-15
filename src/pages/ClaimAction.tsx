@@ -95,7 +95,7 @@ export default function ClaimAction() {
 
   return (
     <div className="min-h-screen bg-background flex items-center justify-center px-4 py-8">
-      <Card className="w-full max-w-2xl">
+      <Card className="w-full max-w-5xl">
         <CardHeader>
           <CardTitle>Claim Email Action</CardTitle>
         </CardHeader>
@@ -106,18 +106,18 @@ export default function ClaimAction() {
             </div>
           ) : (
             <>
-              <div className="grid grid-cols-1 gap-1 text-sm">
+              <div className="grid grid-cols-1 gap-3 text-sm">
                 <div className="flex items-center gap-2"><span className="font-mono text-xs text-muted-foreground">{claim?.claimId || claimId}</span><span className="text-xs text-muted-foreground">{claim?.status || ''}</span></div>
-                <div className="flex flex-wrap gap-4">
-                  <div className="text-sm">
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+                  <div className="rounded-lg border border-border bg-muted/20 p-3 text-sm">
                     <div className="text-xs text-muted-foreground">Submitted By</div>
-                    <div className="font-semibold">{claim?.submittedBy || '-'}</div>
+                    <div className="break-words font-semibold">{claim?.submittedBy || '-'}</div>
                   </div>
-                  <div className="text-sm">
+                  <div className="rounded-lg border border-border bg-muted/20 p-3 text-sm">
                     <div className="text-xs text-muted-foreground">Site</div>
-                    <div className="font-semibold">{claim?.site || '-'}</div>
+                    <div className="break-words font-semibold">{claim?.site || '-'}</div>
                   </div>
-                  <div className="text-sm">
+                  <div className="rounded-lg border border-border bg-muted/20 p-3 text-sm">
                     <div className="text-xs text-muted-foreground">Submitted Amount</div>
                     <div className="text-lg font-bold">Rs. {(claim?.submittedAmount ?? claim?.amount ?? 0).toFixed(2)}</div>
                   </div>
@@ -159,12 +159,12 @@ export default function ClaimAction() {
                     </div>
                   </div>
                   <div className="overflow-x-auto">
-                    <table className="w-full text-sm border">
+                    <table className="min-w-[760px] w-full table-fixed text-sm border">
                       <thead>
                         <tr className="bg-muted/50">
-                          <th className="py-2 px-3 text-left">Category</th>
-                          <th className="py-2 px-3 text-left">Project Code</th>
-                          <th className="py-2 px-3 text-left">Description</th>
+                          <th className="py-2 px-3 text-left w-[18%]">Category</th>
+                          <th className="py-2 px-3 text-left w-[22%]">Project Code</th>
+                          <th className="py-2 px-3 text-left w-[28%]">Description</th>
                           <th className="py-2 px-3 text-right">With Bill</th>
                           <th className="py-2 px-3 text-right">Without Bill</th>
                           <th className="py-2 px-3 text-right">Total</th>
@@ -173,9 +173,9 @@ export default function ClaimAction() {
                       <tbody>
                         {claim.expenses?.map((expense: any, i: number) => (
                           <tr key={i} className="border-t">
-                            <td className="py-2 px-3">{expense.category}</td>
-                            <td className="py-2 px-3">{expense.projectCode}</td>
-                            <td className="py-2 px-3">{expense.description}</td>
+                            <td className="py-2 px-3 break-words">{expense.category}</td>
+                            <td className="py-2 px-3 break-words">{expense.projectCode}</td>
+                            <td className="py-2 px-3 break-words">{expense.description}</td>
                             <td className="py-2 px-3 text-right">Rs. {(expense.amountWithBill ?? 0).toFixed(2)}</td>
                             <td className="py-2 px-3 text-right">Rs. {(expense.amountWithoutBill ?? 0).toFixed(2)}</td>
                             <td className="py-2 px-3 text-right font-medium">Rs. {(expense.amount ?? 0).toFixed(2)}</td>

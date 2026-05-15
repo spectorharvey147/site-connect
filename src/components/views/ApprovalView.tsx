@@ -31,7 +31,7 @@ function ClaimExpenseDetails({ claim }: { claim: any }) {
           <div key={i} className="space-y-1 rounded border border-border bg-card p-3 text-sm">
             <div className="flex justify-between gap-4"><span className="text-muted-foreground">Category</span><span className="font-medium text-right">{expense.category}</span></div>
             <div className="flex justify-between gap-4"><span className="text-muted-foreground">Code</span><span className="text-right">{expense.projectCode || '-'}</span></div>
-            {expense.description && <div className="flex justify-between gap-4"><span className="text-muted-foreground">Description</span><span className="max-w-[60%] text-right">{expense.description}</span></div>}
+            {expense.description && <div className="flex justify-between gap-4"><span className="text-muted-foreground">Description</span><span className="max-w-[60%] break-words text-right">{expense.description}</span></div>}
             <div className="mt-1 flex justify-between border-t border-border pt-1">
               <span className="text-muted-foreground">Total</span>
               <span className="font-bold text-primary">Rs. {(expense.amount ?? 0).toFixed(2)}</span>
@@ -40,13 +40,13 @@ function ClaimExpenseDetails({ claim }: { claim: any }) {
         ))}
       </div>
 
-      <div className="hidden overflow-x-auto sm:block">
-        <table className="w-full border text-sm">
+      <div className="hidden max-w-full overflow-x-auto sm:block">
+        <table className="min-w-[820px] w-full table-fixed border text-sm">
           <thead>
             <tr className="bg-muted">
-              <th className="border p-2 text-left">Category</th>
-              <th className="border p-2 text-left">Code</th>
-              <th className="border p-2 text-left">Description</th>
+              <th className="w-[16%] border p-2 text-left">Category</th>
+              <th className="w-[20%] border p-2 text-left">Code</th>
+              <th className="w-[28%] border p-2 text-left">Description</th>
               <th className="border p-2 text-right">With Bill (Rs.)</th>
               <th className="border p-2 text-right">Without Bill (Rs.)</th>
               <th className="border p-2 text-right">Total (Rs.)</th>
@@ -55,9 +55,9 @@ function ClaimExpenseDetails({ claim }: { claim: any }) {
           <tbody>
             {claim.expenses.map((expense: any, i: number) => (
               <tr key={i} className="border-t">
-                <td className="border p-2">{expense.category}</td>
-                <td className="border p-2">{expense.projectCode}</td>
-                <td className="border p-2">{expense.description}</td>
+                <td className="break-words border p-2">{expense.category}</td>
+                <td className="break-words border p-2">{expense.projectCode}</td>
+                <td className="break-words border p-2">{expense.description}</td>
                 <td className="border p-2 text-right">Rs. {(expense.amountWithBill ?? 0).toFixed(2)}</td>
                 <td className="border p-2 text-right">Rs. {(expense.amountWithoutBill ?? 0).toFixed(2)}</td>
                 <td className="border p-2 text-right font-medium">Rs. {(expense.amount ?? 0).toFixed(2)}</td>
@@ -235,8 +235,8 @@ export default function ApprovalView({ type }: ApprovalViewProps) {
           ))}
         </div>
 
-        <div className="hidden overflow-x-auto md:block">
-          <table className="w-full text-sm">
+        <div className="hidden max-w-full overflow-x-auto md:block">
+          <table className="min-w-[900px] w-full text-sm">
             <thead>
               <tr className="bg-muted/50">
                 <th className="p-3 text-left">Claim ID</th>
@@ -264,8 +264,8 @@ export default function ApprovalView({ type }: ApprovalViewProps) {
                 <tr key={claim.claimId} className="border-b border-border transition-colors hover:bg-muted/30">
                   <td className="p-3 font-mono text-xs">{claim.claimId}</td>
                   <td className="p-3">{formatDate(claim.date)}</td>
-                  <td className="p-3">{claim.submittedBy}</td>
-                  <td className="p-3">{claim.site}</td>
+                  <td className="p-3 break-words">{claim.submittedBy}</td>
+                  <td className="p-3 break-words">{claim.site}</td>
                   <td className="p-3 text-right">Rs. {(claim.totalWithBill ?? 0).toFixed(2)}</td>
                   <td className="p-3 text-right">Rs. {(claim.totalWithoutBill ?? 0).toFixed(2)}</td>
                   <td className="p-3 text-right text-base font-bold">
@@ -304,6 +304,9 @@ export default function ApprovalView({ type }: ApprovalViewProps) {
             </Button>
           </div>
         ) : undefined}
+        desktopClassName="max-w-5xl"
+        mobileClassName="max-h-[94svh]"
+        bodyClassName="max-h-[74vh] overflow-y-auto pr-1"
         >
         <div className="space-y-3">
           {approveDetails && (

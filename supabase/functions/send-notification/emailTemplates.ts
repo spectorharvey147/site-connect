@@ -23,18 +23,20 @@ interface KeyValueItem {
   html?: boolean;
 }
 
-const shellStyles = 'max-width: 920px; margin: 0 auto; padding: 20px; background: #f8fafc;';
+const shellStyles = 'max-width: 760px; margin: 0 auto; padding: 14px; background: #f8fafc;';
 const cardStyles = 'background: #ffffff; border: 1px solid #dbe4ee; border-radius: 16px; overflow: hidden; box-shadow: 0 10px 30px rgba(15, 23, 42, 0.06);';
-const heroStyles = 'padding: 24px 28px; background: linear-gradient(135deg, #0f766e 0%, #0284c7 100%); color: #ffffff;';
-const bodyStyles = 'padding: 28px; font-family: Arial, Helvetica, sans-serif; color: #1f2937; line-height: 1.65; font-size: 14px;';
-const footerStyles = 'padding: 18px 28px 26px; border-top: 1px solid #e5e7eb; font-family: Arial, Helvetica, sans-serif; font-size: 12px; color: #64748b; background: #f8fafc;';
+const heroStyles = 'padding: 22px 24px; background: linear-gradient(135deg, #0f766e 0%, #0284c7 100%); color: #ffffff;';
+const bodyStyles = 'padding: 24px; font-family: Arial, Helvetica, sans-serif; color: #1f2937; line-height: 1.65; font-size: 15px;';
+const footerStyles = 'padding: 18px 24px 24px; border-top: 1px solid #e5e7eb; font-family: Arial, Helvetica, sans-serif; font-size: 12px; color: #64748b; background: #f8fafc;';
 const buttonSecondary = 'display: inline-block; padding: 12px 18px; margin: 0 12px 12px 0; border-radius: 10px; font-weight: 700; text-decoration: none; color: #0f172a; font-size: 13px; background: #e2e8f0; border: 1px solid #cbd5e1;';
 const buttonDanger = 'display: inline-block; padding: 12px 18px; margin: 0 12px 12px 0; border-radius: 10px; font-weight: 700; text-decoration: none; color: #ffffff; font-size: 13px; background: #dc2626;';
 const buttonSuccess = 'display: inline-block; padding: 12px 18px; margin: 0 12px 12px 0; border-radius: 10px; font-weight: 700; text-decoration: none; color: #ffffff; font-size: 13px; background: #16a34a;';
-const tableStyles = 'width: 100%; border-collapse: collapse; margin: 18px 0 6px; background: #ffffff; border: 1px solid #dbe4ee; table-layout: auto;';
 const thStyles = 'background: #eff6ff; padding: 9px; border: 1px solid #dbe4ee; text-align: left; font-size: 12px; color: #0f172a; vertical-align: top; line-height: 1.35; overflow-wrap: anywhere; word-break: break-word;';
 const tdStyles = 'padding: 9px; border: 1px solid #dbe4ee; font-size: 12px; vertical-align: top; line-height: 1.4; overflow-wrap: anywhere; word-break: break-word;';
 const softCardStyles = 'padding: 16px; background: #f8fafc; border: 1px solid #e2e8f0; border-left: 4px solid #0284c7; border-radius: 12px; margin: 16px 0;';
+const itemCardStyles = 'margin: 12px 0; padding: 14px; background: #ffffff; border: 1px solid #dbe4ee; border-radius: 12px;';
+const itemGridStyles = 'display: flex; flex-wrap: wrap; gap: 10px 14px; margin-top: 10px;';
+const itemFieldStyles = 'flex: 1 1 150px; min-width: 140px;';
 
 function escapeHtml(value: unknown) {
   return String(value ?? '')
@@ -85,6 +87,16 @@ function fmtDate(value?: string) {
   return escapeHtml(new Date(value).toLocaleString('en-IN'));
 }
 
+function fmtGeneratedAt() {
+  return new Date().toLocaleString('en-IN', {
+    day: '2-digit',
+    month: 'short',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+}
+
 function safeLink(url?: string) {
   return escapeHtml((url || '').trim());
 }
@@ -116,7 +128,7 @@ function sectionTitle(title: string, subtitle?: string) {
 function infoGrid(items: KeyValueItem[]) {
   if (!items.length) return '';
   const columns = items.map((item) => `
-    <div style="flex: 1 1 220px; min-width: 220px; padding: 14px 16px; border: 1px solid #dbe4ee; border-radius: 12px; background: #f8fafc;">
+    <div style="flex: 1 1 180px; min-width: 160px; padding: 14px 16px; border: 1px solid #dbe4ee; border-radius: 12px; background: #f8fafc;">
       <div style="font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; color: #64748b; font-weight: 700; margin-bottom: 6px;">${safeText(item.label)}</div>
       <div style="font-size: 14px; color: #0f172a; font-weight: 700; word-break: break-word;">${item.html ? item.value : safeText(item.value)}</div>
     </div>
@@ -166,8 +178,55 @@ function renderAttachments(attachments?: Attachment[]) {
   `;
 }
 
-function claimTableHeaderCell(style: string, width?: string) {
-  return `${style}${width ? ` width: ${width};` : ''}`;
+function field(label: string, value: string) {
+  return `
+    <div style="${itemFieldStyles}">
+      <div style="font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; color: #64748b; font-weight: 700;">${safeText(label)}</div>
+      <div style="font-size: 13px; color: #0f172a; font-weight: 700; overflow-wrap: anywhere; word-break: break-word;">${value}</div>
+    </div>
+  `;
+}
+
+function renderClaimItems(items: Array<{
+  category: string;
+  projectCode?: string;
+  claimDate?: string;
+  description: string;
+  amountWithBill?: number;
+  amountWithoutBill?: number;
+  totalAmount?: number;
+  amount?: number;
+}>, currency: string) {
+  if (!items.length) {
+    return `
+      <div style="${softCardStyles}">
+        <p style="margin: 0; color: #475569;">Line item details are available in the claim screen.</p>
+      </div>
+    `;
+  }
+
+  const cards = items.map((item, index) => `
+    <div style="${itemCardStyles}">
+      <div style="display: flex; justify-content: space-between; gap: 12px; align-items: flex-start;">
+        <div style="font-size: 13px; font-weight: 800; color: #0f172a;">Item ${index + 1}: ${safeText(item.category)}</div>
+        <div style="font-size: 14px; font-weight: 800; color: #0f766e; white-space: nowrap;">${fmtAmount(item.totalAmount ?? item.amount, currency)}</div>
+      </div>
+      <div style="${itemGridStyles}">
+        ${field('Project Code', safeText(item.projectCode || '-'))}
+        ${field('Claim Date', safeText(item.claimDate || '-'))}
+        ${field('With Bill', fmtAmount(item.amountWithBill, currency))}
+        ${field('Without Bill', fmtAmount(item.amountWithoutBill, currency))}
+      </div>
+      ${item.description ? `<div style="margin-top: 10px; font-size: 13px; color: #334155; overflow-wrap: anywhere; word-break: break-word;">${safeText(item.description)}</div>` : ''}
+    </div>
+  `).join('');
+
+  return `
+    <div style="margin: 18px 0;">
+      <div style="font-size: 13px; font-weight: 800; color: #0f172a; margin-bottom: 8px;">Claim line items</div>
+      ${cards}
+    </div>
+  `;
 }
 
 function wrapEmail(title: string, body: string, data: BrandData) {
@@ -177,6 +236,7 @@ function wrapEmail(title: string, body: string, data: BrandData) {
     <html>
       <head>
         <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
       </head>
       <body style="margin:0; padding:0; background:#f8fafc;">
         <div style="${shellStyles}">
@@ -185,6 +245,7 @@ function wrapEmail(title: string, body: string, data: BrandData) {
               ${logo}
               <div style="font-size: 12px; text-transform: uppercase; letter-spacing: 0.08em; opacity: 0.9; font-weight: 700;">${safeText(info.companySubtitle)}</div>
               <div style="font-size: 24px; font-weight: 800; line-height: 1.2; margin-top: 6px;">${safeText(info.companyName)}</div>
+              <div style="font-size: 13px; margin-top: 6px; opacity: 0.95;">Date &amp; Time: ${safeText(fmtGeneratedAt())}</div>
               <div style="font-size: 13px; margin-top: 6px; opacity: 0.95;">Automated system notification from ${safeText(info.companyName)}</div>
             </div>
             <div style="${bodyStyles}">
@@ -268,17 +329,6 @@ export function claimSubmittedUserTemplate(data: {
   employee_name?: string;
 } & BrandData): { subject: string; html: string } {
   const info = brand(data);
-  const rows = data.items.map((item) => `
-    <tr>
-      <td style="${tdStyles}; width: 22%; word-break: break-word;">${safeText(item.category)}</td>
-      <td style="${tdStyles}; width: 18%; word-break: break-word;">${safeText(item.projectCode || '')}</td>
-      <td style="${tdStyles}; width: 16%;">${safeText(item.claimDate || '')}</td>
-      <td style="${tdStyles}; width: 24%; word-break: break-word;">${safeText(item.description)}</td>
-      <td style="${tdStyles}; text-align: right;">${fmtAmount(item.amountWithBill, info.currency)}</td>
-      <td style="${tdStyles}; text-align: right;">${fmtAmount(item.amountWithoutBill, info.currency)}</td>
-      <td style="${tdStyles}; text-align: right; font-weight: 700;">${fmtAmount(item.totalAmount ?? item.amount, info.currency)}</td>
-    </tr>
-  `).join('');
   const body = `
     <p style="margin-top: 0;">Dear ${safeText(data.employee_name || data.submitted_by || 'User')},</p>
     <p>Your claim has been submitted successfully and is now in the workflow queue.</p>
@@ -294,28 +344,12 @@ export function claimSubmittedUserTemplate(data: {
       <p style="margin: 0 0 8px 0; font-weight: 700; color: #0f172a;">Claim Summary</p>
       <div style="font-size: 13px; color: #475569;">${safeText(data.claim_number)} has been recorded with ${data.items.length} line item(s).</div>
     </div>
-    <table style="${tableStyles}">
-      <thead>
-        <tr>
-          <th style="${claimTableHeaderCell(thStyles, '22%')}">Category</th>
-          <th style="${claimTableHeaderCell(thStyles, '18%')}">Project Code</th>
-          <th style="${claimTableHeaderCell(thStyles, '16%')}">Claim Date</th>
-          <th style="${claimTableHeaderCell(thStyles, '24%')}">Description</th>
-          <th style="${claimTableHeaderCell(thStyles, '6%')}">With Bill</th>
-          <th style="${claimTableHeaderCell(thStyles, '6%')}">Without Bill</th>
-          <th style="${claimTableHeaderCell(thStyles, '8%')}">Total</th>
-        </tr>
-      </thead>
-      <tbody>
-        ${rows}
-        <tr>
-          <td colspan="4" style="${tdStyles}; text-align: right; font-weight: 700;">Total</td>
-          <td style="${tdStyles}; text-align: right; font-weight: 700;">${fmtAmount(data.total_with_bill, info.currency)}</td>
-          <td style="${tdStyles}; text-align: right; font-weight: 700;">${fmtAmount(data.total_without_bill, info.currency)}</td>
-          <td style="${tdStyles}; text-align: right; font-weight: 700;">${fmtAmount(data.total_amount, info.currency)}</td>
-        </tr>
-      </tbody>
-    </table>
+    ${renderClaimItems(data.items, info.currency)}
+    ${infoGrid([
+      { label: 'Total With Bill', value: fmtAmount(data.total_with_bill, info.currency), html: true },
+      { label: 'Total Without Bill', value: fmtAmount(data.total_without_bill, info.currency), html: true },
+      { label: 'Grand Total', value: fmtAmount(data.total_amount, info.currency), html: true },
+    ])}
     ${renderAttachments(data.attachments)}
   `;
   return {
@@ -351,17 +385,6 @@ export function claimSubmittedManagerTemplate(data: {
   reject_link: string;
 } & BrandData): { subject: string; html: string } {
   const info = brand(data);
-  const rows = data.items.map((item) => `
-    <tr>
-      <td style="${tdStyles}; width: 22%; word-break: break-word;">${safeText(item.category)}</td>
-      <td style="${tdStyles}; width: 18%; word-break: break-word;">${safeText(item.projectCode || '')}</td>
-      <td style="${tdStyles}; width: 16%;">${safeText(item.claimDate || '')}</td>
-      <td style="${tdStyles}; width: 24%; word-break: break-word;">${safeText(item.description)}</td>
-      <td style="${tdStyles}; text-align: right;">${fmtAmount(item.amountWithBill, info.currency)}</td>
-      <td style="${tdStyles}; text-align: right;">${fmtAmount(item.amountWithoutBill, info.currency)}</td>
-      <td style="${tdStyles}; text-align: right; font-weight: 700;">${fmtAmount(item.totalAmount ?? item.amount, info.currency)}</td>
-    </tr>
-  `).join('');
   const body = `
     <p style="margin-top: 0;">A claim has been submitted and requires approval.</p>
     ${infoGrid([
@@ -379,20 +402,7 @@ export function claimSubmittedManagerTemplate(data: {
       <p style="margin: 0 0 8px 0; font-weight: 700; color: #0f172a;">Quick actions</p>
       <p style="margin: 0; color: #475569;">Approve or reject this claim from the links below.</p>
     </div>
-    <table style="${tableStyles}">
-      <thead>
-        <tr>
-          <th style="${claimTableHeaderCell(thStyles, '22%')}">Category</th>
-          <th style="${claimTableHeaderCell(thStyles, '18%')}">Project Code</th>
-          <th style="${claimTableHeaderCell(thStyles, '16%')}">Claim Date</th>
-          <th style="${claimTableHeaderCell(thStyles, '24%')}">Description</th>
-          <th style="${claimTableHeaderCell(thStyles, '6%')}">With Bill</th>
-          <th style="${claimTableHeaderCell(thStyles, '6%')}">Without Bill</th>
-          <th style="${claimTableHeaderCell(thStyles, '8%')}">Total</th>
-        </tr>
-      </thead>
-      <tbody>${rows}</tbody>
-    </table>
+    ${renderClaimItems(data.items, info.currency)}
     <p style="margin: 16px 0 0;"><strong>Payable / Verified Amount:</strong> ${fmtAmount(data.verified_amount ?? data.total_amount, info.currency)}</p>
     ${renderAttachments(data.attachments)}
     ${renderButtons([
