@@ -1363,12 +1363,25 @@ export async function getAllUsers() {
       balance,
       manager: u.manager_email || '',
       active: u.active,
+      employee_id: u.employee_id || '',
+      mobile_number: u.mobile_number || '',
+      date_of_joining: u.date_of_joining || '',
     });
   }
   return users;
 }
 
-export async function createUser(newUser: { email: string; password: string; name: string; role: string; advance: number; manager: string }) {
+export async function createUser(newUser: {
+  email: string;
+  password: string;
+  name: string;
+  role: string;
+  advance: number;
+  manager: string;
+  employee_id?: string;
+  mobile_number?: string;
+  date_of_joining?: string;
+}) {
   if (isDemoMode()) return { ok: true, message: `Demo user ${newUser.name} previewed. Supabase was not changed.` };
 
   const email = newUser.email.trim().toLowerCase();
@@ -1391,6 +1404,9 @@ export async function createUser(newUser: { email: string; password: string; nam
     advance_amount: newUser.advance || 0,
     manager_email: managerEmail,
     active: true,
+    employee_id: newUser.employee_id?.trim() || null,
+    mobile_number: newUser.mobile_number?.trim() || null,
+    date_of_joining: newUser.date_of_joining?.trim() || null,
   });
   if (error) throw error;
 
@@ -1759,14 +1775,10 @@ export async function getDashboardChartData(userEmail: string, userRole: string)
   const { data: claims } = await claimsQuery;
   if (!claims) return { monthly: [], byCategory: [], byStatus: [] };
 
-  // Monthly trend (last 6 months)
+  // Monthly trend: show only months that actually have claims, capped to the latest 6.
+  // This keeps new deployments from showing a mostly empty chart.
   const monthMap: Record<string, { month: string; withBill: number; withoutBill: number; total: number; count: number }> = {};
-  const now = new Date();
-  for (let i = 5; i >= 0; i--) {
-    const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
-    const key = d.toLocaleString('en-IN', { month: 'short', year: '2-digit' });
-    monthMap[key] = { month: key, withBill: 0, withoutBill: 0, total: 0, count: 0 };
-  }
+  const monthOrder: string[] = [];
 
   // By status
   const statusCount: Record<string, number> = {};
@@ -1776,12 +1788,14 @@ export async function getDashboardChartData(userEmail: string, userRole: string)
     const key = d.toLocaleString('en-IN', { month: 'short', year: '2-digit' });
     const wb = parseFloat(c.total_with_bill || 0);
     const wob = parseFloat(c.total_without_bill || 0);
-    if (monthMap[key]) {
-      monthMap[key].withBill += wb;
-      monthMap[key].withoutBill += wob;
-      monthMap[key].total += wb + wob;
-      monthMap[key].count++;
+    if (!monthMap[key]) {
+      monthMap[key] = { month: key, withBill: 0, withoutBill: 0, total: 0, count: 0 };
+      monthOrder.push(key);
     }
+    monthMap[key].withBill += wb;
+    monthMap[key].withoutBill += wob;
+    monthMap[key].total += wb + wob;
+    monthMap[key].count++;
     const status = c.status || 'Unknown';
     statusCount[status] = (statusCount[status] || 0) + 1;
   }
@@ -1795,7 +1809,7 @@ export async function getDashboardChartData(userEmail: string, userRole: string)
   }
 
   return {
-    monthly: Object.values(monthMap),
+    monthly: monthOrder.slice(-6).map((key) => monthMap[key]),
     byCategory: Object.entries(catMap).map(([name, value]) => ({ name, value })).sort((a, b) => b.value - a.value).slice(0, 8),
     byStatus: Object.entries(statusCount).map(([name, value]) => ({ name, value })),
   };
