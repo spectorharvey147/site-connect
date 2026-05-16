@@ -13,14 +13,14 @@ interface SidebarProps {
 
 const navItems = [
   { id: 'dashboard', icon: BarChart3, label: 'Dashboard', roles: ['all'] },
-  { id: 'submit', icon: FileUp, label: 'Submit Claim', roles: ['all'] },
+  { id: 'submit', icon: FileUp, label: 'Submit Claim', roles: ['User', 'Manager', 'Admin', 'Super Admin'] },
   { id: 'history', icon: History, label: 'Claim History', roles: ['all'] },
   { id: 'ledger', icon: ArrowLeftRight, label: 'Ledger Statement', roles: ['all'] },
   { id: 'balances', icon: Scale, label: 'User Balances', roles: ['all'] },
   { id: 'manager-approval', icon: UserCheck, label: 'Manager Approval', roles: ['Manager', 'Super Admin'] },
   { id: 'admin-approval', icon: ShieldCheck, label: 'Admin Verification', roles: ['Admin', 'Super Admin'] },
   { id: 'final-approval', icon: ShieldCheck, label: 'Final Approval', roles: ['Super Admin'] },
-  { id: 'voucher', icon: Receipt, label: 'Payment Voucher', roles: ['Admin', 'Super Admin'] },
+  { id: 'voucher', icon: Receipt, label: 'Payment Voucher', roles: ['Accounts', 'Admin', 'Super Admin'] },
   { id: 'users', icon: Users, label: 'User Management', roles: ['Admin', 'Super Admin'] },
   { id: 'audit', icon: Shield, label: 'Audit Trail', roles: ['Admin', 'Super Admin'] },
   { id: 'settings', icon: Settings, label: 'Settings', roles: ['Admin', 'Super Admin'] },

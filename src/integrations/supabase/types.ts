@@ -88,6 +88,8 @@ export type Database = {
           claim_id: string
           created_at: string
           drive_file_ids: string[] | null
+          final_approval_date: string | null
+          final_approval_email: string | null
           grand_total: number | null
           id: string
           manager_approval_date: string | null
@@ -109,6 +111,8 @@ export type Database = {
           claim_id: string
           created_at?: string
           drive_file_ids?: string[] | null
+          final_approval_date?: string | null
+          final_approval_email?: string | null
           grand_total?: number | null
           id?: string
           manager_approval_date?: string | null
@@ -130,6 +134,8 @@ export type Database = {
           claim_id?: string
           created_at?: string
           drive_file_ids?: string[] | null
+          final_approval_date?: string | null
+          final_approval_email?: string | null
           grand_total?: number | null
           id?: string
           manager_approval_date?: string | null

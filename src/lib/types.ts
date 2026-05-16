@@ -1,4 +1,4 @@
-export type Role = "user" | "admin" | "manager" | "super_admin";
+export type Role = "user" | "admin" | "manager" | "accounts" | "super_admin";
 
 export type Language = "en" | "hi" | "ta" | "te";
 

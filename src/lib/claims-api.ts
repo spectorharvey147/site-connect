@@ -52,6 +52,10 @@ function isPendingSuperAdminStatus(status?: string | null) {
   return normalized === normalizeStatus(STATUS_PENDING_SUPER_ADMIN_APPROVAL) || normalized === 'pending admin approval';
 }
 
+function canViewAllFinanceData(role: string) {
+  return ['admin', 'super admin', 'accounts'].includes(role.toLowerCase());
+}
+
 function getClaimAmount(claim: any) {
   return parseFloat(claim?.verified_amount ?? claim?.grand_total ?? ((claim?.total_with_bill || 0) + (claim?.total_without_bill || 0)) ?? 0);
 }
@@ -84,6 +88,7 @@ const demoUsersDirectory = [
   { name: 'Site User', email: 'user@siteconnect.demo', role: 'User', manager_email: 'manager@siteconnect.demo', advance_amount: 50000, active: true },
   { name: 'Team Manager', email: 'manager@siteconnect.demo', role: 'Manager', manager_email: '', advance_amount: 0, active: true },
   { name: 'Office Admin', email: 'admin@siteconnect.demo', role: 'Admin', manager_email: '', advance_amount: 0, active: true },
+  { name: 'Accounts Team', email: 'accounts@siteconnect.demo', role: 'Accounts', manager_email: '', advance_amount: 0, active: true },
   { name: 'Super Admin', email: 'superadmin@siteconnect.demo', role: 'Super Admin', manager_email: '', advance_amount: 0, active: true },
 ];
 
@@ -201,7 +206,7 @@ function demoDropdownOptions() {
 
 function visibleDemoClaims(userEmail: string, userRole: string) {
   const role = userRole.toLowerCase();
-  if (role === 'admin' || role === 'super admin') return demoClaims;
+  if (canViewAllFinanceData(role)) return demoClaims;
   if (role === 'manager') return demoClaims.filter((claim) => claim.managerEmail === userEmail || claim.userEmail === userEmail);
   return demoClaims.filter((claim) => claim.userEmail === userEmail);
 }
@@ -476,12 +481,12 @@ export async function getDashboardSummary(userEmail: string, userRole: string) {
     userEmail: c.user_email?.toLowerCase() || claimOwnerMap[c.claim_id] || '',
   }));
 
-  if (['admin', 'super admin', 'manager'].includes(role)) {
+  if (canViewAllFinanceData(role) || role === 'manager') {
     let total = 0, totalAmount = 0, pending = 0, pendingManager = 0, pendingAdmin = 0, pendingFinal = 0;
     const myEmail = userEmail.toLowerCase();
 
     for (const c of processedClaims) {
-      let include = role === 'admin' || role === 'super admin';
+      let include = canViewAllFinanceData(role);
       if (role === 'manager') {
         include = c.managerEmail === myEmail || c.userEmail === myEmail;
       }
@@ -1054,14 +1059,24 @@ export async function approveClaimAsSuperAdmin(claimId: string, approverEmail: s
   const persistedVerified = c.verified_amount == null ? null : parseFloat(c.verified_amount);
   const amount = normalizeVerifiedAmount(verifiedAmountInput ?? persistedVerified ?? getClaimAmount(c), getClaimAmount(c));
 
+  const finalApprovalDate = new Date().toISOString();
   const updates: any = {
     status: STATUS_CLOSED,
-    admin_email: approverEmail,
-    admin_approval_date: new Date().toISOString(),
+    final_approval_email: approverEmail,
+    final_approval_date: finalApprovalDate,
     verified_amount: amount,
   };
   const { error } = await supabase.from('claims').update(updates).eq('claim_id', claimId);
-  if (error) throw error;
+  if (error) {
+    if (!isMissingFinalApprovalColumnError(error)) throw error;
+    const { error: fallbackError } = await supabase.from('claims').update({
+      status: STATUS_CLOSED,
+      admin_email: approverEmail,
+      admin_approval_date: finalApprovalDate,
+      verified_amount: amount,
+    } as any).eq('claim_id', claimId);
+    if (fallbackError) throw fallbackError;
+  }
 
   // Create settlement/credit transaction for the final approval using a clear reversal+adjustment so ledger shows waived amount as a separate line.
   const approvedAmount = amount; // getClaimAmount(c)
@@ -1171,7 +1186,7 @@ export async function getClaimsHistory(userEmail: string, userRole: string, filt
   const role = userRole.toLowerCase();
   let query = supabase.from('claims').select('*, expense_items(*)');
 
-  if (role === 'admin' || role === 'super admin') {
+  if (canViewAllFinanceData(role)) {
     if (filters?.userEmail) query = query.eq('user_email', filters.userEmail);
   } else if (role === 'manager') {
     // Get managed users
@@ -1259,6 +1274,122 @@ export async function getClaimById(claimId: string) {
   };
 }
 
+type ApprovalStamp = {
+  name: string;
+  email: string;
+  date: string;
+};
+
+type ClaimApprovalTrail = {
+  admin?: ApprovalStamp;
+  manager?: ApprovalStamp;
+  final?: ApprovalStamp;
+};
+
+function approvalStamp(email: string | null | undefined, date: string | null | undefined, usersMap: Record<string, string>): ApprovalStamp | undefined {
+  const normalizedEmail = String(email || '').trim().toLowerCase();
+  if (!normalizedEmail || !date) return undefined;
+  return {
+    email: normalizedEmail,
+    name: usersMap[normalizedEmail] || normalizedEmail,
+    date,
+  };
+}
+
+function isMissingFinalApprovalColumnError(error: any) {
+  const message = String(error?.message || error?.details || '');
+  return message.includes('final_approval_') || (message.includes('schema cache') && message.includes('final'));
+}
+
+export async function getClaimApprovalTrail(claimIds: string[]): Promise<Record<string, ClaimApprovalTrail>> {
+  const uniqueIds = [...new Set(claimIds.map((id) => String(id || '').trim()).filter(Boolean))];
+  if (uniqueIds.length === 0) return {};
+
+  if (isDemoMode()) {
+    return Object.fromEntries(uniqueIds.map((id) => [id, {
+      admin: { name: 'Office Admin', email: 'admin@siteconnect.demo', date: demoClaims[2]?.date || new Date().toISOString() },
+      manager: { name: 'Team Manager', email: 'manager@siteconnect.demo', date: demoClaims[2]?.date || new Date().toISOString() },
+      final: { name: 'Super Admin', email: 'superadmin@siteconnect.demo', date: demoClaims[2]?.date || new Date().toISOString() },
+    }]));
+  }
+
+  let claimRows: any[] = [];
+  const claimSelect = 'claim_id,status,manager_email,manager_approval_date,admin_email,admin_approval_date,final_approval_email,final_approval_date';
+  const { data: rowsWithFinal, error: rowsWithFinalError } = await supabase
+    .from('claims')
+    .select(claimSelect)
+    .in('claim_id', uniqueIds);
+
+  if (rowsWithFinalError && isMissingFinalApprovalColumnError(rowsWithFinalError)) {
+    const { data: rowsWithoutFinal } = await supabase
+      .from('claims')
+      .select('claim_id,status,manager_email,manager_approval_date,admin_email,admin_approval_date')
+      .in('claim_id', uniqueIds);
+    claimRows = (rowsWithoutFinal || []) as any[];
+  } else {
+    claimRows = (rowsWithFinal || []) as any[];
+  }
+
+  const { data: auditRows } = await supabase
+    .from('audit_logs' as any)
+    .select('target_id,action,performed_by,created_at')
+    .eq('target_type', 'claim')
+    .in('target_id', uniqueIds)
+    .in('action', ['claim_admin_verified', 'claim_manager_approved', 'claim_admin_approved'])
+    .order('created_at', { ascending: true });
+
+  const emails = new Set<string>();
+  claimRows.forEach((row) => {
+    [row.manager_email, row.admin_email, row.final_approval_email].forEach((email) => {
+      const normalized = String(email || '').trim().toLowerCase();
+      if (normalized) emails.add(normalized);
+    });
+  });
+  (auditRows || []).forEach((row: any) => {
+    const normalized = String(row.performed_by || '').trim().toLowerCase();
+    if (normalized) emails.add(normalized);
+  });
+
+  const usersMap: Record<string, string> = {};
+  if (emails.size > 0) {
+    const { data: users } = await supabase.from('users').select('email,name').in('email', [...emails]);
+    (users || []).forEach((entry: any) => {
+      usersMap[String(entry.email || '').trim().toLowerCase()] = entry.name || entry.email;
+    });
+  }
+
+  const trails: Record<string, ClaimApprovalTrail> = Object.fromEntries(uniqueIds.map((id) => [id, {}]));
+
+  claimRows.forEach((row) => {
+    const id = String(row.claim_id || '');
+    if (!id) return;
+    const trail = trails[id] || {};
+    trail.manager = approvalStamp(row.manager_email, row.manager_approval_date, usersMap) || trail.manager;
+    trail.final = approvalStamp(row.final_approval_email, row.final_approval_date, usersMap) || trail.final;
+
+    const adminStamp = approvalStamp(row.admin_email, row.admin_approval_date, usersMap);
+    if (adminStamp) {
+      if (trail.final || !isSettledStatus(row.status)) trail.admin = adminStamp;
+      else trail.final = adminStamp;
+    }
+    trails[id] = trail;
+  });
+
+  (auditRows || []).forEach((row: any) => {
+    const id = String(row.target_id || '');
+    if (!id) return;
+    const stamp = approvalStamp(row.performed_by, row.created_at, usersMap);
+    if (!stamp) return;
+    const trail = trails[id] || {};
+    if (row.action === 'claim_admin_verified') trail.admin = stamp;
+    if (row.action === 'claim_manager_approved') trail.manager = stamp;
+    if (row.action === 'claim_admin_approved') trail.final = stamp;
+    trails[id] = trail;
+  });
+
+  return trails;
+}
+
 // Helper function - remove after debugging
 
 // ============= TRANSACTIONS =============
@@ -1278,7 +1409,7 @@ export async function getTransactions(userEmail: string, userRole: string, filte
   const role = userRole.toLowerCase();
   let query = supabase.from('transactions').select('*');
 
-  if (role === 'admin' || role === 'super admin') {
+  if (canViewAllFinanceData(role)) {
     if (filters?.userEmail) query = query.eq('user_email', filters.userEmail);
   } else if (role === 'manager') {
     const { data: managed } = await supabase.from('users').select('email').eq('manager_email', userEmail);
@@ -1488,7 +1619,7 @@ export async function getUserBalanceSummary(userEmail: string, userRole: string)
     return demoUsersDirectory
       .filter((user) => {
         const role = userRole.toLowerCase();
-        if (role === 'admin' || role === 'super admin') return true;
+        if (canViewAllFinanceData(role)) return true;
         if (role === 'manager') return user.email === userEmail || user.manager_email === userEmail;
         return user.email === userEmail;
       })
@@ -1516,7 +1647,7 @@ export async function getUserBalanceSummary(userEmail: string, userRole: string)
 
   const filteredUsers = (users as any[]).filter(u => {
     const uEmail = u.email.toLowerCase();
-    if (role === 'admin' || role === 'super admin') return true;
+    if (canViewAllFinanceData(role)) return true;
     if (role === 'manager') return uEmail === userEmail.toLowerCase() || u.manager_email?.toLowerCase() === userEmail.toLowerCase();
     return uEmail === userEmail.toLowerCase();
   });

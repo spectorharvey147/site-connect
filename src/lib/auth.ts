@@ -2,7 +2,7 @@ import SHA256 from 'crypto-js/sha256';
 import { supabase } from '@/integrations/supabase/client';
 import { sendEmail } from '@/lib/send-email';
 
-export type UserRole = 'User' | 'Manager' | 'Admin' | 'Super Admin';
+export type UserRole = 'User' | 'Manager' | 'Admin' | 'Super Admin' | 'Accounts';
 
 export interface AppUser {
   email: string;

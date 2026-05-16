@@ -243,6 +243,7 @@ export default function UserManagementView() {
                     <SelectItem value="User">User</SelectItem>
                     <SelectItem value="Manager">Manager</SelectItem>
                     <SelectItem value="Admin">Admin</SelectItem>
+                    <SelectItem value="Accounts">Accounts</SelectItem>
                     <SelectItem value="Super Admin">Super Admin</SelectItem>
                   </SelectContent>
                 </Select>
@@ -296,6 +297,7 @@ export default function UserManagementView() {
                     <SelectItem value="User">User</SelectItem>
                     <SelectItem value="Manager">Manager</SelectItem>
                     <SelectItem value="Admin">Admin</SelectItem>
+                    <SelectItem value="Accounts">Accounts</SelectItem>
                     <SelectItem value="Super Admin">Super Admin</SelectItem>
                   </SelectContent>
                 </Select>

@@ -81,7 +81,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const role = user?.role;
   const isAdmin = role === 'Admin' || role === 'Super Admin';
-  const isManagerOrAbove = role === 'Manager' || isAdmin;
+  const isManagerOrAbove = role === 'Manager' || role === 'Accounts' || isAdmin;
 
   return (
     <AuthContext.Provider value={{ user, token, loading, login, logout, isAdmin, isManagerOrAbove }}>

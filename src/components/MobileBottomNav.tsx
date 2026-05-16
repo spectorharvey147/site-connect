@@ -20,14 +20,14 @@ const sideNavItems = [
 
 const allNavItems = [
   { id: 'dashboard', icon: BarChart3, label: 'Dashboard', roles: ['all'] },
-  { id: 'submit', icon: FileUp, label: 'Submit Claim', roles: ['all'] },
+  { id: 'submit', icon: FileUp, label: 'Submit Claim', roles: ['User', 'Manager', 'Admin', 'Super Admin'] },
   { id: 'history', icon: History, label: 'Claim History', roles: ['all'] },
   { id: 'ledger', icon: ArrowLeftRight, label: 'Ledger Statement', roles: ['all'] },
   { id: 'balances', icon: Scale, label: 'User Balances', roles: ['all'] },
   { id: 'manager-approval', icon: UserCheck, label: 'Manager Approval', roles: ['Manager', 'Super Admin'] },
   { id: 'admin-approval', icon: ShieldCheck, label: 'Admin Verification', roles: ['Admin', 'Super Admin'] },
   { id: 'final-approval', icon: ShieldCheck, label: 'Final Approval', roles: ['Super Admin'] },
-  { id: 'voucher', icon: Receipt, label: 'Payment Voucher', roles: ['Admin', 'Super Admin'] },
+  { id: 'voucher', icon: Receipt, label: 'Payment Voucher', roles: ['Accounts', 'Admin', 'Super Admin'] },
   { id: 'users', icon: Users, label: 'User Management', roles: ['Admin', 'Super Admin'] },
   { id: 'audit', icon: Shield, label: 'Audit Trail', roles: ['Admin', 'Super Admin'] },
   { id: 'settings', icon: Settings, label: 'Settings', roles: ['Admin', 'Super Admin'] },
@@ -37,6 +37,10 @@ const allNavItems = [
 export default function MobileBottomNav({ activeView, onNavigate }: MobileBottomNavProps) {
   const { user, logout } = useAuth();
   const [sheetOpen, setSheetOpen] = useState(false);
+  const primaryAction = user?.role === 'Accounts'
+    ? { id: 'voucher', icon: Receipt, label: 'Payment Voucher' }
+    : { id: 'submit', icon: Plus, label: 'Submit Claim' };
+  const PrimaryIcon = primaryAction.icon;
 
   const filteredAllItems = allNavItems.filter((item) => {
     if (item.roles.includes('all')) return true;
@@ -71,11 +75,11 @@ export default function MobileBottomNav({ activeView, onNavigate }: MobileBottom
 
         <div className="flex flex-1 items-end justify-center">
           <button
-            onClick={() => onNavigate('submit')}
+            onClick={() => onNavigate(primaryAction.id)}
             className="flex h-16 w-16 -translate-y-4 items-center justify-center rounded-full border-4 border-background bg-primary text-primary-foreground shadow-xl transition-transform hover:scale-[1.02] active:scale-[0.98]"
-            aria-label="Submit Claim"
+            aria-label={primaryAction.label}
           >
-            <Plus className="h-7 w-7" />
+            <PrimaryIcon className="h-7 w-7" />
           </button>
         </div>
 

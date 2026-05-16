@@ -5,6 +5,29 @@ import AppSidebar from '@/components/AppSidebar';
 import AppHeader from '@/components/AppHeader';
 import MobileBottomNav from '@/components/MobileBottomNav';
 import { Loader2 } from 'lucide-react';
+import { useEffect } from 'react';
+
+const viewRoles: Record<string, string[]> = {
+  dashboard: ['all'],
+  submit: ['User', 'Manager', 'Admin', 'Super Admin'],
+  history: ['all'],
+  ledger: ['all'],
+  transactions: ['all'],
+  balances: ['all'],
+  'manager-approval': ['Manager', 'Super Admin'],
+  'admin-approval': ['Admin', 'Super Admin'],
+  'final-approval': ['Super Admin'],
+  voucher: ['Accounts', 'Admin', 'Super Admin'],
+  users: ['Admin', 'Super Admin'],
+  settings: ['Admin', 'Super Admin'],
+  audit: ['Admin', 'Super Admin'],
+  profile: ['all'],
+};
+
+function canAccessView(view: string, role?: string) {
+  const roles = viewRoles[view] || ['all'];
+  return roles.includes('all') || roles.includes(role || '');
+}
 
 export default function Index() {
   const { user, loading } = useAuth();
@@ -16,6 +39,12 @@ export default function Index() {
   const handleNavigate = (view: string) => {
     navigate(view === 'dashboard' ? '/' : `/${view}`);
   };
+
+  useEffect(() => {
+    if (user && !canAccessView(activeView, user.role)) {
+      navigate('/', { replace: true });
+    }
+  }, [activeView, navigate, user]);
 
   if (loading) {
     return (

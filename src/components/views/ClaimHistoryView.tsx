@@ -102,7 +102,7 @@ export default function ClaimHistoryView() {
   const [companySettings, setCompanySettings] = useState<any>(null);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [reportPreview, setReportPreview] = useState<{ url: string; title: string } | null>(null);
-  const canViewUserColumn = isAdmin || user?.role === 'Manager';
+  const canViewUserColumn = isAdmin || user?.role === 'Manager' || user?.role === 'Accounts';
   const visibleUsers = user?.role === 'Manager'
     ? users.filter((u) => u.email === user.email || u.manager_email === user.email)
     : users;

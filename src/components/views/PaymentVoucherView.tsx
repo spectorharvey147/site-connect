@@ -1,6 +1,6 @@
 import { Fragment, useEffect, useMemo, useState } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
-import { getClaimsHistory, getCompanySettings, getAllUsers } from '@/lib/claims-api';
+import { getClaimsHistory, getCompanySettings, getAllUsers, getClaimApprovalTrail } from '@/lib/claims-api';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
@@ -9,6 +9,8 @@ import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Receipt, RefreshCw, Eye, Printer, Download, Filter } from 'lucide-react';
 import { amountToWords } from '@/lib/amount-to-words';
+import AttachmentPreview from '@/components/views/AttachmentPreview';
+import { toast } from 'sonner';
 
 function formatDate(d: string) {
   if (!d) return '';
@@ -105,6 +107,52 @@ function buildProjectCodeTotals(claimsForVoucher: any[]) {
   return [...byCode.values()].sort((a, b) => a.projectCode.localeCompare(b.projectCode));
 }
 
+function getVoucherDocumentStyles() {
+  return `
+    body { font-family: Arial, sans-serif; padding: 20px; font-size: 11px; color: #111827; }
+    table { width: 100%; border-collapse: collapse; margin-top: 10px; font-size: 11px; }
+    th, td { border: 1px solid #ddd; padding: 6px 8px; text-align: left; vertical-align: top; }
+    th { background: #f5f5f5; }
+    .text-right { text-align: right; }
+    .voucher-header { display:grid; grid-template-columns:64px 1fr 64px; align-items:start; gap:12px; margin-bottom:14px; }
+    .voucher-logo { display:block; height:52px; width:52px; object-fit:contain; margin:0; }
+    .voucher-title-block { text-align:center; }
+    .voucher-title-block h2 { color:#2563eb; font-size:18px; margin:0 0 4px; }
+    .voucher-title-block h3 { border-top:1px solid #e5e7eb; border-bottom:1px solid #e5e7eb; font-size:15px; margin:8px 0 0; padding:4px 0; }
+    .voucher-box { border: 1px solid #e5e7eb; border-radius: 8px; padding: 10px; background: #f8fafc; font-size: 11px; }
+    .voucher-meta, .voucher-summary-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; margin: 12px 0; font-size:11px; }
+    .voucher-section-title { margin:0 0 8px; font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:.04em; }
+    .voucher-total-box { margin-top:10px; padding:10px; background:#f8fafc; border-radius:6px; font-size:11px; }
+    .voucher-signatures { display:grid; grid-template-columns:repeat(3, 1fr); gap:24px; margin-top:44px; text-align:center; font-size:11px; }
+    .voucher-signatures strong { display:block; border-top:1px solid #111827; padding-top:8px; margin-top:28px; font-size:11px; }
+    .voucher-signatures span { display:block; color:#4b5563; font-size:10px; margin-top:4px; }
+    @media (max-width: 700px) {
+      .voucher-header { grid-template-columns:56px 1fr; }
+      .voucher-header-spacer { display:none; }
+      .voucher-meta, .voucher-summary-grid, .voucher-signatures { grid-template-columns:1fr; }
+      table { font-size:10px; }
+    }
+    @media print { body { padding: 10px; } }
+  `;
+}
+
+function summarizeApproval(voucher: any, stage: 'admin' | 'manager' | 'final') {
+  const stamps = (voucher?.claims || [])
+    .map((claim: any) => voucher?.approvals?.[claim.claimIdInternal]?.[stage])
+    .filter(Boolean);
+  const names = [...new Set(stamps.map((stamp: any) => stamp.name || stamp.email).filter(Boolean))];
+  const latestDate = stamps
+    .map((stamp: any) => stamp.date)
+    .filter(Boolean)
+    .sort()
+    .at(-1);
+
+  return {
+    name: names.length ? names.join(', ') : 'Not available',
+    date: latestDate ? formatDateTime(latestDate) : 'Not available',
+  };
+}
+
 export default function PaymentVoucherView() {
   const { user } = useAuth();
   const [claims, setClaims] = useState<any[]>([]);
@@ -115,6 +163,7 @@ export default function PaymentVoucherView() {
   const [userDirectory, setUserDirectory] = useState<Record<string, string>>({});
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [filters, setFilters] = useState({ userEmail: '', startDate: '', endDate: '' });
+  const [exportingPdf, setExportingPdf] = useState(false);
 
   const loadClaims = async () => {
     if (!user) return;
@@ -183,15 +232,17 @@ export default function PaymentVoucherView() {
     });
   };
 
-  const openVoucher = (claimsForVoucher: any[]) => {
+  const openVoucher = async (claimsForVoucher: any[]) => {
     if (claimsForVoucher.length === 0) return;
     const userTotals = buildUserTotals(claimsForVoucher, userDirectory);
     const projectCodeTotals = buildProjectCodeTotals(claimsForVoucher);
+    const approvals = await getClaimApprovalTrail(claimsForVoucher.map((claim) => claim.claimIdInternal));
     setVoucher({
       voucherNo: buildVoucherNo(claimsForVoucher),
       date: new Date().toISOString(),
       claims: claimsForVoucher,
       claimIds: claimsForVoucher.map((claim) => claim.claimId),
+      approvals,
       paidTo: userTotals.length === 1 ? `${userTotals[0].name}${userTotals[0].email ? ` (${userTotals[0].email})` : ''}` : 'Multiple Users',
       periodFrom: claimsForVoucher.reduce((min, claim) => !min || claim.date < min ? claim.date : min, ''),
       periodTo: claimsForVoucher.reduce((max, claim) => !max || claim.date > max ? claim.date : max, ''),
@@ -209,7 +260,7 @@ export default function PaymentVoucherView() {
     if (!content) return '';
     const clone = content.cloneNode(true) as HTMLElement;
     clone.querySelectorAll('img').forEach((img) => {
-      img.setAttribute('style', 'display:block;height:48px;width:48px;object-fit:contain;margin:0 auto 8px;');
+      img.setAttribute('style', 'display:block;height:52px;width:52px;object-fit:contain;margin:0;');
     });
     return clone.innerHTML;
   };
@@ -219,40 +270,65 @@ export default function PaymentVoucherView() {
     if (!markup) return;
     const w = window.open('', '', 'width=1100,height=750');
     if (!w) return;
-    w.document.write(`<html><head><title>Payment Voucher</title><style>
-      body { font-family: Arial, sans-serif; padding: 20px; font-size: 12px; }
-      table { width: 100%; border-collapse: collapse; margin-top: 10px; }
-      th, td { border: 1px solid #ddd; padding: 6px 8px; text-align: left; vertical-align: top; }
-      th { background: #f5f5f5; }
-      .text-right { text-align: right; }
-      h2 { color: #2563eb; }
-      .voucher-logo { display:block; height:48px; width:48px; object-fit:contain; margin:0 auto 8px; }
-      .voucher-box { border: 1px solid #e5e7eb; border-radius: 8px; padding: 10px; background: #f8fafc; }
-      .voucher-meta, .voucher-summary-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; margin: 12px 0; }
-      @media (max-width: 700px) { .voucher-meta, .voucher-summary-grid { grid-template-columns: 1fr; } table { font-size: 11px; } }
-      @media print { body { padding: 10px; } }
-    </style></head><body>${markup}</body></html>`);
+    w.document.write(`<html><head><title>Payment Voucher</title><style>${getVoucherDocumentStyles()}</style></head><body>${markup}</body></html>`);
     w.document.close();
     w.print();
   };
 
-  const exportVoucherHTML = () => {
+  const downloadVoucherPDF = async () => {
     if (!voucher) return;
-    const markup = getVoucherMarkup();
-    if (!markup) return;
-    const html = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Voucher ${voucher.voucherNo}</title>
-<style>body{font-family:Arial;padding:20px;font-size:12px}table{width:100%;border-collapse:collapse;margin-top:10px}th,td{border:1px solid #ddd;padding:6px 8px;vertical-align:top}th{background:#f5f5f5}.text-right{text-align:right}h2{color:#2563eb}.voucher-logo{display:block;height:48px;width:48px;object-fit:contain;margin:0 auto 8px}.voucher-box{border:1px solid #e5e7eb;border-radius:8px;padding:10px;background:#f8fafc}.voucher-meta,.voucher-summary-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;margin:12px 0}@media(max-width:700px){.voucher-meta,.voucher-summary-grid{grid-template-columns:1fr}table{font-size:11px}}</style>
-</head><body>${markup}</body></html>`;
-    const blob = new Blob([html], { type: 'text/html' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `voucher-${voucher.voucherNo}.html`;
-    a.click();
-    URL.revokeObjectURL(url);
+    const content = document.getElementById('voucher-content');
+    if (!content) return;
+
+    setExportingPdf(true);
+    try {
+      const [{ default: html2canvas }, { jsPDF }] = await Promise.all([
+        import('html2canvas'),
+        import('jspdf'),
+      ]);
+      const canvas = await html2canvas(content, {
+        scale: 2,
+        useCORS: true,
+        backgroundColor: '#ffffff',
+      });
+      const pdf = new jsPDF('p', 'mm', 'a4');
+      const pageWidth = pdf.internal.pageSize.getWidth();
+      const pageHeight = pdf.internal.pageSize.getHeight();
+      const margin = 8;
+      const imgWidth = pageWidth - margin * 2;
+      const imgHeight = (canvas.height * imgWidth) / canvas.width;
+      const pageBodyHeight = pageHeight - margin * 2;
+      const imageData = canvas.toDataURL('image/png');
+
+      let heightLeft = imgHeight;
+      let position = margin;
+      pdf.addImage(imageData, 'PNG', margin, position, imgWidth, imgHeight, undefined, 'FAST');
+      heightLeft -= pageBodyHeight;
+
+      while (heightLeft > 0) {
+        position = margin - (imgHeight - heightLeft);
+        pdf.addPage();
+        pdf.addImage(imageData, 'PNG', margin, position, imgWidth, imgHeight, undefined, 'FAST');
+        heightLeft -= pageBodyHeight;
+      }
+
+      pdf.save(`voucher-${voucher.voucherNo}.pdf`);
+      toast.success('Payment voucher PDF downloaded');
+    } catch (error) {
+      console.error(error);
+      toast.error('Could not generate PDF. Please use Print and choose Save as PDF.');
+    } finally {
+      setExportingPdf(false);
+    }
   };
 
   const allFilteredSelected = filteredClaims.length > 0 && filteredClaims.every((claim) => selectedIds.has(claim.claimIdInternal));
+  const voucherFileIds = voucher
+    ? [...new Set(voucher.claims.flatMap((claim: any) => claim.fileIds || []))]
+    : [];
+  const adminApproval = voucher ? summarizeApproval(voucher, 'admin') : null;
+  const managerApproval = voucher ? summarizeApproval(voucher, 'manager') : null;
+  const finalApproval = voucher ? summarizeApproval(voucher, 'final') : null;
 
   return (
     <div className="animate-in fade-in slide-in-from-bottom-4 duration-500 space-y-4">
@@ -293,7 +369,7 @@ export default function PaymentVoucherView() {
             <span className="ml-2 text-muted-foreground">Verified payable: Rs. {selectedTotals.totalAmount.toFixed(2)}</span>
           </div>
           <div className="flex gap-2">
-            <Button size="sm" onClick={() => openVoucher(selectedClaims)}>
+            <Button size="sm" onClick={() => void openVoucher(selectedClaims)}>
               <Receipt className="h-4 w-4 mr-1" /> Create Combined Voucher
             </Button>
             <Button size="sm" variant="ghost" onClick={() => setSelectedIds(new Set())}>Clear</Button>
@@ -340,7 +416,7 @@ export default function PaymentVoucherView() {
                   <td className="p-3 text-right">{money(claim.submittedAmount ?? claim.amount)}</td>
                   <td className="p-3 text-right font-medium">{money(claim.amount)}</td>
                   <td className="p-3 text-center">
-                    <Button variant="ghost" size="sm" onClick={() => openVoucher([claim])}><Eye className="h-4 w-4 mr-1" /> Voucher</Button>
+                    <Button variant="ghost" size="sm" onClick={() => void openVoucher([claim])}><Eye className="h-4 w-4 mr-1" /> Voucher</Button>
                   </td>
                 </tr>
               ))}
@@ -355,7 +431,9 @@ export default function PaymentVoucherView() {
             <DialogTitle className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
               <span>Payment Voucher - {voucher?.voucherNo}</span>
               <div className="flex flex-wrap gap-2">
-                <Button variant="outline" size="sm" onClick={exportVoucherHTML}><Download className="h-4 w-4 mr-1" /> Export</Button>
+                <Button variant="outline" size="sm" onClick={() => void downloadVoucherPDF()} disabled={exportingPdf}>
+                  <Download className="h-4 w-4 mr-1" /> {exportingPdf ? 'Creating PDF...' : 'Download PDF'}
+                </Button>
                 <Button variant="outline" size="sm" onClick={printVoucher}><Printer className="h-4 w-4 mr-1" /> Print</Button>
               </div>
             </DialogTitle>
@@ -363,26 +441,31 @@ export default function PaymentVoucherView() {
           {voucher && (
             <div id="voucher-content">
               <div className="border-2 border-border rounded-lg p-4 sm:p-6">
-                <div className="text-center mb-4">
-                  {(companySettings?.logo_url || '/ipi-logo.jpg') && (
-                    <img
-                      src={companySettings?.logo_url || '/ipi-logo.jpg'}
-                      alt="Logo"
-                      width="48"
-                      height="48"
-                      className="mx-auto mb-2 block object-contain"
-                      style={{ width: '48px', height: '48px', maxWidth: '48px', maxHeight: '48px', objectFit: 'contain' }}
-                    />
-                  )}
-                  <h2 className="text-xl font-bold text-primary">{companySettings?.company_name || 'Company'}</h2>
-                  <p className="text-xs font-medium text-muted-foreground">{formatDateTime(voucher.date)}</p>
-                  {companySettings?.company_subtitle && (
-                    <p className="text-sm text-muted-foreground">{companySettings.company_subtitle}</p>
-                  )}
-                  <h3 className="text-lg font-semibold mt-2 border-y border-border py-1">PAYMENT VOUCHER</h3>
+                <div className="voucher-header mb-4 grid grid-cols-[56px_1fr_56px] items-start gap-3 sm:grid-cols-[64px_1fr_64px]">
+                  <div className="flex justify-start">
+                    {(companySettings?.logo_url || '/ipi-logo.jpg') && (
+                      <img
+                        src={companySettings?.logo_url || '/ipi-logo.jpg'}
+                        alt="Logo"
+                        width="52"
+                        height="52"
+                        className="voucher-logo block object-contain"
+                        style={{ width: '52px', height: '52px', maxWidth: '52px', maxHeight: '52px', objectFit: 'contain' }}
+                      />
+                    )}
+                  </div>
+                  <div className="voucher-title-block text-center">
+                    <h2 className="text-lg font-bold text-primary sm:text-xl">{companySettings?.company_name || 'Company'}</h2>
+                    <p className="text-xs font-medium text-muted-foreground">{formatDateTime(voucher.date)}</p>
+                    {companySettings?.company_subtitle && (
+                      <p className="text-xs text-muted-foreground sm:text-sm">{companySettings.company_subtitle}</p>
+                    )}
+                    <h3 className="mt-2 border-y border-border py-1 text-base font-semibold sm:text-lg">PAYMENT VOUCHER</h3>
+                  </div>
+                  <div className="voucher-header-spacer" aria-hidden="true" />
                 </div>
 
-                <div className="voucher-meta grid grid-cols-1 gap-3 text-sm mb-4 sm:grid-cols-2">
+                <div className="voucher-meta mb-4 grid grid-cols-1 gap-3 text-xs sm:grid-cols-2">
                   <div><strong>Voucher No:</strong> {voucher.voucherNo}</div>
                   <div><strong>Generated On:</strong> {formatDateTime(voucher.date)}</div>
                   <div><strong>Paid To:</strong> {voucher.paidTo}</div>
@@ -395,10 +478,10 @@ export default function PaymentVoucherView() {
 
                 {voucher.userTotals?.length > 0 && (
                   <div className="mb-4">
-                    <h4 className="mb-2 text-sm font-semibold">User Wise Summary</h4>
+                    <h4 className="voucher-section-title mb-2 text-xs font-semibold uppercase tracking-wide">User Wise Summary</h4>
                     <div className="voucher-summary-grid grid grid-cols-1 gap-3 sm:grid-cols-2">
                       {voucher.userTotals.map((entry: any) => (
-                        <div key={entry.email || entry.name} className="voucher-box rounded-lg border border-border bg-muted/20 p-3 text-sm">
+                        <div key={entry.email || entry.name} className="voucher-box rounded-lg border border-border bg-muted/20 p-3 text-xs">
                           <div className="font-semibold break-words">{entry.name}</div>
                           {entry.email && <div className="text-xs text-muted-foreground break-words">{entry.email}</div>}
                           <div className="mt-2 grid grid-cols-3 gap-2 text-xs">
@@ -414,8 +497,8 @@ export default function PaymentVoucherView() {
 
                 {voucher.projectCodeTotals?.length > 0 && (
                   <div className="mb-4 overflow-x-auto">
-                    <h4 className="mb-2 text-sm font-semibold">Project Code Wise Summary</h4>
-                    <table className="min-w-[760px] w-full text-sm border">
+                    <h4 className="voucher-section-title mb-2 text-xs font-semibold uppercase tracking-wide">Project Code Wise Summary</h4>
+                    <table className="min-w-[760px] w-full text-xs border">
                       <thead>
                         <tr className="bg-muted">
                           <th className="p-2 text-left border">Project Code</th>
@@ -448,7 +531,7 @@ export default function PaymentVoucherView() {
                 )}
 
                 <div className="overflow-x-auto">
-                <table className="min-w-[920px] w-full text-sm border">
+                <table className="min-w-[920px] w-full text-xs border">
                   <thead>
                     <tr className="bg-muted">
                       <th className="p-2 text-left border">Claim ID</th>
@@ -507,30 +590,43 @@ export default function PaymentVoucherView() {
                 </table>
                 </div>
 
-                <div className="mt-3 p-3 bg-muted/20 rounded text-sm">
+                <div className="voucher-total-box mt-3 p-3 bg-muted/20 rounded text-xs">
                   <div><strong>Submitted Total:</strong> {money(voucher.submittedAmount ?? voucher.amount ?? 0)}</div>
                   <div><strong>Final Verified Payable:</strong> {money(voucher.amount ?? 0)}</div>
                 </div>
 
-                <div className="mt-3 p-3 bg-muted/20 rounded text-sm">
+                <div className="voucher-total-box mt-3 p-3 bg-muted/20 rounded text-xs">
                   <strong>Verified Amount in Words:</strong> {amountToWords(voucher.amount || 0)}
                 </div>
 
-                <div className="grid grid-cols-3 gap-8 mt-10 text-center text-sm">
+                <div className="voucher-signatures mt-10 grid grid-cols-1 gap-8 text-center text-xs sm:grid-cols-3">
                   <div>
-                    <div className="border-t border-foreground pt-2 mt-8">Prepared By</div>
-                    <p className="text-xs text-muted-foreground mt-1">Admin</p>
+                    <strong className="block border-t border-foreground pt-2 mt-8">Prepared & Verified by Admin</strong>
+                    <span className="mt-1 block text-muted-foreground">{adminApproval?.name}</span>
+                    <span className="mt-1 block text-muted-foreground">Verified: {adminApproval?.date}</span>
                   </div>
                   <div>
-                    <div className="border-t border-foreground pt-2 mt-8">Checked By</div>
-                    <p className="text-xs text-muted-foreground mt-1">Accounts</p>
+                    <strong className="block border-t border-foreground pt-2 mt-8">Approved by Manager</strong>
+                    <span className="mt-1 block text-muted-foreground">{managerApproval?.name}</span>
+                    <span className="mt-1 block text-muted-foreground">Approved: {managerApproval?.date}</span>
                   </div>
                   <div>
-                    <div className="border-t border-foreground pt-2 mt-8">Approved By</div>
-                    <p className="text-xs text-muted-foreground mt-1">Super Admin</p>
+                    <strong className="block border-t border-foreground pt-2 mt-8">Final Approval by HOD</strong>
+                    <span className="mt-1 block text-muted-foreground">{finalApproval?.name}</span>
+                    <span className="mt-1 block text-muted-foreground">Approved: {finalApproval?.date}</span>
                   </div>
                 </div>
               </div>
+            </div>
+          )}
+          {voucher && (
+            <div className="mt-4 rounded-lg border border-border p-4">
+              <h4 className="mb-3 text-sm font-semibold">Bill Attachments for Processing</h4>
+              {voucherFileIds.length > 0 ? (
+                <AttachmentPreview fileIds={voucherFileIds} claimId={voucher.voucherNo} compact />
+              ) : (
+                <p className="text-sm italic text-muted-foreground">No bills attached to the selected claims</p>
+              )}
             </div>
           )}
         </DialogContent>

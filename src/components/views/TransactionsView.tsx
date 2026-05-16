@@ -23,7 +23,7 @@ export default function TransactionsView() {
   const [users, setUsers] = useState<any[]>([]);
   const [filters, setFilters] = useState({ userEmail: 'all', startDate: '', endDate: '' });
   const [loading, setLoading] = useState(true);
-  const canFilterByUser = user?.role === 'Admin' || user?.role === 'Super Admin' || user?.role === 'Manager';
+  const canFilterByUser = user?.role === 'Admin' || user?.role === 'Super Admin' || user?.role === 'Manager' || user?.role === 'Accounts';
 
   const visibleUsers = useMemo(() => {
     if (!user) return [];
