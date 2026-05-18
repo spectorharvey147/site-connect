@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
-import { submitClaim, getDropdownOptions, getCurrentBalance, ProjectCodeOption } from '@/lib/claims-api';
+import { useSearchParams, useNavigate } from 'react-router-dom';
+import { submitClaim, resubmitRejectedClaim, getDropdownOptions, getCurrentBalance, getClaimById, ProjectCodeOption } from '@/lib/claims-api';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -9,6 +10,7 @@ import { ChevronDown, ChevronRight, PlusCircle, Trash2, Send, Loader2 } from 'lu
 import { toast } from 'sonner';
 import FileUpload, { FileUploadHandle } from '@/components/views/FileUpload';
 import RupeeIcon from '@/components/icons/RupeeIcon';
+import AttachmentPreview from '@/components/views/AttachmentPreview';
 
 interface ExpenseRow {
   id: string;
@@ -40,6 +42,8 @@ function parseAmountInput(value: string) {
 
 export default function SubmitClaimView() {
   const { user } = useAuth();
+  const [searchParams] = useSearchParams();
+  const navigate = useNavigate();
   const fileUploadRef = useRef<FileUploadHandle>(null);
   const expenseCardRefs = useRef<Record<string, HTMLDivElement | null>>({});
   const pendingExpenseFocusRef = useRef<string | null>(null);
@@ -51,11 +55,61 @@ export default function SubmitClaimView() {
   const [tempClaimId, setTempClaimId] = useState(() => 'C-' + Date.now());
   const [balance, setBalance] = useState<number | null>(null);
   const [fileUploadKey, setFileUploadKey] = useState(0);
+  const [editingClaim, setEditingClaim] = useState<any>(null);
+  const [existingFileIds, setExistingFileIds] = useState<string[]>([]);
+  const editClaimId = searchParams.get('editClaim');
 
   useEffect(() => {
     getDropdownOptions().then(setDropdown);
     if (user) getCurrentBalance(user.email).then(setBalance);
   }, [user]);
+
+  useEffect(() => {
+    if (!user || !editClaimId) return;
+    let cancelled = false;
+    setLoading(true);
+    getClaimById(editClaimId)
+      .then((claim) => {
+        if (cancelled) return;
+        if (!claim) {
+          toast.error('Claim not found');
+          navigate('/history');
+          return;
+        }
+        if (claim.userEmail?.toLowerCase() !== user.email.toLowerCase() || !claim.status?.toLowerCase().includes('reject')) {
+          toast.error('Only your rejected claims can be edited and resubmitted');
+          navigate('/history');
+          return;
+        }
+
+        const rows = claim.expenses?.length
+          ? claim.expenses.map((expense: any) => ({
+              id: crypto.randomUUID(),
+              category: expense.category || '',
+              projectCode: expense.projectCode || '',
+              claimDate: expense.claimDate || '',
+              description: expense.description || '',
+              amountWithBill: expense.amountWithBill || 0,
+              amountWithoutBill: expense.amountWithoutBill || 0,
+            }))
+          : [emptyExpenseRow()];
+        setEditingClaim(claim);
+        setSite(claim.site || '');
+        setExpenses(rows);
+        setActiveExpenseId(rows[0]?.id || '');
+        setExistingFileIds(claim.fileIds || []);
+        setTempClaimId(claim.claimIdInternal || claim.claimId || `C-${Date.now()}`);
+      })
+      .catch((error) => {
+        toast.error(error.message || 'Could not load claim for editing');
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [editClaimId, navigate, user]);
 
   const getFilteredProjectCodes = (category: string) => {
     if (!site || !category) return [];
@@ -113,8 +167,9 @@ export default function SubmitClaimView() {
   const grandTotal = totalWithBill + totalWithoutBill;
 
   useEffect(() => {
+    if (editingClaim) return;
     setExpenses((prev) => prev.map((expense) => ({ ...expense, projectCode: '' })));
-  }, [site]);
+  }, [site, editingClaim]);
 
   useEffect(() => {
     const focusId = pendingExpenseFocusRef.current;
@@ -134,7 +189,7 @@ export default function SubmitClaimView() {
       toast.error('Every row needs a category, a matching cost code, and an amount');
       return;
     }
-    if (expenses.some((expense) => expense.amountWithBill > 0) && (fileUploadRef.current?.getFileCount() || 0) === 0) {
+    if (expenses.some((expense) => expense.amountWithBill > 0) && ((fileUploadRef.current?.getFileCount() || 0) + existingFileIds.length) === 0) {
       toast.error('Bills are required when any "With Bill" amount is entered');
       return;
     }
@@ -145,11 +200,12 @@ export default function SubmitClaimView() {
       if (fileUploadRef.current) {
         uploadedPaths = await fileUploadRef.current.uploadAll();
       }
-      if (expenses.some((expense) => expense.amountWithBill > 0) && uploadedPaths.length === 0) {
+      const allFileIds = [...existingFileIds, ...uploadedPaths];
+      if (expenses.some((expense) => expense.amountWithBill > 0) && allFileIds.length === 0) {
         throw new Error('Please upload bill attachments before submitting this claim.');
       }
 
-      const result = await submitClaim({
+      const payload = {
         site,
         expenses: expenses.map((expense) => ({
           category: expense.category,
@@ -159,8 +215,11 @@ export default function SubmitClaimView() {
           amountWithBill: expense.amountWithBill || 0,
           amountWithoutBill: expense.amountWithoutBill || 0,
         })),
-        fileIds: uploadedPaths,
-      }, user!.email, user!.name);
+        fileIds: allFileIds,
+      };
+      const result = editingClaim
+        ? await resubmitRejectedClaim(editingClaim.claimIdInternal || editingClaim.claimId, payload, user!.email, user!.name)
+        : await submitClaim(payload, user!.email, user!.name);
 
       if (result.ok) {
         toast.success(result.message);
@@ -170,7 +229,10 @@ export default function SubmitClaimView() {
         setActiveExpenseId(nextRow.id);
         setTempClaimId('C-' + Date.now());
         setFileUploadKey((prev) => prev + 1);
+        setEditingClaim(null);
+        setExistingFileIds([]);
         if (user) getCurrentBalance(user.email).then(setBalance);
+        if (editClaimId) navigate('/history');
       }
     } catch (err: any) {
       toast.error(err.message || 'Submission failed');
@@ -203,7 +265,13 @@ export default function SubmitClaimView() {
       <div className="glass-card p-4 sm:p-6">
         <h2 className="mb-4 flex items-center gap-2 text-lg font-bold sm:text-xl">
           <Send className="h-5 w-5 text-primary" /> New Claim Submission
+          {editingClaim && <span className="text-sm font-normal text-muted-foreground">Editing rejected claim {editingClaim.claimId}</span>}
         </h2>
+        {editingClaim?.rejectionReason && (
+          <div className="mb-4 rounded-lg border border-destructive/20 bg-destructive/10 p-3 text-sm text-destructive">
+            <strong>Required changes:</strong> {editingClaim.rejectionReason}
+          </div>
+        )}
         <form onSubmit={handleSubmit}>
           <div className="mb-4 grid grid-cols-1 gap-4 md:grid-cols-2">
             <div className="space-y-2">
@@ -465,6 +533,17 @@ export default function SubmitClaimView() {
 
           <div className="mb-4 rounded-lg border border-border bg-muted/10 p-3 sm:p-4">
             <h3 className="mb-2 text-sm font-semibold">Attachments (Bills / Receipts)</h3>
+            {existingFileIds.length > 0 && (
+              <div className="mb-3 rounded-md border border-border bg-background p-3">
+                <div className="mb-2 flex items-center justify-between gap-2">
+                  <p className="text-xs font-medium text-muted-foreground">Existing attachments kept with this claim</p>
+                  <Button type="button" variant="ghost" size="sm" onClick={() => setExistingFileIds([])}>
+                    Clear Existing
+                  </Button>
+                </div>
+                <AttachmentPreview fileIds={existingFileIds} claimId={editingClaim?.claimId || tempClaimId} compact />
+              </div>
+            )}
             <FileUpload
               ref={fileUploadRef}
               key={fileUploadKey}
@@ -476,7 +555,7 @@ export default function SubmitClaimView() {
 
           <Button type="submit" className="w-full gradient-primary text-base text-primary-foreground sm:text-sm" disabled={loading}>
             {loading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Send className="mr-2 h-4 w-4" />}
-            {loading ? 'Submitting...' : 'Submit Claim'}
+            {loading ? 'Submitting...' : editingClaim ? 'Resubmit Claim' : 'Submit Claim'}
           </Button>
         </form>
       </div>

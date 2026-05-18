@@ -8,6 +8,7 @@ CREATE TABLE public.users (
   password_hash TEXT NOT NULL,
   name TEXT NOT NULL,
   role TEXT NOT NULL DEFAULT 'User' CHECK (role IN ('User', 'Manager', 'Admin', 'Accounts', 'Super Admin')),
+  signature_url TEXT,
   manager_email TEXT,
   advance_amount NUMERIC NOT NULL DEFAULT 0,
   active BOOLEAN NOT NULL DEFAULT true,
