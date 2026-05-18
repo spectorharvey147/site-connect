@@ -14,6 +14,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { supabase } from '@/integrations/supabase/client';
 import RupeeIcon from '@/components/icons/RupeeIcon';
 import ImageUpload from '@/components/ImageUpload';
+import { getStoredUserSignature, setStoredUserSignature } from '@/lib/user-signatures';
 
 function canUseSignature(role?: string) {
   return Boolean(String(role || '').trim());
@@ -38,8 +39,12 @@ export default function UserManagementView() {
     setError(null);
     try {
       const data = await getAllUsers();
-      setUsers(data);
-      setAllUsers(data);
+      const usersWithStoredSignatures = data.map((entry: any) => ({
+        ...entry,
+        signatureUrl: entry.signatureUrl || getStoredUserSignature(entry.email),
+      }));
+      setUsers(usersWithStoredSignatures);
+      setAllUsers(usersWithStoredSignatures);
     } catch (e) { 
       console.error('Error loading users:', e);
       setError((e as any).message || 'Failed to load users');
@@ -96,6 +101,30 @@ export default function UserManagementView() {
       toast.success(`User ${!currentActive ? 'activated' : 'deactivated'}`);
       loadUsers();
     } catch (err: any) { toast.error(err.message); }
+  };
+
+  const handleSignatureUploaded = async (targetUser: any, url: string) => {
+    const signatureUrl = url || '';
+    try {
+      const { error } = await supabase
+        .from('users')
+        .update({ signature_url: signatureUrl || null } as any)
+        .eq('email', targetUser.email);
+      if (error) {
+        const message = String(error.message || error.details || '');
+        if (!message.includes('signature_url') && !message.includes('schema cache')) throw error;
+      }
+
+      setStoredUserSignature(targetUser.email, signatureUrl);
+      const applySignature = (entry: any) => entry.email === targetUser.email ? { ...entry, signatureUrl } : entry;
+      setUsers(prev => prev.map(applySignature));
+      setAllUsers(prev => prev.map(applySignature));
+      if (editUser?.email === targetUser.email) setEditUser({ ...editUser, signatureUrl });
+      toast.success(signatureUrl ? 'Signature saved' : 'Signature removed');
+    } catch (err: any) {
+      toast.error(err.message || 'Failed to save signature');
+      loadUsers();
+    }
   };
 
   const handleAddAdvance = async () => {
@@ -158,6 +187,19 @@ export default function UserManagementView() {
                 <Badge variant="secondary">{u.role}</Badge>
                 {u.manager && <span className="text-muted-foreground">Manager: {u.manager}</span>}
               </div>
+              <div className="rounded-lg border border-border bg-muted/20 p-3">
+                <Label className="mb-2 block text-xs">Signature</Label>
+                <ImageUpload
+                  bucket="user-avatars"
+                  currentUrl={u.signatureUrl || null}
+                  onUploaded={(url) => void handleSignatureUploaded(u, url)}
+                  folder={`signatures/${u.email}`}
+                  variant="signature"
+                  acceptedTypes={['image/png', 'image/jpeg']}
+                  buttonLabel={u.signatureUrl ? 'Change' : 'Upload'}
+                  helperText="Shown on vouchers"
+                />
+              </div>
               <div className="flex items-center justify-between pt-2 border-t border-border">
                 <p className="text-lg font-bold text-primary">₹{u.balance.toFixed(2)}</p>
                 <div className="flex items-center gap-1">
@@ -183,12 +225,12 @@ export default function UserManagementView() {
         {/* Desktop Table View */}
         <div className="hidden md:block overflow-x-auto">
           <table className="w-full text-sm">
-            <thead><tr className="bg-muted/50"><th className="p-3 text-left">Name</th><th className="p-3 text-left">Email</th><th className="p-3 text-left">Role</th><th className="p-3 text-left">Manager</th><th className="p-3 text-center">Status</th><th className="p-3 text-right">Balance</th><th className="p-3 text-center">Actions</th></tr></thead>
+            <thead><tr className="bg-muted/50"><th className="p-3 text-left">Name</th><th className="p-3 text-left">Email</th><th className="p-3 text-left">Role</th><th className="p-3 text-center">Actions</th><th className="p-3 text-center">Sign</th><th className="p-3 text-left">Manager</th><th className="p-3 text-center">Status</th><th className="p-3 text-right">Balance</th></tr></thead>
             <tbody>
               {loading ? (
                 Array.from({ length: 3 }).map((_, i) => (
                   <tr key={i} className="border-b border-border">
-                    {Array.from({ length: 7 }).map((_, j) => (
+                    {Array.from({ length: 8 }).map((_, j) => (
                       <td key={j} className="p-3"><Skeleton className="h-4 w-full" /></td>
                     ))}
                   </tr>
@@ -198,6 +240,23 @@ export default function UserManagementView() {
                   <td className="p-3 font-medium">{u.name}</td>
                   <td className="p-3 text-sm">{u.email}</td>
                   <td className="p-3">{u.role}</td>
+                  <td className="p-3 text-center space-x-1 whitespace-nowrap">
+                    <Button variant="ghost" size="sm" onClick={() => setEditUser({ ...u, originalEmail: u.email, password: '', signatureUrl: u.signatureUrl || '' })}><Edit className="h-4 w-4" /></Button>
+                    <Button variant="ghost" size="sm" className="text-success" onClick={() => setAdvanceModal({ email: u.email, name: u.name })}><RupeeIcon className="h-4 w-4" /></Button>
+                    <Button variant="ghost" size="sm" className="text-destructive" onClick={() => handleDelete(u.email)}><Trash2 className="h-4 w-4" /></Button>
+                  </td>
+                  <td className="p-3 min-w-[280px]">
+                    <ImageUpload
+                      bucket="user-avatars"
+                      currentUrl={u.signatureUrl || null}
+                      onUploaded={(url) => void handleSignatureUploaded(u, url)}
+                      folder={`signatures/${u.email}`}
+                      variant="signature"
+                      acceptedTypes={['image/png', 'image/jpeg']}
+                      buttonLabel={u.signatureUrl ? 'Change' : 'Upload'}
+                      helperText="Shown on vouchers"
+                    />
+                  </td>
                   <td className="p-3 text-sm text-muted-foreground">{u.manager || '—'}</td>
                   <td className="p-3 text-center">
                     <div className="flex items-center justify-center gap-2">
@@ -211,11 +270,6 @@ export default function UserManagementView() {
                     </div>
                   </td>
                   <td className="p-3 text-right font-bold">₹{u.balance.toFixed(2)}</td>
-                  <td className="p-3 text-center space-x-1">
-                    <Button variant="ghost" size="sm" onClick={() => setEditUser({ ...u, originalEmail: u.email, password: '', signatureUrl: u.signatureUrl || '' })}><Edit className="h-4 w-4" /></Button>
-                    <Button variant="ghost" size="sm" className="text-success" onClick={() => setAdvanceModal({ email: u.email, name: u.name })}><RupeeIcon className="h-4 w-4" /></Button>
-                    <Button variant="ghost" size="sm" className="text-destructive" onClick={() => handleDelete(u.email)}><Trash2 className="h-4 w-4" /></Button>
-                  </td>
                 </tr>
               ))}
             </tbody>
