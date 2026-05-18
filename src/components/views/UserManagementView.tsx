@@ -14,7 +14,6 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { supabase } from '@/integrations/supabase/client';
 import RupeeIcon from '@/components/icons/RupeeIcon';
 import ImageUpload from '@/components/ImageUpload';
-import { getStoredUserSignature, setStoredUserSignature } from '@/lib/user-signatures';
 
 function canUseSignature(role?: string) {
   return Boolean(String(role || '').trim());
@@ -39,12 +38,8 @@ export default function UserManagementView() {
     setError(null);
     try {
       const data = await getAllUsers();
-      const usersWithStoredSignatures = data.map((entry: any) => ({
-        ...entry,
-        signatureUrl: entry.signatureUrl || getStoredUserSignature(entry.email),
-      }));
-      setUsers(usersWithStoredSignatures);
-      setAllUsers(usersWithStoredSignatures);
+      setUsers(data);
+      setAllUsers(data);
     } catch (e) { 
       console.error('Error loading users:', e);
       setError((e as any).message || 'Failed to load users');
@@ -110,12 +105,8 @@ export default function UserManagementView() {
         .from('users')
         .update({ signature_url: signatureUrl || null } as any)
         .eq('email', targetUser.email);
-      if (error) {
-        const message = String(error.message || error.details || '');
-        if (!message.includes('signature_url') && !message.includes('schema cache')) throw error;
-      }
+      if (error) throw error;
 
-      setStoredUserSignature(targetUser.email, signatureUrl);
       const applySignature = (entry: any) => entry.email === targetUser.email ? { ...entry, signatureUrl } : entry;
       setUsers(prev => prev.map(applySignature));
       setAllUsers(prev => prev.map(applySignature));

@@ -12,7 +12,6 @@ import { amountToWords } from '@/lib/amount-to-words';
 import AttachmentPreview from '@/components/views/AttachmentPreview';
 import { toast } from 'sonner';
 import { supabase } from '@/integrations/supabase/client';
-import { getStoredUserSignature } from '@/lib/user-signatures';
 
 function formatDate(d: string) {
   if (!d) return '';
@@ -55,7 +54,7 @@ function buildUserDirectory(users: any[]) {
     String(entry.email || '').trim().toLowerCase(),
     {
       name: entry.name || entry.email,
-      signatureUrl: entry.signatureUrl || entry.signature_url || getStoredUserSignature(entry.email),
+      signatureUrl: entry.signatureUrl || entry.signature_url || '',
     },
   ]));
 }
@@ -304,16 +303,7 @@ export default function PaymentVoucherView() {
         .select('email,name,signature_url')
         .in('email', emails);
       if (error) {
-        const fallbackUsers = emails.map((email) => ({
-          email,
-          name: userDirectory[email]?.name || email,
-          signature_url: getStoredUserSignature(email),
-        }));
-        voucherUserDirectory = {
-          ...userDirectory,
-          ...buildUserDirectory(fallbackUsers),
-        };
-        setUserDirectory(voucherUserDirectory);
+        console.warn('Could not refresh voucher user signatures', error);
       } else {
         voucherUserDirectory = {
           ...userDirectory,
