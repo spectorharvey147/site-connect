@@ -10,21 +10,36 @@ interface ImageUploadProps {
   currentUrl: string | null;
   onUploaded: (url: string) => void;
   folder?: string;
-  variant?: 'avatar' | 'logo';
+  variant?: 'avatar' | 'logo' | 'signature';
   fallbackText?: string;
+  acceptedTypes?: string[];
+  helperText?: string;
+  buttonLabel?: string;
 }
 
-export default function ImageUpload({ bucket, currentUrl, onUploaded, folder = '', variant = 'avatar', fallbackText = '?' }: ImageUploadProps) {
+export default function ImageUpload({
+  bucket,
+  currentUrl,
+  onUploaded,
+  folder = '',
+  variant = 'avatar',
+  fallbackText = '?',
+  acceptedTypes,
+  helperText,
+  buttonLabel,
+}: ImageUploadProps) {
   const [uploading, setUploading] = useState(false);
   const [preview, setPreview] = useState<string | null>(currentUrl);
   const inputRef = useRef<HTMLInputElement>(null);
+  const allowedTypes = acceptedTypes || ['image/png', 'image/jpeg', 'image/jpg', 'image/webp', 'image/gif'];
+  const accept = allowedTypes.join(',');
 
   const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
-    if (!file.type.startsWith('image/')) {
-      toast.error('Please select an image file');
+    if (!allowedTypes.includes(file.type)) {
+      toast.error(acceptedTypes ? 'Please select a PNG or JPEG image' : 'Please select an image file');
       return;
     }
     if (file.size > 5 * 1024 * 1024) {
@@ -81,10 +96,41 @@ export default function ImageUpload({ bucket, currentUrl, onUploaded, folder = '
                 </Button>
               )}
             </div>
-            <p className="text-xs text-muted-foreground">PNG, JPG up to 5MB</p>
+            <p className="text-xs text-muted-foreground">{helperText || 'PNG, JPG up to 5MB'}</p>
           </div>
         </div>
-        <input ref={inputRef} type="file" accept="image/*" className="hidden" onChange={handleFileSelect} />
+        <input ref={inputRef} type="file" accept={accept} className="hidden" onChange={handleFileSelect} />
+      </div>
+    );
+  }
+
+  if (variant === 'signature') {
+    return (
+      <div className="space-y-2">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+          <div className="flex h-20 w-full max-w-[240px] items-center justify-center overflow-hidden rounded border border-dashed border-border bg-muted/20 p-2">
+            {preview ? (
+              <img src={preview} alt="Signature" className="max-h-full max-w-full object-contain" />
+            ) : (
+              <ImageIcon className="h-6 w-6 text-muted-foreground" />
+            )}
+          </div>
+          <div className="flex flex-col gap-1">
+            <div className="flex gap-2">
+              <Button type="button" variant="outline" size="sm" onClick={() => inputRef.current?.click()} disabled={uploading}>
+                {uploading ? <Loader2 className="h-4 w-4 animate-spin mr-1" /> : <Upload className="h-4 w-4 mr-1" />}
+                {buttonLabel || (preview ? 'Change Signature' : 'Upload Signature')}
+              </Button>
+              {preview && (
+                <Button type="button" variant="ghost" size="sm" onClick={handleRemove}>
+                  <X className="h-4 w-4 mr-1" /> Remove
+                </Button>
+              )}
+            </div>
+            <p className="text-xs text-muted-foreground">{helperText || 'PNG or JPEG up to 5MB. A wide transparent signature works best.'}</p>
+          </div>
+        </div>
+        <input ref={inputRef} type="file" accept={accept} className="hidden" onChange={handleFileSelect} />
       </div>
     );
   }
@@ -109,7 +155,7 @@ export default function ImageUpload({ bucket, currentUrl, onUploaded, folder = '
           </Button>
         )}
       </div>
-      <input ref={inputRef} type="file" accept="image/*" className="hidden" onChange={handleFileSelect} />
+      <input ref={inputRef} type="file" accept={accept} className="hidden" onChange={handleFileSelect} />
     </div>
   );
 }

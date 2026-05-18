@@ -367,6 +367,7 @@ export type Database = {
           password_hash: string
           profile_picture_url: string | null
           role: string
+          signature_url: string | null
         }
         Insert: {
           active?: boolean
@@ -382,6 +383,7 @@ export type Database = {
           password_hash: string
           profile_picture_url?: string | null
           role?: string
+          signature_url?: string | null
         }
         Update: {
           active?: boolean
@@ -397,6 +399,7 @@ export type Database = {
           password_hash?: string
           profile_picture_url?: string | null
           role?: string
+          signature_url?: string | null
         }
         Relationships: []
       }

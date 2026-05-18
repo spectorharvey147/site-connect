@@ -124,7 +124,9 @@ function getVoucherDocumentStyles() {
     .voucher-section-title { margin:0 0 8px; font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:.04em; }
     .voucher-total-box { margin-top:10px; padding:10px; background:#f8fafc; border-radius:6px; font-size:11px; }
     .voucher-signatures { display:grid; grid-template-columns:repeat(3, 1fr); gap:24px; margin-top:44px; text-align:center; font-size:11px; }
-    .voucher-signatures strong { display:block; border-top:1px solid #111827; padding-top:8px; margin-top:28px; font-size:11px; }
+    .voucher-signature-image-wrap { height:46px; display:flex; align-items:flex-end; justify-content:center; margin-bottom:6px; }
+    .voucher-signature-image { max-width:150px; max-height:42px; width:auto; height:auto; object-fit:contain; }
+    .voucher-signatures strong { display:block; border-top:1px solid #111827; padding-top:8px; font-size:11px; }
     .voucher-signatures span { display:block; color:#4b5563; font-size:10px; margin-top:4px; }
     @media (max-width: 700px) {
       .voucher-header { grid-template-columns:56px 1fr; }
@@ -150,7 +152,28 @@ function summarizeApproval(voucher: any, stage: 'admin' | 'manager' | 'final') {
   return {
     name: names.length ? names.join(', ') : 'Not available',
     date: latestDate ? formatDateTime(latestDate) : 'Not available',
+    signatureUrl: stamps.find((stamp: any) => stamp.signatureUrl)?.signatureUrl || '',
   };
+}
+
+function SignatureBlock({ title, approval }: { title: string; approval: any }) {
+  return (
+    <div>
+      <div className="voucher-signature-image-wrap flex h-[46px] items-end justify-center mb-1">
+        {approval?.signatureUrl && (
+          <img
+            src={approval.signatureUrl}
+            alt={`${title} signature`}
+            className="voucher-signature-image max-h-[42px] max-w-[150px] object-contain"
+            style={{ maxWidth: '150px', maxHeight: '42px', width: 'auto', height: 'auto', objectFit: 'contain' }}
+          />
+        )}
+      </div>
+      <strong className="block border-t border-foreground pt-2">{title}</strong>
+      <span className="mt-1 block text-muted-foreground">{approval?.name}</span>
+      <span className="mt-1 block text-muted-foreground">Approved: {approval?.date}</span>
+    </div>
+  );
 }
 
 export default function PaymentVoucherView() {
@@ -259,8 +282,11 @@ export default function PaymentVoucherView() {
     const content = document.getElementById('voucher-content');
     if (!content) return '';
     const clone = content.cloneNode(true) as HTMLElement;
-    clone.querySelectorAll('img').forEach((img) => {
+    clone.querySelectorAll('img.voucher-logo').forEach((img) => {
       img.setAttribute('style', 'display:block;height:52px;width:52px;object-fit:contain;margin:0;');
+    });
+    clone.querySelectorAll('img.voucher-signature-image').forEach((img) => {
+      img.setAttribute('style', 'max-width:150px;max-height:42px;width:auto;height:auto;object-fit:contain;');
     });
     return clone.innerHTML;
   };
@@ -600,21 +626,9 @@ export default function PaymentVoucherView() {
                 </div>
 
                 <div className="voucher-signatures mt-10 grid grid-cols-1 gap-8 text-center text-xs sm:grid-cols-3">
-                  <div>
-                    <strong className="block border-t border-foreground pt-2 mt-8">Prepared & Verified by Admin</strong>
-                    <span className="mt-1 block text-muted-foreground">{adminApproval?.name}</span>
-                    <span className="mt-1 block text-muted-foreground">Verified: {adminApproval?.date}</span>
-                  </div>
-                  <div>
-                    <strong className="block border-t border-foreground pt-2 mt-8">Approved by Manager</strong>
-                    <span className="mt-1 block text-muted-foreground">{managerApproval?.name}</span>
-                    <span className="mt-1 block text-muted-foreground">Approved: {managerApproval?.date}</span>
-                  </div>
-                  <div>
-                    <strong className="block border-t border-foreground pt-2 mt-8">Final Approval by HOD</strong>
-                    <span className="mt-1 block text-muted-foreground">{finalApproval?.name}</span>
-                    <span className="mt-1 block text-muted-foreground">Approved: {finalApproval?.date}</span>
-                  </div>
+                  <SignatureBlock title="Prepared & Verified by Admin" approval={adminApproval} />
+                  <SignatureBlock title="Approved by Manager" approval={managerApproval} />
+                  <SignatureBlock title="Final Approval by HOD" approval={finalApproval} />
                 </div>
               </div>
             </div>

@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
+import { useNavigate } from 'react-router-dom';
 import { getClaimsHistory, getClaimById, getUsersDirectory, getCompanySettings } from '@/lib/claims-api';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -14,6 +15,15 @@ import AttachmentPreview from '@/components/views/AttachmentPreview';
 import { supabase } from '@/integrations/supabase/client';
 import { exportClaimsCSV } from '@/lib/export-utils';
 import { amountToWords } from '@/lib/amount-to-words';
+
+function escapeHtml(value: unknown) {
+  return String(value ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;');
+}
 
 function statusBadge(status: string) {
   const normalized = status.toLowerCase();
@@ -32,58 +42,150 @@ function formatDate(date: string) {
   return new Date(date).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
 }
 
-function generateClaimPDFHtml(claims: any[], companySettings: any) {
-  const logo = companySettings?.logo_url ? `<img src="${companySettings.logo_url}" style="height:50px;margin-bottom:8px" />` : '';
+function generateClaimPDFHtml(claims: any[], companySettings: any, users: any[] = []) {
+  const logo = companySettings?.logo_url
+    ? `<div class="logo-frame"><img src="${escapeHtml(companySettings.logo_url)}" class="logo" /></div>`
+    : '<div class="logo-frame logo-placeholder">Logo</div>';
   const companyName = companySettings?.company_name || 'Company';
+  const userMap = Object.fromEntries(users.map((entry) => [String(entry.email || '').toLowerCase(), entry]));
   const nonRejected = claims.filter((claim) => !claim.status.toLowerCase().includes('reject'));
   const rejectedAmount = claims.filter((claim) => claim.status.toLowerCase().includes('reject')).reduce((sum, claim) => sum + (claim.amount || 0), 0);
   const totalAmount = nonRejected.reduce((sum, claim) => sum + (claim.amount || 0), 0);
   const grandTotal = claims.reduce((sum, claim) => sum + (claim.amount || 0), 0);
+  const groupedByUser = claims.reduce<Record<string, any[]>>((groups, claim) => {
+    const key = String(claim.userEmail || claim.submittedBy || 'unknown').toLowerCase();
+    if (!groups[key]) groups[key] = [];
+    groups[key].push(claim);
+    return groups;
+  }, {});
 
-  const rows = claims.map((claim) => `
-    <tr>
-      <td>${claim.claimId}</td>
-      <td>${formatDate(claim.date)}</td>
-      <td>${claim.submittedBy}</td>
-      <td>${claim.site}</td>
-      <td class="text-right">Rs. ${(claim.totalWithBill ?? 0).toFixed(2)}</td>
-      <td class="text-right">Rs. ${(claim.totalWithoutBill ?? 0).toFixed(2)}</td>
-      <td class="text-right"><strong>Rs. ${(claim.amount ?? 0).toFixed(2)}</strong></td>
-      <td>${claim.status}</td>
-    </tr>
-  `).join('');
+  const claimSections = Object.entries(groupedByUser).map(([email, userClaims]) => {
+    const firstClaim = userClaims[0];
+    const submitter = userMap[email] || {};
+    const signatureUrl = submitter.signatureUrl || submitter.signature_url || '';
+    const userTotal = userClaims.reduce((sum, claim) => sum + (claim.amount || 0), 0);
+
+    const sections = userClaims.map((claim) => {
+      const expenseRows = (claim.expenses?.length ? claim.expenses : [{
+        category: '-',
+        projectCode: '-',
+        claimDate: claim.date,
+        description: '-',
+        amountWithBill: claim.totalWithBill || 0,
+        amountWithoutBill: claim.totalWithoutBill || 0,
+        amount: claim.amount || 0,
+      }]).map((expense: any) => `
+        <tr>
+          <td>${escapeHtml(expense.category)}</td>
+          <td>${escapeHtml(expense.projectCode || '-')}</td>
+          <td>${formatDate(expense.claimDate || claim.date)}</td>
+          <td>${escapeHtml(expense.description || '-')}</td>
+          <td class="text-right">Rs. ${(expense.amountWithBill ?? 0).toFixed(2)}</td>
+          <td class="text-right">Rs. ${(expense.amountWithoutBill ?? 0).toFixed(2)}</td>
+          <td class="text-right">Rs. ${(expense.amount ?? 0).toFixed(2)}</td>
+        </tr>
+      `).join('');
+
+      return `
+        <section class="claim-block">
+          <div class="claim-heading">
+            <div>
+              <h2>Claim ${escapeHtml(claim.claimId)}</h2>
+              <p>${escapeHtml(claim.site)} | ${formatDate(claim.date)} | ${escapeHtml(claim.status)}</p>
+            </div>
+            <div class="claim-total">Rs. ${(claim.amount ?? 0).toFixed(2)}</div>
+          </div>
+          ${claim.rejectionReason ? `<div class="rejection"><strong>Rejection Reason:</strong> ${escapeHtml(claim.rejectionReason)}</div>` : ''}
+          <table>
+            <thead>
+              <tr>
+                <th>Category</th><th>Project Code</th><th>Date</th><th>Description</th>
+                <th class="text-right">With Bill</th><th class="text-right">Without Bill</th><th class="text-right">Total</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${expenseRows}
+              <tr class="subtotal">
+                <td colspan="4" class="text-right">Claim Total</td>
+                <td class="text-right">Rs. ${(claim.totalWithBill ?? 0).toFixed(2)}</td>
+                <td class="text-right">Rs. ${(claim.totalWithoutBill ?? 0).toFixed(2)}</td>
+                <td class="text-right">Rs. ${(claim.amount ?? 0).toFixed(2)}</td>
+              </tr>
+            </tbody>
+          </table>
+        </section>
+      `;
+    }).join('');
+
+    return `
+      <section class="user-block">
+        <div class="user-heading">
+          <div>
+            <h2>${escapeHtml(firstClaim.submittedBy || email)}</h2>
+            <p>${escapeHtml(firstClaim.userEmail || '')}</p>
+          </div>
+          <div class="user-total">${userClaims.length} claim${userClaims.length === 1 ? '' : 's'} | Rs. ${userTotal.toFixed(2)}</div>
+        </div>
+        ${sections}
+        <div class="signature-row">
+          <div></div>
+          <div class="signature-box">
+            <div class="signature-image">${signatureUrl ? `<img src="${escapeHtml(signatureUrl)}" />` : ''}</div>
+            <div class="signature-line">Submitted User Signature</div>
+            <div class="muted">${escapeHtml(firstClaim.submittedBy || '')}</div>
+          </div>
+        </div>
+      </section>
+    `;
+  }).join('');
 
   return `<!DOCTYPE html>
 <html><head><meta charset="utf-8"><title>Claims Report - ${companyName}</title>
 <style>
-  body { font-family: Arial, sans-serif; padding: 20px; font-size: 12px; }
-  table { width: 100%; border-collapse: collapse; margin-top: 10px; }
-  th, td { border: 1px solid #ddd; padding: 6px 8px; text-align: left; }
+  body { font-family: Arial, sans-serif; padding: 22px; font-size: 11px; color:#111827; }
+  table { width: 100%; border-collapse: collapse; margin-top: 8px; page-break-inside: avoid; }
+  th, td { border: 1px solid #d1d5db; padding: 6px 8px; text-align: left; vertical-align: top; }
   th { background: #f5f5f5; font-weight: bold; }
   .text-right { text-align: right; }
-  h1 { color: #2563eb; font-size: 18px; margin: 0; }
-  .header { display: flex; align-items: center; gap: 12px; border-bottom: 2px solid #2563eb; padding-bottom: 10px; margin-bottom: 15px; }
-  .summary { margin-top: 15px; font-size: 13px; }
-  .rejected { color: #dc2626; }
+  h1 { color: #2563eb; font-size: 18px; line-height:1.2; margin: 0; overflow-wrap:anywhere; }
+  h2 { margin:0; font-size:13px; }
+  .logo-frame { width:70px; min-height:58px; display:flex; align-items:center; justify-content:center; border:1px solid #e5e7eb; background:#fff; padding:4px; }
+  .logo-placeholder { color:#9ca3af; font-size:10px; text-transform:uppercase; }
+  .logo { max-height:56px; max-width:64px; width:auto; height:auto; object-fit:contain; }
+  .header { display: grid; grid-template-columns:78px minmax(0, 1fr); align-items: center; gap: 14px; border-bottom: 2px solid #2563eb; padding-bottom: 10px; margin-bottom: 14px; }
+  .company-meta { min-width:0; }
+  .meta-grid { display:grid; grid-template-columns:repeat(4, 1fr); gap:8px; margin:12px 0; }
+  .meta-grid div { border:1px solid #e5e7eb; background:#f8fafc; padding:8px; border-radius:4px; }
+  .user-block { margin-top:16px; page-break-inside: avoid; }
+  .user-heading, .claim-heading { display:flex; align-items:flex-start; justify-content:space-between; gap:12px; background:#f8fafc; border:1px solid #e5e7eb; padding:8px 10px; }
+  .claim-heading { margin-top:10px; background:#fff; }
+  .claim-heading p, .user-heading p, .muted { margin:2px 0 0; color:#4b5563; font-size:10px; }
+  .claim-total, .user-total { font-weight:700; text-align:right; white-space:nowrap; }
+  .subtotal { font-weight:700; background:#f9fafb; }
+  .summary { margin-top: 15px; font-size: 12px; }
+  .rejected, .rejection { color: #dc2626; }
+  .rejection { margin:8px 0; border:1px solid #fecaca; background:#fef2f2; padding:8px; }
+  .signature-row { display:grid; grid-template-columns:1fr 220px; gap:20px; margin-top:20px; }
+  .signature-box { text-align:center; }
+  .signature-image { height:50px; display:flex; align-items:flex-end; justify-content:center; margin-bottom:5px; }
+  .signature-image img { max-width:170px; max-height:46px; width:auto; height:auto; object-fit:contain; }
+  .signature-line { border-top:1px solid #111827; padding-top:6px; font-weight:700; }
   @media print { body { padding: 0; } }
 </style></head><body>
   <div class="header">
     ${logo}
-    <div>
-      <h1>${companyName}</h1>
+    <div class="company-meta">
+      <h1>${escapeHtml(companyName)}</h1>
       <p style="margin:2px 0;color:#666">Claims Report | Generated: ${new Date().toLocaleDateString('en-IN')}</p>
     </div>
   </div>
-  <table>
-    <thead><tr><th>Claim ID</th><th>Date</th><th>Submitted By</th><th>Site</th><th class="text-right">With Bill</th><th class="text-right">Without Bill</th><th class="text-right">Total</th><th>Status</th></tr></thead>
-    <tbody>${rows}
-      <tr style="font-weight:bold;background:#f5f5f5">
-        <td colspan="6" class="text-right">GRAND TOTAL</td>
-        <td class="text-right">Rs. ${grandTotal.toFixed(2)}</td>
-        <td></td>
-      </tr>
-    </tbody>
-  </table>
+  <div class="meta-grid">
+    <div><strong>Total Claims</strong><br>${claims.length}</div>
+    <div><strong>Submitted Total</strong><br>Rs. ${grandTotal.toFixed(2)}</div>
+    <div><strong>Net Payable</strong><br>Rs. ${totalAmount.toFixed(2)}</div>
+    <div><strong>Rejected</strong><br>Rs. ${rejectedAmount.toFixed(2)}</div>
+  </div>
+  ${claimSections}
   <div class="summary">
     <p><strong>Total Claims:</strong> ${claims.length} | <strong>Total Amount:</strong> Rs. ${grandTotal.toFixed(2)}</p>
     ${rejectedAmount > 0 ? `<p class="rejected"><strong>Rejected Amount:</strong> Rs. ${rejectedAmount.toFixed(2)} | <strong>Net Amount (excl. rejected):</strong> Rs. ${totalAmount.toFixed(2)}</p>` : ''}
@@ -94,6 +196,7 @@ function generateClaimPDFHtml(claims: any[], companySettings: any) {
 
 export default function ClaimHistoryView() {
   const { user, isAdmin } = useAuth();
+  const navigate = useNavigate();
   const [claims, setClaims] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [selectedClaim, setSelectedClaim] = useState<any>(null);
@@ -122,9 +225,9 @@ export default function ClaimHistoryView() {
 
   useEffect(() => { loadHistory(); }, [user]);
   useEffect(() => {
-    if (canViewUserColumn) getUsersDirectory().then(setUsers);
+    getUsersDirectory().then(setUsers);
     getCompanySettings().then(setCompanySettings);
-  }, [canViewUserColumn]);
+  }, []);
 
   const viewClaim = async (claimId: string) => {
     const data = await getClaimById(claimId);
@@ -153,7 +256,7 @@ export default function ClaimHistoryView() {
   const openReportPreview = (claimsForPdf?: any[], title = 'Claims Report') => {
     const target = claimsForPdf || claims;
     if (target.length === 0) return;
-    const html = generateClaimPDFHtml(target, companySettings);
+    const html = generateClaimPDFHtml(target, companySettings, users);
     const blob = new Blob([html], { type: 'text/html;charset=utf-8;' });
     const url = URL.createObjectURL(blob);
     setReportPreview((prev) => {
@@ -166,6 +269,11 @@ export default function ClaimHistoryView() {
 
   const claimFooter = (
     <div className="flex flex-col gap-2 sm:flex-row sm:justify-end">
+      {selectedClaim?.status?.toLowerCase().includes('reject') && selectedClaim?.userEmail?.toLowerCase() === user?.email?.toLowerCase() && (
+        <Button onClick={() => navigate(`/submit?editClaim=${encodeURIComponent(selectedClaim.claimIdInternal || selectedClaim.claimId)}`)}>
+          Edit & Resubmit
+        </Button>
+      )}
       <Button variant="outline" onClick={() => setSelectedClaim(null)}>Close</Button>
     </div>
   );
@@ -199,7 +307,11 @@ export default function ClaimHistoryView() {
                 <SelectTrigger><SelectValue placeholder="All users" /></SelectTrigger>
                 <SelectContent>
                   <SelectItem value="all">All Users</SelectItem>
-                  {visibleUsers.map((visibleUser) => <SelectItem key={visibleUser.email} value={visibleUser.email}>{visibleUser.name}</SelectItem>)}
+                  {visibleUsers.map((visibleUser) => (
+                    <SelectItem key={visibleUser.email} value={visibleUser.email}>
+                      {visibleUser.name || visibleUser.email}
+                    </SelectItem>
+                  ))}
                 </SelectContent>
               </Select>
             </div>

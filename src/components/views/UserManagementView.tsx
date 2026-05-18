@@ -13,6 +13,13 @@ import { toast } from 'sonner';
 import { Skeleton } from '@/components/ui/skeleton';
 import { supabase } from '@/integrations/supabase/client';
 import RupeeIcon from '@/components/icons/RupeeIcon';
+import ImageUpload from '@/components/ImageUpload';
+
+const SIGNATURE_ROLES = ['Admin', 'Manager', 'Super Admin'];
+
+function canUseSignature(role?: string) {
+  return SIGNATURE_ROLES.includes(String(role || ''));
+}
 
 export default function UserManagementView() {
   const { user } = useAuth();
@@ -67,6 +74,7 @@ export default function UserManagementView() {
         role: editUser.role,
         password: editUser.password || undefined,
         manager: editUser.manager,
+        signatureUrl: canUseSignature(editUser.role) ? editUser.signatureUrl || '' : '',
       });
       toast.success('User updated');
       setEditUser(null);
@@ -159,7 +167,7 @@ export default function UserManagementView() {
                     checked={u.active !== false}
                     onCheckedChange={() => handleToggleActive(u.email, u.active !== false)}
                   />
-                  <Button variant="ghost" size="icon" className="h-9 w-9" onClick={() => setEditUser({ ...u, originalEmail: u.email, password: '' })}>
+                  <Button variant="ghost" size="icon" className="h-9 w-9" onClick={() => setEditUser({ ...u, originalEmail: u.email, password: '', signatureUrl: u.signatureUrl || '' })}>
                     <Edit className="h-4 w-4" />
                   </Button>
                   <Button variant="ghost" size="icon" className="h-9 w-9 text-success" onClick={() => setAdvanceModal({ email: u.email, name: u.name })}>
@@ -206,7 +214,7 @@ export default function UserManagementView() {
                   </td>
                   <td className="p-3 text-right font-bold">₹{u.balance.toFixed(2)}</td>
                   <td className="p-3 text-center space-x-1">
-                    <Button variant="ghost" size="sm" onClick={() => setEditUser({ ...u, originalEmail: u.email, password: '' })}><Edit className="h-4 w-4" /></Button>
+                    <Button variant="ghost" size="sm" onClick={() => setEditUser({ ...u, originalEmail: u.email, password: '', signatureUrl: u.signatureUrl || '' })}><Edit className="h-4 w-4" /></Button>
                     <Button variant="ghost" size="sm" className="text-success" onClick={() => setAdvanceModal({ email: u.email, name: u.name })}><RupeeIcon className="h-4 w-4" /></Button>
                     <Button variant="ghost" size="sm" className="text-destructive" onClick={() => handleDelete(u.email)}><Trash2 className="h-4 w-4" /></Button>
                   </td>
@@ -291,7 +299,7 @@ export default function UserManagementView() {
               </div>
               <div className="space-y-2">
                 <Label>Role</Label>
-                <Select value={editUser.role} onValueChange={v => setEditUser({ ...editUser, role: v })}>
+                <Select value={editUser.role} onValueChange={v => setEditUser({ ...editUser, role: v, signatureUrl: canUseSignature(v) ? editUser.signatureUrl : '' })}>
                   <SelectTrigger className="h-11 sm:h-10"><SelectValue /></SelectTrigger>
                   <SelectContent>
                     <SelectItem value="User">User</SelectItem>
@@ -312,12 +320,25 @@ export default function UserManagementView() {
                   <SelectTrigger className="h-11 sm:h-10"><SelectValue placeholder="Select Manager" /></SelectTrigger>
                   <SelectContent>
                     <SelectItem value="none">No Manager</SelectItem>
-                    {allUsers.filter(u => u.email !== editUser.originalEmail).map(u => (
+                    {allUsers.filter(u => u.email !== editUser.originalEmail && canUseSignature(u.role)).map(u => (
                       <SelectItem key={u.email} value={u.email}>{u.name}</SelectItem>
                     ))}
                   </SelectContent>
                 </Select>
               </div>
+              {canUseSignature(editUser.role) && (
+                <div className="space-y-2 rounded-lg border border-border bg-muted/20 p-3">
+                  <Label>Approval Signature</Label>
+                  <ImageUpload
+                    bucket="user-avatars"
+                    currentUrl={editUser.signatureUrl || null}
+                    onUploaded={(url) => setEditUser({ ...editUser, signatureUrl: url })}
+                    folder={`signatures/${editUser.email || editUser.originalEmail}`}
+                    variant="signature"
+                    acceptedTypes={['image/png', 'image/jpeg']}
+                  />
+                </div>
+              )}
               <DialogFooter className="flex-col sm:flex-row gap-2 sm:gap-0">
                 <Button variant="outline" onClick={() => setEditUser(null)} className="w-full sm:w-auto h-11 sm:h-10">Cancel</Button>
                 <Button onClick={handleUpdate} disabled={processing} className="w-full sm:w-auto h-11 sm:h-10">Save Changes</Button>

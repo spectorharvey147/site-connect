@@ -84,12 +84,17 @@ function isMissingVerifiedAmountColumnError(error: any) {
   return message.includes("verified_amount") && message.includes("schema cache");
 }
 
+function isMissingSignatureUrlColumnError(error: any) {
+  const message = String(error?.message || error?.details || '');
+  return message.includes('signature_url') || (message.includes('schema cache') && message.includes('signature'));
+}
+
 const demoUsersDirectory = [
   { name: 'Site User', email: 'user@siteconnect.demo', role: 'User', manager_email: 'manager@siteconnect.demo', advance_amount: 50000, active: true },
-  { name: 'Team Manager', email: 'manager@siteconnect.demo', role: 'Manager', manager_email: '', advance_amount: 0, active: true },
-  { name: 'Office Admin', email: 'admin@siteconnect.demo', role: 'Admin', manager_email: '', advance_amount: 0, active: true },
+  { name: 'Team Manager', email: 'manager@siteconnect.demo', role: 'Manager', manager_email: '', advance_amount: 0, active: true, signature_url: '' },
+  { name: 'Office Admin', email: 'admin@siteconnect.demo', role: 'Admin', manager_email: '', advance_amount: 0, active: true, signature_url: '' },
   { name: 'Accounts Team', email: 'accounts@siteconnect.demo', role: 'Accounts', manager_email: '', advance_amount: 0, active: true },
-  { name: 'Super Admin', email: 'superadmin@siteconnect.demo', role: 'Super Admin', manager_email: '', advance_amount: 0, active: true },
+  { name: 'Super Admin', email: 'superadmin@siteconnect.demo', role: 'Super Admin', manager_email: '', advance_amount: 0, active: true, signature_url: '' },
 ];
 
 const demoClaims = [
@@ -1173,6 +1178,99 @@ export async function rejectClaim(claimId: string, reason: string, rejectorEmail
   }
 }
 
+export async function resubmitRejectedClaim(claimId: string, claim: {
+  site: string;
+  expenses: Array<{ category: string; projectCode: string; claimDate: string; description: string; amountWithBill: number; amountWithoutBill: number }>;
+  fileIds?: string[];
+}, userEmail: string, userName: string) {
+  if (isDemoEmail(userEmail)) {
+    return { ok: true, message: `Demo claim ${claimId} resubmitted for ${userName}. Supabase was not changed.` };
+  }
+
+  const currentClaim = await fetchClaimRowByAnyId(claimId) as any;
+  if (!currentClaim) throw new Error('Claim not found.');
+  if (String(currentClaim.user_email || '').toLowerCase() !== userEmail.toLowerCase()) {
+    throw new Error('You can only resubmit your own rejected claims.');
+  }
+  if (!normalizeStatus(currentClaim.status).includes('reject')) {
+    throw new Error('Only rejected claims can be edited and resubmitted.');
+  }
+
+  let totalWithBill = 0;
+  let totalWithoutBill = 0;
+  const expenseItems = claim.expenses.map((expense) => {
+    totalWithBill += expense.amountWithBill || 0;
+    totalWithoutBill += expense.amountWithoutBill || 0;
+    return {
+      claim_id: currentClaim.claim_id,
+      category: expense.category,
+      project_code: expense.projectCode || '',
+      expense_date: expense.claimDate || null,
+      description: expense.description,
+      amount_with_bill: expense.amountWithBill || 0,
+      amount_without_bill: expense.amountWithoutBill || 0,
+    };
+  });
+  const grandTotal = totalWithBill + totalWithoutBill;
+
+  const { data: userRecord } = await supabase.from('users').select('manager_email').eq('email', userEmail).single();
+  const managerEmail = String((userRecord as any)?.manager_email || '').trim().toLowerCase() || null;
+  const currentBalance = await getCurrentBalance(userEmail);
+  const newBalance = currentBalance - grandTotal;
+
+  const updates: any = {
+    site_name: claim.site,
+    submitted_by: userName,
+    status: STATUS_PENDING_ADMIN_VERIFICATION,
+    manager_email: managerEmail,
+    manager_approval_status: 'Not Started',
+    manager_approval_date: null,
+    admin_email: null,
+    admin_approval_date: null,
+    final_approval_email: null,
+    final_approval_date: null,
+    rejection_reason: null,
+    total_with_bill: totalWithBill,
+    total_without_bill: totalWithoutBill,
+    drive_file_ids: claim.fileIds || [],
+    verified_amount: null,
+  };
+
+  const { error: updateError } = await supabase.from('claims').update(updates).eq('claim_id', currentClaim.claim_id);
+  if (updateError) {
+    if (!isMissingVerifiedAmountColumnError(updateError) && !isMissingFinalApprovalColumnError(updateError)) throw updateError;
+    const { verified_amount, final_approval_email, final_approval_date, ...fallbackUpdates } = updates;
+    const { error: fallbackError } = await supabase.from('claims').update(fallbackUpdates).eq('claim_id', currentClaim.claim_id);
+    if (fallbackError) throw fallbackError;
+  }
+
+  const { error: deleteError } = await supabase.from('expense_items').delete().eq('claim_id', currentClaim.claim_id);
+  if (deleteError) throw deleteError;
+  const { error: insertError } = await supabase.from('expense_items').insert(expenseItems);
+  if (insertError) throw insertError;
+
+  await supabase.from('transactions').insert({
+    user_email: userEmail,
+    admin_email: userEmail,
+    type: 'claim_resubmitted',
+    reference_id: currentClaim.claim_id,
+    credit: 0,
+    debit: grandTotal,
+    balance_after: newBalance,
+    description: `Claim ${currentClaim.claim_number || currentClaim.claim_id} resubmitted`,
+  });
+
+  const displayClaimNo = currentClaim.claim_number || currentClaim.claim_id;
+  await logAudit('claim_resubmitted', userEmail, 'claim', currentClaim.claim_id, `Amount: Rs. ${grandTotal.toLocaleString('en-IN')}`);
+  await createNotification(userEmail, 'Claim Resubmitted', `Your claim ${displayClaimNo} has been resubmitted for verification.`, 'success', currentClaim.claim_id);
+  const adminVerifiers = await getAdminVerifierEmails();
+  await Promise.all(adminVerifiers.map((email) =>
+    createNotification(email, 'Claim Resubmitted for Verification', `${userName} resubmitted claim ${displayClaimNo} for Rs. ${grandTotal.toLocaleString('en-IN')}.`, 'info', currentClaim.claim_id)
+  ));
+
+  return { ok: true, message: `Claim ${displayClaimNo} resubmitted successfully.` };
+}
+
 // ============= CLAIM HISTORY =============
 export async function getClaimsHistory(userEmail: string, userRole: string, filters?: { userEmail?: string; startDate?: string; endDate?: string }) {
   if (isDemoEmail(userEmail)) {
@@ -1278,6 +1376,7 @@ type ApprovalStamp = {
   name: string;
   email: string;
   date: string;
+  signatureUrl?: string;
 };
 
 type ClaimApprovalTrail = {
@@ -1286,13 +1385,15 @@ type ClaimApprovalTrail = {
   final?: ApprovalStamp;
 };
 
-function approvalStamp(email: string | null | undefined, date: string | null | undefined, usersMap: Record<string, string>): ApprovalStamp | undefined {
+function approvalStamp(email: string | null | undefined, date: string | null | undefined, usersMap: Record<string, { name: string; signatureUrl?: string }>): ApprovalStamp | undefined {
   const normalizedEmail = String(email || '').trim().toLowerCase();
   if (!normalizedEmail || !date) return undefined;
+  const user = usersMap[normalizedEmail];
   return {
     email: normalizedEmail,
-    name: usersMap[normalizedEmail] || normalizedEmail,
+    name: user?.name || normalizedEmail,
     date,
+    signatureUrl: user?.signatureUrl || '',
   };
 }
 
@@ -1350,11 +1451,27 @@ export async function getClaimApprovalTrail(claimIds: string[]): Promise<Record<
     if (normalized) emails.add(normalized);
   });
 
-  const usersMap: Record<string, string> = {};
+  const usersMap: Record<string, { name: string; signatureUrl?: string }> = {};
   if (emails.size > 0) {
-    const { data: users } = await supabase.from('users').select('email,name').in('email', [...emails]);
+    const { data: usersWithSignature, error: usersWithSignatureError } = await supabase
+      .from('users')
+      .select('email,name,signature_url')
+      .in('email', [...emails]);
+    let users = usersWithSignature || [];
+    if (usersWithSignatureError && isMissingSignatureUrlColumnError(usersWithSignatureError)) {
+      const { data: usersWithoutSignature } = await supabase
+        .from('users')
+        .select('email,name')
+        .in('email', [...emails]);
+      users = usersWithoutSignature || [];
+    } else if (usersWithSignatureError) {
+      throw usersWithSignatureError;
+    }
     (users || []).forEach((entry: any) => {
-      usersMap[String(entry.email || '').trim().toLowerCase()] = entry.name || entry.email;
+      usersMap[String(entry.email || '').trim().toLowerCase()] = {
+        name: entry.name || entry.email,
+        signatureUrl: entry.signature_url || '',
+      };
     });
   }
 
@@ -1478,6 +1595,7 @@ export async function getAllUsers() {
       balance: user.email === 'user@siteconnect.demo' ? 110800 : 0,
       manager: user.manager_email || '',
       active: user.active,
+      signatureUrl: (user as any).signature_url || '',
     }));
   }
 
@@ -1499,6 +1617,7 @@ export async function getAllUsers() {
       employee_id: u.employee_id || '',
       mobile_number: u.mobile_number || '',
       date_of_joining: u.date_of_joining || '',
+      signatureUrl: u.signature_url || '',
     });
   }
   return users;
@@ -1514,6 +1633,7 @@ export async function createUser(newUser: {
   employee_id?: string;
   mobile_number?: string;
   date_of_joining?: string;
+  signatureUrl?: string;
 }) {
   if (isDemoMode()) return { ok: true, message: `Demo user ${newUser.name} previewed. Supabase was not changed.` };
 
@@ -1571,7 +1691,7 @@ export async function createUser(newUser: {
   return { ok: true, message: `User ${newUser.name} created successfully.` };
 }
 
-export async function updateUser(payload: { originalEmail: string; name?: string; email?: string; role?: string; password?: string; manager?: string }) {
+export async function updateUser(payload: { originalEmail: string; name?: string; email?: string; role?: string; password?: string; manager?: string; signatureUrl?: string }) {
   if (isDemoMode()) return;
 
   const oldEmail = payload.originalEmail.trim().toLowerCase();
@@ -1580,6 +1700,7 @@ export async function updateUser(payload: { originalEmail: string; name?: string
   if (payload.role) updates.role = payload.role;
   if (payload.password) updates.password_hash = hashPassword(payload.password);
   if (payload.manager !== undefined) updates.manager_email = payload.manager || null;
+  if (payload.signatureUrl !== undefined) updates.signature_url = payload.signatureUrl || null;
   if (payload.email && payload.email.toLowerCase() !== oldEmail) updates.email = payload.email.toLowerCase();
 
   const { error } = await supabase.from('users').update(updates).eq('email', oldEmail);
@@ -1775,11 +1896,30 @@ export async function getManagerAssignedUsersWithBalances(managerEmail: string) 
 // ============= USERS DIRECTORY (for dropdowns) =============
 export async function getUsersDirectory() {
   if (isDemoMode()) {
-    return demoUsersDirectory.map(({ name, email, manager_email, role }) => ({ name, email, manager_email, role }));
+    return demoUsersDirectory.map(({ name, email, manager_email, role, signature_url }: any) => ({ name, email, manager_email, role, signature_url: signature_url || '', signatureUrl: signature_url || '' }));
   }
 
-  const { data } = await supabase.from('users').select('name, email, manager_email, role').order('name');
-  return (data || []) as any[];
+  const { data: usersWithSignature, error } = await supabase
+    .from('users')
+    .select('name, email, manager_email, role, signature_url')
+    .order('name');
+
+  let data = usersWithSignature || [];
+  if (error && isMissingSignatureUrlColumnError(error)) {
+    const { data: usersWithoutSignature, error: fallbackError } = await supabase
+      .from('users')
+      .select('name, email, manager_email, role')
+      .order('name');
+    if (fallbackError) throw fallbackError;
+    data = usersWithoutSignature || [];
+  } else if (error) {
+    throw error;
+  }
+
+  return data.map((user: any) => ({
+    ...user,
+    signatureUrl: user.signature_url || '',
+  })) as any[];
 }
 
 // ============= NOTIFICATIONS =============
