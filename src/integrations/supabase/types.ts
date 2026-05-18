@@ -86,6 +86,7 @@ export type Database = {
           admin_description: string | null
           admin_email: string | null
           claim_id: string
+          claim_number: string | null
           created_at: string
           drive_file_ids: string[] | null
           final_approval_date: string | null
@@ -103,12 +104,14 @@ export type Database = {
           total_with_bill: number
           total_without_bill: number
           user_email: string
+          verified_amount: number | null
         }
         Insert: {
           admin_approval_date?: string | null
           admin_description?: string | null
           admin_email?: string | null
           claim_id: string
+          claim_number?: string | null
           created_at?: string
           drive_file_ids?: string[] | null
           final_approval_date?: string | null
@@ -126,12 +129,14 @@ export type Database = {
           total_with_bill?: number
           total_without_bill?: number
           user_email: string
+          verified_amount?: number | null
         }
         Update: {
           admin_approval_date?: string | null
           admin_description?: string | null
           admin_email?: string | null
           claim_id?: string
+          claim_number?: string | null
           created_at?: string
           drive_file_ids?: string[] | null
           final_approval_date?: string | null
@@ -149,6 +154,7 @@ export type Database = {
           total_with_bill?: number
           total_without_bill?: number
           user_email?: string
+          verified_amount?: number | null
         }
         Relationships: []
       }
