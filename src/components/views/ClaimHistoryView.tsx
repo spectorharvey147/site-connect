@@ -42,10 +42,25 @@ function formatDate(date: string) {
   return new Date(date).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
 }
 
+function resolveReportAssetUrl(url?: string | null) {
+  const value = String(url || '').trim() || '/ipi-logo.jpg';
+  if (/^(https?:|data:|blob:)/i.test(value)) return value;
+  return new URL(value.startsWith('/') ? value : `/${value}`, window.location.origin).href;
+}
+
+function renderAttachmentLinks(fileIds?: string[]) {
+  const ids = fileIds || [];
+  if (ids.length === 0) return '<span class="muted">No bill</span>';
+  return ids.map((fileId, index) => {
+    const { data } = supabase.storage.from('claim-attachments').getPublicUrl(fileId);
+    const label = `Bill ${index + 1}`;
+    return `<a href="${escapeHtml(data.publicUrl)}" target="_blank" rel="noopener noreferrer">${label}</a>`;
+  }).join('<br>');
+}
+
 function generateClaimPDFHtml(claims: any[], companySettings: any, users: any[] = []) {
-  const logo = companySettings?.logo_url
-    ? `<div class="logo-frame"><img src="${escapeHtml(companySettings.logo_url)}" class="logo" /></div>`
-    : '<div class="logo-frame logo-placeholder">Logo</div>';
+  const logoUrl = resolveReportAssetUrl(companySettings?.logo_url);
+  const logo = `<div class="logo-frame"><img src="${escapeHtml(logoUrl)}" class="logo" onerror="this.style.display='none';this.parentElement.classList.add('logo-placeholder');this.parentElement.textContent='Logo';" /></div>`;
   const companyName = companySettings?.company_name || 'Company';
   const userMap = Object.fromEntries(users.map((entry) => [String(entry.email || '').toLowerCase(), entry]));
   const nonRejected = claims.filter((claim) => !claim.status.toLowerCase().includes('reject'));
@@ -82,6 +97,7 @@ function generateClaimPDFHtml(claims: any[], companySettings: any, users: any[] 
           <td>${escapeHtml(expense.description || '-')}</td>
           <td class="text-right">Rs. ${(expense.amountWithBill ?? 0).toFixed(2)}</td>
           <td class="text-right">Rs. ${(expense.amountWithoutBill ?? 0).toFixed(2)}</td>
+          <td>${renderAttachmentLinks(expense.attachmentIds)}</td>
           <td class="text-right">Rs. ${(expense.amount ?? 0).toFixed(2)}</td>
         </tr>
       `).join('');
@@ -100,7 +116,7 @@ function generateClaimPDFHtml(claims: any[], companySettings: any, users: any[] 
             <thead>
               <tr>
                 <th>Category</th><th>Project Code</th><th>Date</th><th>Description</th>
-                <th class="text-right">With Bill</th><th class="text-right">Without Bill</th><th class="text-right">Total</th>
+                <th class="text-right">With Bill</th><th class="text-right">Without Bill</th><th>Bills</th><th class="text-right">Total</th>
               </tr>
             </thead>
             <tbody>
@@ -109,6 +125,7 @@ function generateClaimPDFHtml(claims: any[], companySettings: any, users: any[] 
                 <td colspan="4" class="text-right">Claim Total</td>
                 <td class="text-right">Rs. ${(claim.totalWithBill ?? 0).toFixed(2)}</td>
                 <td class="text-right">Rs. ${(claim.totalWithoutBill ?? 0).toFixed(2)}</td>
+                <td>${renderAttachmentLinks(claim.fileIds)}</td>
                 <td class="text-right">Rs. ${(claim.amount ?? 0).toFixed(2)}</td>
               </tr>
             </tbody>
@@ -151,6 +168,7 @@ function generateClaimPDFHtml(claims: any[], companySettings: any, users: any[] 
   h2 { margin:0; font-size:13px; }
   .logo-frame { width:70px; min-height:58px; display:flex; align-items:center; justify-content:center; border:1px solid #e5e7eb; background:#fff; padding:4px; }
   .logo-placeholder { color:#9ca3af; font-size:10px; text-transform:uppercase; }
+  a { color:#2563eb; text-decoration:none; }
   .logo { max-height:56px; max-width:64px; width:auto; height:auto; object-fit:contain; }
   .header { display: grid; grid-template-columns:78px minmax(0, 1fr); align-items: center; gap: 14px; border-bottom: 2px solid #2563eb; padding-bottom: 10px; margin-bottom: 14px; }
   .company-meta { min-width:0; }
@@ -543,6 +561,12 @@ export default function ClaimHistoryView() {
                   {expense.projectCode && <div className="flex justify-between"><span className="text-muted-foreground">Code</span><span>{expense.projectCode}</span></div>}
                   {expense.claimDate && <div className="flex justify-between"><span className="text-muted-foreground">Date</span><span>{formatDate(expense.claimDate)}</span></div>}
                   {expense.description && <div className="flex justify-between gap-4"><span className="text-muted-foreground">Desc</span><span className="max-w-[60%] text-right">{expense.description}</span></div>}
+                  {expense.attachmentIds?.length > 0 && (
+                    <div className="mt-2 border-t border-border pt-2">
+                      <span className="text-muted-foreground">Bills</span>
+                      <AttachmentPreview fileIds={expense.attachmentIds} claimId={selectedClaim.claimId} compact />
+                    </div>
+                  )}
                   <div className="mt-1 flex justify-between border-t border-border pt-1">
                     <span className="text-muted-foreground">Total</span>
                     <span className="font-bold text-primary">Rs. {(expense.amount ?? 0).toFixed(2)}</span>
@@ -561,6 +585,7 @@ export default function ClaimHistoryView() {
                     <th className="border p-2 text-left">Description</th>
                     <th className="border p-2 text-right">With Bill (Rs.)</th>
                     <th className="border p-2 text-right">Without Bill (Rs.)</th>
+                    <th className="border p-2 text-left">Bills</th>
                     <th className="border p-2 text-right">Total (Rs.)</th>
                   </tr>
                 </thead>
@@ -573,6 +598,13 @@ export default function ClaimHistoryView() {
                       <td className="border p-2">{expense.description}</td>
                       <td className="border p-2 text-right">Rs. {(expense.amountWithBill ?? 0).toFixed(2)}</td>
                       <td className="border p-2 text-right">Rs. {(expense.amountWithoutBill ?? 0).toFixed(2)}</td>
+                      <td className="border p-2">
+                        {expense.attachmentIds?.length > 0 ? (
+                          <AttachmentPreview fileIds={expense.attachmentIds} claimId={selectedClaim.claimId} compact />
+                        ) : (
+                          <span className="text-xs text-muted-foreground">No bill</span>
+                        )}
+                      </td>
                       <td className="border p-2 text-right font-medium">Rs. {(expense.amount ?? 0).toFixed(2)}</td>
                     </tr>
                   ))}
@@ -580,6 +612,7 @@ export default function ClaimHistoryView() {
                     <td colSpan={4} className="border p-2 text-right">TOTAL</td>
                     <td className="border p-2 text-right">Rs. {(selectedClaim.totalWithBill ?? 0).toFixed(2)}</td>
                     <td className="border p-2 text-right">Rs. {(selectedClaim.totalWithoutBill ?? 0).toFixed(2)}</td>
+                    <td className="border p-2"></td>
                     <td className="border p-2 text-right">Rs. {(selectedClaim.amount ?? 0).toFixed(2)}</td>
                   </tr>
                 </tbody>

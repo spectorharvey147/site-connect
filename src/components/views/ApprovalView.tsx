@@ -32,6 +32,12 @@ function ClaimExpenseDetails({ claim }: { claim: any }) {
             <div className="flex justify-between gap-4"><span className="text-muted-foreground">Category</span><span className="font-medium text-right">{expense.category}</span></div>
             <div className="flex justify-between gap-4"><span className="text-muted-foreground">Code</span><span className="text-right">{expense.projectCode || '-'}</span></div>
             {expense.description && <div className="flex justify-between gap-4"><span className="text-muted-foreground">Description</span><span className="max-w-[60%] break-words text-right">{expense.description}</span></div>}
+            {expense.attachmentIds?.length > 0 && (
+              <div className="mt-2 border-t border-border pt-2">
+                <span className="text-muted-foreground">Bills</span>
+                <AttachmentPreview fileIds={expense.attachmentIds} claimId={claim.claimId} compact />
+              </div>
+            )}
             <div className="mt-1 flex justify-between border-t border-border pt-1">
               <span className="text-muted-foreground">Total</span>
               <span className="font-bold text-primary">Rs. {(expense.amount ?? 0).toFixed(2)}</span>
@@ -41,7 +47,7 @@ function ClaimExpenseDetails({ claim }: { claim: any }) {
       </div>
 
       <div className="hidden max-w-full overflow-x-auto sm:block">
-        <table className="min-w-[820px] w-full table-fixed border text-sm">
+        <table className="min-w-[980px] w-full table-fixed border text-sm">
           <thead>
             <tr className="bg-muted">
               <th className="w-[16%] border p-2 text-left">Category</th>
@@ -49,6 +55,7 @@ function ClaimExpenseDetails({ claim }: { claim: any }) {
               <th className="w-[28%] border p-2 text-left">Description</th>
               <th className="border p-2 text-right">With Bill (Rs.)</th>
               <th className="border p-2 text-right">Without Bill (Rs.)</th>
+              <th className="w-[16%] border p-2 text-left">Bills</th>
               <th className="border p-2 text-right">Total (Rs.)</th>
             </tr>
           </thead>
@@ -60,6 +67,13 @@ function ClaimExpenseDetails({ claim }: { claim: any }) {
                 <td className="break-words border p-2">{expense.description}</td>
                 <td className="border p-2 text-right">Rs. {(expense.amountWithBill ?? 0).toFixed(2)}</td>
                 <td className="border p-2 text-right">Rs. {(expense.amountWithoutBill ?? 0).toFixed(2)}</td>
+                <td className="border p-2">
+                  {expense.attachmentIds?.length > 0 ? (
+                    <AttachmentPreview fileIds={expense.attachmentIds} claimId={claim.claimId} compact />
+                  ) : (
+                    <span className="text-xs text-muted-foreground">No bill</span>
+                  )}
+                </td>
                 <td className="border p-2 text-right font-medium">Rs. {(expense.amount ?? 0).toFixed(2)}</td>
               </tr>
             ))}
@@ -67,6 +81,7 @@ function ClaimExpenseDetails({ claim }: { claim: any }) {
               <td colSpan={3} className="border p-2 text-right">TOTAL</td>
               <td className="border p-2 text-right">Rs. {(claim.totalWithBill ?? 0).toFixed(2)}</td>
               <td className="border p-2 text-right">Rs. {(claim.totalWithoutBill ?? 0).toFixed(2)}</td>
+              <td className="border p-2"></td>
               <td className="border p-2 text-right">Rs. {(claim.amount ?? 0).toFixed(2)}</td>
             </tr>
           </tbody>

@@ -20,6 +20,7 @@ interface ExpenseRow {
   description: string;
   amountWithBill: number;
   amountWithoutBill: number;
+  attachmentIds: string[];
 }
 
 function emptyExpenseRow(): ExpenseRow {
@@ -31,6 +32,7 @@ function emptyExpenseRow(): ExpenseRow {
     description: '',
     amountWithBill: 0,
     amountWithoutBill: 0,
+    attachmentIds: [],
   };
 }
 
@@ -45,6 +47,7 @@ export default function SubmitClaimView() {
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
   const fileUploadRef = useRef<FileUploadHandle>(null);
+  const rowFileUploadRefs = useRef<Record<string, FileUploadHandle | null>>({});
   const expenseCardRefs = useRef<Record<string, HTMLDivElement | null>>({});
   const pendingExpenseFocusRef = useRef<string | null>(null);
   const [site, setSite] = useState('');
@@ -58,6 +61,8 @@ export default function SubmitClaimView() {
   const [editingClaim, setEditingClaim] = useState<any>(null);
   const [existingFileIds, setExistingFileIds] = useState<string[]>([]);
   const editClaimId = searchParams.get('editClaim');
+
+  const uniqueFileIds = (fileIds: string[]) => [...new Set(fileIds.map((fileId) => String(fileId || '').trim()).filter(Boolean))];
 
   useEffect(() => {
     getDropdownOptions().then(setDropdown);
@@ -91,13 +96,15 @@ export default function SubmitClaimView() {
               description: expense.description || '',
               amountWithBill: expense.amountWithBill || 0,
               amountWithoutBill: expense.amountWithoutBill || 0,
+              attachmentIds: expense.attachmentIds || [],
             }))
           : [emptyExpenseRow()];
+        const rowAttachmentIds = new Set(rows.flatMap((row) => row.attachmentIds || []));
         setEditingClaim(claim);
         setSite(claim.site || '');
         setExpenses(rows);
         setActiveExpenseId(rows[0]?.id || '');
-        setExistingFileIds(claim.fileIds || []);
+        setExistingFileIds((claim.fileIds || []).filter((fileId: string) => !rowAttachmentIds.has(fileId)));
         setTempClaimId(claim.claimIdInternal || claim.claimId || `C-${Date.now()}`);
       })
       .catch((error) => {
@@ -189,8 +196,13 @@ export default function SubmitClaimView() {
       toast.error('Every row needs a category, a matching cost code, and an amount');
       return;
     }
-    if (expenses.some((expense) => expense.amountWithBill > 0) && ((fileUploadRef.current?.getFileCount() || 0) + existingFileIds.length) === 0) {
-      toast.error('Bills are required when any "With Bill" amount is entered');
+    const hasClaimLevelAttachments = ((fileUploadRef.current?.getFileCount() || 0) + existingFileIds.length) > 0;
+    const firstMissingBillRow = expenses.findIndex((expense) => {
+      const rowCount = (expense.attachmentIds?.length || 0) + (rowFileUploadRefs.current[expense.id]?.getFileCount() || 0);
+      return expense.amountWithBill > 0 && rowCount === 0 && !hasClaimLevelAttachments;
+    });
+    if (firstMissingBillRow >= 0) {
+      toast.error(`Attach a bill to expense #${firstMissingBillRow + 1} or use the bottom attachment area`);
       return;
     }
 
@@ -200,21 +212,30 @@ export default function SubmitClaimView() {
       if (fileUploadRef.current) {
         uploadedPaths = await fileUploadRef.current.uploadAll();
       }
-      const allFileIds = [...existingFileIds, ...uploadedPaths];
-      if (expenses.some((expense) => expense.amountWithBill > 0) && allFileIds.length === 0) {
-        throw new Error('Please upload bill attachments before submitting this claim.');
-      }
-
-      const payload = {
-        site,
-        expenses: expenses.map((expense) => ({
+      const expensesWithAttachments = await Promise.all(expenses.map(async (expense) => {
+        const uploadedRowPaths = await (rowFileUploadRefs.current[expense.id]?.uploadAll() || Promise.resolve([]));
+        return {
           category: expense.category,
           projectCode: expense.projectCode,
           claimDate: expense.claimDate,
           description: expense.description,
           amountWithBill: expense.amountWithBill || 0,
           amountWithoutBill: expense.amountWithoutBill || 0,
-        })),
+          attachmentIds: uniqueFileIds([...(expense.attachmentIds || []), ...uploadedRowPaths]),
+        };
+      }));
+      const allFileIds = uniqueFileIds([
+        ...existingFileIds,
+        ...uploadedPaths,
+        ...expensesWithAttachments.flatMap((expense) => expense.attachmentIds),
+      ]);
+      if (expenses.some((expense) => expense.amountWithBill > 0) && allFileIds.length === 0) {
+        throw new Error('Please upload bill attachments before submitting this claim.');
+      }
+
+      const payload = {
+        site,
+        expenses: expensesWithAttachments,
         fileIds: allFileIds,
       };
       const result = editingClaim
@@ -333,8 +354,7 @@ export default function SubmitClaimView() {
                     )}
                   </div>
 
-                  {isActive && (
-                    <>
+                  <div className={isActive ? 'space-y-3' : 'hidden'}>
                       <div className="grid grid-cols-2 gap-3">
                         <div className="space-y-1">
                           <Label className="text-xs">Category</Label>
@@ -404,8 +424,24 @@ export default function SubmitClaimView() {
                         <span className="text-sm text-muted-foreground">Subtotal</span>
                         <span className="text-lg font-bold text-primary">Rs. {subtotal.toFixed(2)}</span>
                       </div>
-                    </>
-                  )}
+                      <div className="rounded-md border border-border bg-muted/20 p-3">
+                        <div className="mb-2 flex items-center justify-between gap-2">
+                          <Label className="text-xs">Bill Attachments</Label>
+                          {expense.attachmentIds.length > 0 && <span className="text-xs text-muted-foreground">{expense.attachmentIds.length} saved</span>}
+                        </div>
+                        {expense.attachmentIds.length > 0 && (
+                          <div className="mb-3 rounded-md border border-border bg-background p-2">
+                            <AttachmentPreview fileIds={expense.attachmentIds} claimId={editingClaim?.claimId || tempClaimId} compact />
+                          </div>
+                        )}
+                        <FileUpload
+                          ref={(node) => { rowFileUploadRefs.current[expense.id] = node; }}
+                          claimId={`${tempClaimId}/expense-${idx + 1}`}
+                          maxFiles={5}
+                          maxSizeMB={5}
+                        />
+                      </div>
+                  </div>
                 </div>
               );
             })}
@@ -441,6 +477,7 @@ export default function SubmitClaimView() {
                   <th className="p-2 text-left text-xs font-semibold">Description</th>
                   <th className="p-2 text-right text-xs font-semibold">With Bill (Rs.)</th>
                   <th className="p-2 text-right text-xs font-semibold">Without Bill (Rs.)</th>
+                  <th className="p-2 text-left text-xs font-semibold">Bill Attachments</th>
                   <th className="p-2 text-right text-xs font-semibold">Total (Rs.)</th>
                   <th className="p-2 text-center text-xs font-semibold"></th>
                 </tr>
@@ -507,6 +544,22 @@ export default function SubmitClaimView() {
                           placeholder="0.00"
                         />
                       </td>
+                      <td className="min-w-[250px] p-2">
+                        <div className="space-y-2">
+                          {expense.attachmentIds.length > 0 && (
+                            <div className="rounded-md border border-border bg-background p-2">
+                              <p className="mb-1 text-[11px] font-medium text-muted-foreground">{expense.attachmentIds.length} saved file(s)</p>
+                              <AttachmentPreview fileIds={expense.attachmentIds} claimId={editingClaim?.claimId || tempClaimId} compact />
+                            </div>
+                          )}
+                          <FileUpload
+                            ref={(node) => { rowFileUploadRefs.current[expense.id] = node; }}
+                            claimId={`${tempClaimId}/expense-${idx + 1}`}
+                            maxFiles={5}
+                            maxSizeMB={5}
+                          />
+                        </div>
+                      </td>
                       <td className="p-2 text-right text-xs font-medium">
                         Rs. {((expense.amountWithBill || 0) + (expense.amountWithoutBill || 0)).toFixed(2)}
                       </td>
@@ -524,6 +577,7 @@ export default function SubmitClaimView() {
                   <td colSpan={5} className="p-2 text-right text-xs">TOTAL</td>
                   <td className="p-2 text-right text-xs">Rs. {totalWithBill.toFixed(2)}</td>
                   <td className="p-2 text-right text-xs">Rs. {totalWithoutBill.toFixed(2)}</td>
+                  <td className="p-2 text-xs text-muted-foreground">Use this column for row bills</td>
                   <td className="p-2 text-right text-xs text-primary">Rs. {grandTotal.toFixed(2)}</td>
                   <td></td>
                 </tr>

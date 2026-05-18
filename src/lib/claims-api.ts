@@ -328,6 +328,17 @@ function mapAttachmentEmailData(fileIds?: string[]) {
   });
 }
 
+function uniqueFileIds(fileIds?: string[]) {
+  return [...new Set((fileIds || []).map((fileId) => String(fileId || '').trim()).filter(Boolean))];
+}
+
+function collectClaimFileIds(claim: { fileIds?: string[]; expenses?: Array<{ attachmentIds?: string[] }> }) {
+  return uniqueFileIds([
+    ...(claim.fileIds || []),
+    ...((claim.expenses || []).flatMap((expense) => expense.attachmentIds || [])),
+  ]);
+}
+
 async function getAdminApproverEmails() {
   const { data } = await supabase
     .from('users')
@@ -547,7 +558,7 @@ export async function getCurrentBalance(email: string): Promise<number> {
 // ============= CLAIMS =============
 export async function submitClaim(claim: {
   site: string;
-  expenses: Array<{ category: string; projectCode: string; claimDate: string; description: string; amountWithBill: number; amountWithoutBill: number }>;
+  expenses: Array<{ category: string; projectCode: string; claimDate: string; description: string; amountWithBill: number; amountWithoutBill: number; attachmentIds?: string[] }>;
   fileIds?: string[];
 }, userEmail: string, userName: string) {
   if (isDemoEmail(userEmail)) {
@@ -571,6 +582,7 @@ export async function submitClaim(claim: {
   const claimNumber = `CLM-${String(nextSequence).padStart(4, '0')}`;
   
   let totalWithBill = 0, totalWithoutBill = 0;
+  const allFileIds = collectClaimFileIds(claim);
 
   const expenseItems = claim.expenses.map(e => {
     totalWithBill += (e.amountWithBill || 0);
@@ -583,6 +595,7 @@ export async function submitClaim(claim: {
       description: e.description,
       amount_with_bill: e.amountWithBill || 0,
       amount_without_bill: e.amountWithoutBill || 0,
+      attachment_ids: uniqueFileIds(e.attachmentIds),
     };
   });
 
@@ -621,7 +634,7 @@ export async function submitClaim(claim: {
     manager_approval_status: managerApprovalStatus,
     total_with_bill: totalWithBill,
     total_without_bill: totalWithoutBill,
-    drive_file_ids: claim.fileIds || [],
+    drive_file_ids: allFileIds,
   });
   if (cErr) throw new Error('Claim insert failed: ' + cErr.message);
 
@@ -640,7 +653,7 @@ export async function submitClaim(claim: {
   });
   if (tErr) throw new Error('Transaction insert failed: ' + tErr.message);
 
-  const attachmentsForEmail = mapAttachmentEmailData(claim.fileIds);
+  const attachmentsForEmail = mapAttachmentEmailData(allFileIds);
   const primaryProjectCode = claim.expenses.find((expense) => expense.projectCode)?.projectCode || '';
   const expenseItemsForEmail = claim.expenses.map((expense) => ({
     category: expense.category,
@@ -651,6 +664,7 @@ export async function submitClaim(claim: {
     amountWithoutBill: expense.amountWithoutBill || 0,
     amount: (expense.amountWithBill || 0) + (expense.amountWithoutBill || 0),
     totalAmount: (expense.amountWithBill || 0) + (expense.amountWithoutBill || 0),
+    attachmentCount: uniqueFileIds(expense.attachmentIds).length,
   }));
   const appUrl = getAppUrl(companySettings);
 
@@ -1180,7 +1194,7 @@ export async function rejectClaim(claimId: string, reason: string, rejectorEmail
 
 export async function resubmitRejectedClaim(claimId: string, claim: {
   site: string;
-  expenses: Array<{ category: string; projectCode: string; claimDate: string; description: string; amountWithBill: number; amountWithoutBill: number }>;
+  expenses: Array<{ category: string; projectCode: string; claimDate: string; description: string; amountWithBill: number; amountWithoutBill: number; attachmentIds?: string[] }>;
   fileIds?: string[];
 }, userEmail: string, userName: string) {
   if (isDemoEmail(userEmail)) {
@@ -1196,79 +1210,10 @@ export async function resubmitRejectedClaim(claimId: string, claim: {
     throw new Error('Only rejected claims can be edited and resubmitted.');
   }
 
-  let totalWithBill = 0;
-  let totalWithoutBill = 0;
-  const expenseItems = claim.expenses.map((expense) => {
-    totalWithBill += expense.amountWithBill || 0;
-    totalWithoutBill += expense.amountWithoutBill || 0;
-    return {
-      claim_id: currentClaim.claim_id,
-      category: expense.category,
-      project_code: expense.projectCode || '',
-      expense_date: expense.claimDate || null,
-      description: expense.description,
-      amount_with_bill: expense.amountWithBill || 0,
-      amount_without_bill: expense.amountWithoutBill || 0,
-    };
-  });
-  const grandTotal = totalWithBill + totalWithoutBill;
-
-  const { data: userRecord } = await supabase.from('users').select('manager_email').eq('email', userEmail).single();
-  const managerEmail = String((userRecord as any)?.manager_email || '').trim().toLowerCase() || null;
-  const currentBalance = await getCurrentBalance(userEmail);
-  const newBalance = currentBalance - grandTotal;
-
-  const updates: any = {
-    site_name: claim.site,
-    submitted_by: userName,
-    status: STATUS_PENDING_ADMIN_VERIFICATION,
-    manager_email: managerEmail,
-    manager_approval_status: 'Not Started',
-    manager_approval_date: null,
-    admin_email: null,
-    admin_approval_date: null,
-    final_approval_email: null,
-    final_approval_date: null,
-    rejection_reason: null,
-    total_with_bill: totalWithBill,
-    total_without_bill: totalWithoutBill,
-    drive_file_ids: claim.fileIds || [],
-    verified_amount: null,
-  };
-
-  const { error: updateError } = await supabase.from('claims').update(updates).eq('claim_id', currentClaim.claim_id);
-  if (updateError) {
-    if (!isMissingVerifiedAmountColumnError(updateError) && !isMissingFinalApprovalColumnError(updateError)) throw updateError;
-    const { verified_amount, final_approval_email, final_approval_date, ...fallbackUpdates } = updates;
-    const { error: fallbackError } = await supabase.from('claims').update(fallbackUpdates).eq('claim_id', currentClaim.claim_id);
-    if (fallbackError) throw fallbackError;
-  }
-
-  const { error: deleteError } = await supabase.from('expense_items').delete().eq('claim_id', currentClaim.claim_id);
-  if (deleteError) throw deleteError;
-  const { error: insertError } = await supabase.from('expense_items').insert(expenseItems);
-  if (insertError) throw insertError;
-
-  await supabase.from('transactions').insert({
-    user_email: userEmail,
-    admin_email: userEmail,
-    type: 'claim_resubmitted',
-    reference_id: currentClaim.claim_id,
-    credit: 0,
-    debit: grandTotal,
-    balance_after: newBalance,
-    description: `Claim ${currentClaim.claim_number || currentClaim.claim_id} resubmitted`,
-  });
-
+  const result = await submitClaim(claim, userEmail, userName);
   const displayClaimNo = currentClaim.claim_number || currentClaim.claim_id;
-  await logAudit('claim_resubmitted', userEmail, 'claim', currentClaim.claim_id, `Amount: Rs. ${grandTotal.toLocaleString('en-IN')}`);
-  await createNotification(userEmail, 'Claim Resubmitted', `Your claim ${displayClaimNo} has been resubmitted for verification.`, 'success', currentClaim.claim_id);
-  const adminVerifiers = await getAdminVerifierEmails();
-  await Promise.all(adminVerifiers.map((email) =>
-    createNotification(email, 'Claim Resubmitted for Verification', `${userName} resubmitted claim ${displayClaimNo} for Rs. ${grandTotal.toLocaleString('en-IN')}.`, 'info', currentClaim.claim_id)
-  ));
-
-  return { ok: true, message: `Claim ${displayClaimNo} resubmitted successfully.` };
+  await logAudit('claim_resubmitted_as_new', userEmail, 'claim', currentClaim.claim_id, `Original rejected claim: ${displayClaimNo}; new claim: ${result.id || ''}`);
+  return { ok: true, message: `Rejected claim ${displayClaimNo} was copied and submitted as new claim ${result.id || ''}.` };
 }
 
 // ============= CLAIM HISTORY =============
@@ -1327,6 +1272,7 @@ export async function getClaimsHistory(userEmail: string, userRole: string, filt
       amountWithBill: parseFloat(e.amount_with_bill || 0),
       amountWithoutBill: parseFloat(e.amount_without_bill || 0),
       amount: parseFloat(e.amount_with_bill || 0) + parseFloat(e.amount_without_bill || 0),
+      attachmentIds: e.attachment_ids || [],
     })),
   }));
 }
@@ -1367,6 +1313,7 @@ export async function getClaimById(claimId: string) {
       amountWithBill: parseFloat(e.amount_with_bill || 0),
       amountWithoutBill: parseFloat(e.amount_without_bill || 0),
       amount: parseFloat(e.amount_with_bill || 0) + parseFloat(e.amount_without_bill || 0),
+      attachmentIds: e.attachment_ids || [],
     })),
     fileIds: c.drive_file_ids || [],
   };
@@ -1649,7 +1596,7 @@ export async function createUser(newUser: {
     if (!mgr) throw new Error('Manager email not found.');
   }
 
-  const { error } = await supabase.from('users').insert({
+  const insertPayload: any = {
     email,
     password_hash: hashPassword(newUser.password),
     name: newUser.name.trim(),
@@ -1660,8 +1607,15 @@ export async function createUser(newUser: {
     employee_id: newUser.employee_id?.trim() || null,
     mobile_number: newUser.mobile_number?.trim() || null,
     date_of_joining: newUser.date_of_joining?.trim() || null,
-  });
-  if (error) throw error;
+    signature_url: newUser.signatureUrl || null,
+  };
+  const { error } = await supabase.from('users').insert(insertPayload);
+  if (error) {
+    if (!isMissingSignatureUrlColumnError(error)) throw error;
+    const { signature_url, ...fallbackPayload } = insertPayload;
+    const { error: fallbackError } = await supabase.from('users').insert(fallbackPayload);
+    if (fallbackError) throw fallbackError;
+  }
 
   // Create initial advance transaction if > 0
   if (newUser.advance > 0) {
@@ -1704,7 +1658,13 @@ export async function updateUser(payload: { originalEmail: string; name?: string
   if (payload.email && payload.email.toLowerCase() !== oldEmail) updates.email = payload.email.toLowerCase();
 
   const { error } = await supabase.from('users').update(updates).eq('email', oldEmail);
-  if (error) throw error;
+  if (error) {
+    if (!isMissingSignatureUrlColumnError(error) || updates.signature_url === undefined) throw error;
+    const { signature_url, ...fallbackUpdates } = updates;
+    const { error: fallbackError } = await supabase.from('users').update(fallbackUpdates).eq('email', oldEmail);
+    if (fallbackError) throw fallbackError;
+    console.warn('signature_url column is not available yet; signature was not persisted.');
+  }
   await logAudit('user_updated', oldEmail, 'user', oldEmail, JSON.stringify(updates));
 }
 

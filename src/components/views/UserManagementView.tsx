@@ -15,10 +15,8 @@ import { supabase } from '@/integrations/supabase/client';
 import RupeeIcon from '@/components/icons/RupeeIcon';
 import ImageUpload from '@/components/ImageUpload';
 
-const SIGNATURE_ROLES = ['Admin', 'Manager', 'Super Admin'];
-
 function canUseSignature(role?: string) {
-  return SIGNATURE_ROLES.includes(String(role || ''));
+  return Boolean(String(role || '').trim());
 }
 
 export default function UserManagementView() {
@@ -33,7 +31,7 @@ export default function UserManagementView() {
   const [processing, setProcessing] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const [form, setForm] = useState({ name: '', email: '', password: '', role: 'User', advance: '0', manager: '' });
+  const [form, setForm] = useState({ name: '', email: '', password: '', role: 'User', advance: '0', manager: '', signatureUrl: '' });
 
   const loadUsers = async () => {
     setLoading(true);
@@ -58,7 +56,7 @@ export default function UserManagementView() {
       await createUser({ ...form, advance: parseFloat(form.advance) || 0 });
       toast.success('User created');
       setShowCreate(false);
-      setForm({ name: '', email: '', password: '', role: 'User', advance: '0', manager: '' });
+      setForm({ name: '', email: '', password: '', role: 'User', advance: '0', manager: '', signatureUrl: '' });
       loadUsers();
     } catch (err: any) { toast.error(err.message); }
     setProcessing(false);
@@ -74,7 +72,7 @@ export default function UserManagementView() {
         role: editUser.role,
         password: editUser.password || undefined,
         manager: editUser.manager,
-        signatureUrl: canUseSignature(editUser.role) ? editUser.signatureUrl || '' : '',
+        signatureUrl: editUser.signatureUrl || '',
       });
       toast.success('User updated');
       setEditUser(null);
@@ -273,6 +271,17 @@ export default function UserManagementView() {
                 </SelectContent>
               </Select>
             </div>
+            <div className="space-y-2 rounded-lg border border-border bg-muted/20 p-3">
+              <Label>Signature</Label>
+              <ImageUpload
+                bucket="user-avatars"
+                currentUrl={form.signatureUrl || null}
+                onUploaded={(url) => setForm({ ...form, signatureUrl: url })}
+                folder={`signatures/${form.email || 'new-user'}`}
+                variant="signature"
+                acceptedTypes={['image/png', 'image/jpeg']}
+              />
+            </div>
             <DialogFooter className="flex-col sm:flex-row gap-2 sm:gap-0">
               <Button type="button" variant="outline" onClick={() => setShowCreate(false)} className="w-full sm:w-auto h-11 sm:h-10">Cancel</Button>
               <Button type="submit" disabled={processing} className="w-full sm:w-auto h-11 sm:h-10">
@@ -299,7 +308,7 @@ export default function UserManagementView() {
               </div>
               <div className="space-y-2">
                 <Label>Role</Label>
-                <Select value={editUser.role} onValueChange={v => setEditUser({ ...editUser, role: v, signatureUrl: canUseSignature(v) ? editUser.signatureUrl : '' })}>
+                <Select value={editUser.role} onValueChange={v => setEditUser({ ...editUser, role: v })}>
                   <SelectTrigger className="h-11 sm:h-10"><SelectValue /></SelectTrigger>
                   <SelectContent>
                     <SelectItem value="User">User</SelectItem>
@@ -320,25 +329,23 @@ export default function UserManagementView() {
                   <SelectTrigger className="h-11 sm:h-10"><SelectValue placeholder="Select Manager" /></SelectTrigger>
                   <SelectContent>
                     <SelectItem value="none">No Manager</SelectItem>
-                    {allUsers.filter(u => u.email !== editUser.originalEmail && canUseSignature(u.role)).map(u => (
+                    {allUsers.filter(u => u.email !== editUser.originalEmail && ['Manager', 'Admin', 'Super Admin'].includes(u.role)).map(u => (
                       <SelectItem key={u.email} value={u.email}>{u.name}</SelectItem>
                     ))}
                   </SelectContent>
                 </Select>
               </div>
-              {canUseSignature(editUser.role) && (
-                <div className="space-y-2 rounded-lg border border-border bg-muted/20 p-3">
-                  <Label>Approval Signature</Label>
-                  <ImageUpload
-                    bucket="user-avatars"
-                    currentUrl={editUser.signatureUrl || null}
-                    onUploaded={(url) => setEditUser({ ...editUser, signatureUrl: url })}
-                    folder={`signatures/${editUser.email || editUser.originalEmail}`}
-                    variant="signature"
-                    acceptedTypes={['image/png', 'image/jpeg']}
-                  />
-                </div>
-              )}
+              <div className="space-y-2 rounded-lg border border-border bg-muted/20 p-3">
+                <Label>Signature</Label>
+                <ImageUpload
+                  bucket="user-avatars"
+                  currentUrl={editUser.signatureUrl || null}
+                  onUploaded={(url) => setEditUser({ ...editUser, signatureUrl: url })}
+                  folder={`signatures/${editUser.email || editUser.originalEmail}`}
+                  variant="signature"
+                  acceptedTypes={['image/png', 'image/jpeg']}
+                />
+              </div>
               <DialogFooter className="flex-col sm:flex-row gap-2 sm:gap-0">
                 <Button variant="outline" onClick={() => setEditUser(null)} className="w-full sm:w-auto h-11 sm:h-10">Cancel</Button>
                 <Button onClick={handleUpdate} disabled={processing} className="w-full sm:w-auto h-11 sm:h-10">Save Changes</Button>
