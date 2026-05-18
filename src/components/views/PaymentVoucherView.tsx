@@ -11,6 +11,8 @@ import { Receipt, RefreshCw, Eye, Printer, Download, Filter } from 'lucide-react
 import { amountToWords } from '@/lib/amount-to-words';
 import AttachmentPreview from '@/components/views/AttachmentPreview';
 import { toast } from 'sonner';
+import { supabase } from '@/integrations/supabase/client';
+import { getStoredUserSignature } from '@/lib/user-signatures';
 
 function formatDate(d: string) {
   if (!d) return '';
@@ -43,23 +45,41 @@ function buildVoucherNo(selectedClaims: any[]) {
   return `${prefix}-${String(selectedClaims.length).padStart(2, '0')}`;
 }
 
-function getClaimOwnerName(claim: any, userDirectory: Record<string, string>) {
-  const email = String(claim.userEmail || '').trim().toLowerCase();
-  return userDirectory[email] || claim.submittedBy || claim.userEmail || 'Unknown User';
+type UserDirectoryEntry = {
+  name: string;
+  signatureUrl: string;
+};
+
+function buildUserDirectory(users: any[]) {
+  return Object.fromEntries((users || []).map((entry: any) => [
+    String(entry.email || '').trim().toLowerCase(),
+    {
+      name: entry.name || entry.email,
+      signatureUrl: entry.signatureUrl || entry.signature_url || getStoredUserSignature(entry.email),
+    },
+  ]));
 }
 
-function buildUserTotals(claimsForVoucher: any[], userDirectory: Record<string, string>) {
-  const byUser = new Map<string, { name: string; email: string; claimCount: number; submittedAmount: number; verifiedPayable: number }>();
+function getClaimOwnerName(claim: any, userDirectory: Record<string, UserDirectoryEntry>) {
+  const email = String(claim.userEmail || '').trim().toLowerCase();
+  return userDirectory[email]?.name || claim.submittedBy || claim.userEmail || 'Unknown User';
+}
+
+function buildUserTotals(claimsForVoucher: any[], userDirectory: Record<string, UserDirectoryEntry>) {
+  const byUser = new Map<string, { name: string; email: string; signatureUrl: string; claimCount: number; submittedAmount: number; verifiedPayable: number }>();
 
   claimsForVoucher.forEach((claim) => {
     const email = String(claim.userEmail || '').trim().toLowerCase() || 'unknown';
+    const directoryEntry = email === 'unknown' ? undefined : userDirectory[email];
     const current = byUser.get(email) || {
       name: getClaimOwnerName(claim, userDirectory),
       email: email === 'unknown' ? '' : email,
+      signatureUrl: directoryEntry?.signatureUrl || '',
       claimCount: 0,
       submittedAmount: 0,
       verifiedPayable: 0,
     };
+    if (!current.signatureUrl && directoryEntry?.signatureUrl) current.signatureUrl = directoryEntry.signatureUrl;
     current.claimCount += 1;
     current.submittedAmount += claim.submittedAmount || claim.amount || 0;
     current.verifiedPayable += claim.amount || 0;
@@ -124,14 +144,15 @@ function getVoucherDocumentStyles() {
     .voucher-section-title { margin:0 0 8px; font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:.04em; }
     .voucher-total-box { margin-top:10px; padding:10px; background:#f8fafc; border-radius:6px; font-size:11px; }
     .voucher-signatures { display:grid; grid-template-columns:repeat(3, 1fr); gap:24px; margin-top:44px; text-align:center; font-size:11px; }
+    .voucher-payee-signatures { display:grid; grid-template-columns:repeat(auto-fit, minmax(180px, 1fr)); gap:24px; margin-top:26px; text-align:center; font-size:11px; }
     .voucher-signature-image-wrap { height:46px; display:flex; align-items:flex-end; justify-content:center; margin-bottom:6px; }
     .voucher-signature-image { max-width:150px; max-height:42px; width:auto; height:auto; object-fit:contain; }
-    .voucher-signatures strong { display:block; border-top:1px solid #111827; padding-top:8px; font-size:11px; }
-    .voucher-signatures span { display:block; color:#4b5563; font-size:10px; margin-top:4px; }
+    .voucher-signatures strong, .voucher-payee-signatures strong { display:block; border-top:1px solid #111827; padding-top:8px; font-size:11px; }
+    .voucher-signatures span, .voucher-payee-signatures span { display:block; color:#4b5563; font-size:10px; margin-top:4px; }
     @media (max-width: 700px) {
       .voucher-header { grid-template-columns:56px 1fr; }
       .voucher-header-spacer { display:none; }
-      .voucher-meta, .voucher-summary-grid, .voucher-signatures { grid-template-columns:1fr; }
+      .voucher-meta, .voucher-summary-grid, .voucher-signatures, .voucher-payee-signatures { grid-template-columns:1fr; }
       table { font-size:10px; }
     }
     @media print { body { padding: 10px; } }
@@ -176,6 +197,25 @@ function SignatureBlock({ title, approval }: { title: string; approval: any }) {
   );
 }
 
+function PayeeSignatureBlock({ entry }: { entry: any }) {
+  return (
+    <div>
+      <div className="voucher-signature-image-wrap flex h-[46px] items-end justify-center mb-1">
+        {entry?.signatureUrl && (
+          <img
+            src={entry.signatureUrl}
+            alt={`${entry.name} signature`}
+            className="voucher-signature-image max-h-[42px] max-w-[150px] object-contain"
+            style={{ maxWidth: '150px', maxHeight: '42px', width: 'auto', height: 'auto', objectFit: 'contain' }}
+          />
+        )}
+      </div>
+      <strong className="block border-t border-foreground pt-2">Payee Signature</strong>
+      <span className="mt-1 block text-muted-foreground">{entry?.name}</span>
+    </div>
+  );
+}
+
 export default function PaymentVoucherView() {
   const { user } = useAuth();
   const [claims, setClaims] = useState<any[]>([]);
@@ -183,7 +223,7 @@ export default function PaymentVoucherView() {
   const [voucher, setVoucher] = useState<any>(null);
   const [companySettings, setCompanySettings] = useState<any>(null);
   const [users, setUsers] = useState<any[]>([]);
-  const [userDirectory, setUserDirectory] = useState<Record<string, string>>({});
+  const [userDirectory, setUserDirectory] = useState<Record<string, UserDirectoryEntry>>({});
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [filters, setFilters] = useState({ userEmail: '', startDate: '', endDate: '' });
   const [exportingPdf, setExportingPdf] = useState(false);
@@ -200,9 +240,7 @@ export default function PaymentVoucherView() {
       setClaims(all.filter(c => ['approved', 'closed'].includes(c.status.toLowerCase())));
       setCompanySettings(settings);
       setUsers(allUsers || []);
-      setUserDirectory(
-        Object.fromEntries((allUsers || []).map((entry: any) => [String(entry.email || '').trim().toLowerCase(), entry.name]))
-      );
+      setUserDirectory(buildUserDirectory(allUsers || []));
       setSelectedIds(new Set());
     } catch (e) {
       console.error(e);
@@ -257,7 +295,35 @@ export default function PaymentVoucherView() {
 
   const openVoucher = async (claimsForVoucher: any[]) => {
     if (claimsForVoucher.length === 0) return;
-    const userTotals = buildUserTotals(claimsForVoucher, userDirectory);
+    let voucherUserDirectory = userDirectory;
+    const emails = [...new Set(claimsForVoucher.map((claim) => String(claim.userEmail || '').trim().toLowerCase()).filter(Boolean))];
+
+    if (emails.length > 0) {
+      const { data, error } = await supabase
+        .from('users')
+        .select('email,name,signature_url')
+        .in('email', emails);
+      if (error) {
+        const fallbackUsers = emails.map((email) => ({
+          email,
+          name: userDirectory[email]?.name || email,
+          signature_url: getStoredUserSignature(email),
+        }));
+        voucherUserDirectory = {
+          ...userDirectory,
+          ...buildUserDirectory(fallbackUsers),
+        };
+        setUserDirectory(voucherUserDirectory);
+      } else {
+        voucherUserDirectory = {
+          ...userDirectory,
+          ...buildUserDirectory(data || []),
+        };
+        setUserDirectory(voucherUserDirectory);
+      }
+    }
+
+    const userTotals = buildUserTotals(claimsForVoucher, voucherUserDirectory);
     const projectCodeTotals = buildProjectCodeTotals(claimsForVoucher);
     const approvals = await getClaimApprovalTrail(claimsForVoucher.map((claim) => claim.claimIdInternal));
     setVoucher({
@@ -624,6 +690,14 @@ export default function PaymentVoucherView() {
                 <div className="voucher-total-box mt-3 p-3 bg-muted/20 rounded text-xs">
                   <strong>Verified Amount in Words:</strong> {amountToWords(voucher.amount || 0)}
                 </div>
+
+                {voucher.userTotals?.length > 0 && (
+                  <div className="voucher-payee-signatures mt-8 grid grid-cols-1 gap-8 text-center text-xs sm:grid-cols-2">
+                    {voucher.userTotals.map((entry: any) => (
+                      <PayeeSignatureBlock key={entry.email || entry.name} entry={entry} />
+                    ))}
+                  </div>
+                )}
 
                 <div className="voucher-signatures mt-10 grid grid-cols-1 gap-8 text-center text-xs sm:grid-cols-3">
                   <SignatureBlock title="Prepared & Verified by Admin" approval={adminApproval} />

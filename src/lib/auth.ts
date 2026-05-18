@@ -9,6 +9,7 @@ export interface AppUser {
   name: string;
   role: UserRole;
   profile_picture_url?: string | null;
+  signature_url?: string | null;
 }
 
 export interface SessionData {
@@ -65,6 +66,7 @@ export async function login(email: string, password: string): Promise<{ ok: bool
       name: (user as any).name,
       role: (user as any).role as UserRole,
       profile_picture_url: (user as any).profile_picture_url,
+      signature_url: (user as any).signature_url,
     },
   };
 
@@ -84,11 +86,24 @@ export async function verifyToken(token: string): Promise<AppUser | null> {
 
   if (error || !data) return null;
 
-  const { data: userData } = await supabase
+  const { data: userDataWithSignature, error: userWithSignatureError } = await supabase
     .from('users')
-    .select('name, email, role, profile_picture_url')
+    .select('name, email, role, profile_picture_url, signature_url')
     .eq('email', (data as any).user_email)
     .single();
+
+  let userData = userDataWithSignature;
+  if (userWithSignatureError) {
+    const message = String(userWithSignatureError.message || userWithSignatureError.details || '');
+    if (!message.includes('signature_url') && !message.includes('schema cache')) return null;
+
+    const { data: userDataWithoutSignature } = await supabase
+      .from('users')
+      .select('name, email, role, profile_picture_url')
+      .eq('email', (data as any).user_email)
+      .single();
+    userData = userDataWithoutSignature;
+  }
 
   if (!userData) return null;
 
@@ -97,6 +112,7 @@ export async function verifyToken(token: string): Promise<AppUser | null> {
     name: (userData as any).name,
     role: (userData as any).role as UserRole,
     profile_picture_url: (userData as any).profile_picture_url,
+    signature_url: (userData as any).signature_url,
   };
 }
 

@@ -1,5 +1,6 @@
 import { supabase } from '@/integrations/supabase/client';
 import { hashPassword, isDemoEmail } from '@/lib/auth';
+import { getStoredUserSignature } from '@/lib/user-signatures';
 
 export interface ProjectCodeOption {
   code: string;
@@ -1415,9 +1416,10 @@ export async function getClaimApprovalTrail(claimIds: string[]): Promise<Record<
       throw usersWithSignatureError;
     }
     (users || []).forEach((entry: any) => {
-      usersMap[String(entry.email || '').trim().toLowerCase()] = {
+      const email = String(entry.email || '').trim().toLowerCase();
+      usersMap[email] = {
         name: entry.name || entry.email,
-        signatureUrl: entry.signature_url || '',
+        signatureUrl: entry.signature_url || getStoredUserSignature(email),
       };
     });
   }
@@ -1542,7 +1544,7 @@ export async function getAllUsers() {
       balance: user.email === 'user@siteconnect.demo' ? 110800 : 0,
       manager: user.manager_email || '',
       active: user.active,
-      signatureUrl: (user as any).signature_url || '',
+      signatureUrl: (user as any).signature_url || getStoredUserSignature(user.email),
     }));
   }
 
@@ -1564,7 +1566,7 @@ export async function getAllUsers() {
       employee_id: u.employee_id || '',
       mobile_number: u.mobile_number || '',
       date_of_joining: u.date_of_joining || '',
-      signatureUrl: u.signature_url || '',
+      signatureUrl: u.signature_url || getStoredUserSignature(u.email),
     });
   }
   return users;
@@ -1878,7 +1880,7 @@ export async function getUsersDirectory() {
 
   return data.map((user: any) => ({
     ...user,
-    signatureUrl: user.signature_url || '',
+    signatureUrl: user.signature_url || getStoredUserSignature(user.email),
   })) as any[];
 }
 
