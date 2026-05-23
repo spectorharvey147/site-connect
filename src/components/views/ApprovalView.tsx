@@ -135,7 +135,7 @@ export default function ApprovalView({ type }: ApprovalViewProps) {
       if (type === 'manager') await approveClaimAsManager(internalId, user!.email, approveDescription, amount);
       else if (type === 'super-admin') await approveClaimAsSuperAdmin(internalId, user!.email, approveDescription, amount);
       else await approveClaimAsAdmin(internalId, user!.email, approveDescription, amount);
-      toast.success(type === 'admin' ? 'Claim verified and forwarded' : type === 'super-admin' ? 'Claim closed' : 'Claim approved');
+      toast.success(type === 'admin' ? 'Claim verified and forwarded' : type === 'super-admin' ? 'Claim sent for accounts verification' : 'Claim approved');
       setApproveModal(null);
       setApproveDescription('');
       setVerifiedAmount('');

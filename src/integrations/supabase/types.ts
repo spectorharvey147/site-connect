@@ -85,6 +85,9 @@ export type Database = {
           admin_approval_date: string | null
           admin_description: string | null
           admin_email: string | null
+          accounts_note: string | null
+          accounts_verified_date: string | null
+          accounts_verified_email: string | null
           claim_id: string
           claim_number: string | null
           created_at: string
@@ -97,6 +100,11 @@ export type Database = {
           manager_approval_status: string | null
           manager_description: string | null
           manager_email: string | null
+          paid_amount: number | null
+          paid_date: string | null
+          paid_email: string | null
+          payment_note: string | null
+          payment_reference: string | null
           rejection_reason: string | null
           site_name: string
           status: string
@@ -110,6 +118,9 @@ export type Database = {
           admin_approval_date?: string | null
           admin_description?: string | null
           admin_email?: string | null
+          accounts_note?: string | null
+          accounts_verified_date?: string | null
+          accounts_verified_email?: string | null
           claim_id: string
           claim_number?: string | null
           created_at?: string
@@ -122,6 +133,11 @@ export type Database = {
           manager_approval_status?: string | null
           manager_description?: string | null
           manager_email?: string | null
+          paid_amount?: number | null
+          paid_date?: string | null
+          paid_email?: string | null
+          payment_note?: string | null
+          payment_reference?: string | null
           rejection_reason?: string | null
           site_name: string
           status?: string
@@ -135,6 +151,9 @@ export type Database = {
           admin_approval_date?: string | null
           admin_description?: string | null
           admin_email?: string | null
+          accounts_note?: string | null
+          accounts_verified_date?: string | null
+          accounts_verified_email?: string | null
           claim_id?: string
           claim_number?: string | null
           created_at?: string
@@ -147,6 +166,11 @@ export type Database = {
           manager_approval_status?: string | null
           manager_description?: string | null
           manager_email?: string | null
+          paid_amount?: number | null
+          paid_date?: string | null
+          paid_email?: string | null
+          payment_note?: string | null
+          payment_reference?: string | null
           rejection_reason?: string | null
           site_name?: string
           status?: string

@@ -7,6 +7,13 @@ export type ThemeMode = "light" | "dark" | "system";
 export type ClaimStatus =
   | "draft"
   | "submitted"
+  | "admin_verified"
+  | "manager_approved"
+  | "final_approved"
+  | "accounts_verification"
+  | "sent_to_accounts"
+  | "accounts_processing"
+  | "paid"
   | "verified"
   | "approved"
   | "rejected"

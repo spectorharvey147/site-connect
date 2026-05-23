@@ -28,7 +28,16 @@ function escapeHtml(value: unknown) {
 function statusBadge(status: string) {
   const normalized = status.toLowerCase();
 
-  if (normalized === 'closed' || (normalized.includes('approved') && !normalized.includes('pending'))) {
+  if (normalized === 'paid') {
+    return <Badge className="bg-green-100 px-2 py-1 text-sm font-medium text-green-800 hover:bg-green-100">Paid</Badge>;
+  }
+  if (normalized === 'accounts processing') {
+    return <Badge className="bg-blue-100 px-2 py-1 text-sm font-medium text-blue-800 hover:bg-blue-100">Accounts Processing</Badge>;
+  }
+  if (normalized === 'accounts verification' || normalized === 'sent to accounts') {
+    return <Badge className="bg-cyan-100 px-2 py-1 text-sm font-medium text-cyan-800 hover:bg-cyan-100">Accounts Verification</Badge>;
+  }
+  if (normalized === 'closed' || normalized === 'approved' || normalized === 'settled') {
     return <Badge className="bg-green-100 px-2 py-1 text-sm font-medium text-green-800 hover:bg-green-100">{normalized === 'closed' ? 'Closed' : 'Approved'}</Badge>;
   }
   if (normalized.includes('reject')) {
