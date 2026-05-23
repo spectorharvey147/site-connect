@@ -39,38 +39,9 @@ function formatInputDate(d: string) {
   return date.toISOString().slice(0, 10);
 }
 
-function claimNumberToken(claim: any) {
-  const raw = String(claim?.claimId || claim?.claimIdInternal || '').trim();
-  const compact = raw.replace(/[^a-z0-9]+/gi, '').toUpperCase();
-  return compact || 'CLAIM';
-}
-
-function claimNumberSortValue(claim: any) {
-  const token = claimNumberToken(claim);
-  const match = token.match(/(\d+)$/);
-  return {
-    number: match ? Number(match[1]) : Number.MAX_SAFE_INTEGER,
-    token,
-  };
-}
-
 function buildVoucherNo(selectedClaims: any[]) {
   const prefix = `PV-${new Date().toISOString().slice(0, 10).replace(/-/g, '')}`;
-  const tokens = [...selectedClaims]
-    .sort((a, b) => {
-      const left = claimNumberSortValue(a);
-      const right = claimNumberSortValue(b);
-      return left.number === right.number
-        ? left.token.localeCompare(right.token)
-        : left.number - right.number;
-    })
-    .map(claimNumberToken);
-
-  if (tokens.length === 0) return `${prefix}-CLAIM`;
-  if (tokens.length === 1) return `${prefix}-${tokens[0]}`;
-  if (tokens.length <= 3) return `${prefix}-${tokens.join('-')}`;
-
-  return `${prefix}-${tokens[0]}-TO-${tokens[tokens.length - 1]}-N${String(tokens.length).padStart(2, '0')}`;
+  return `${prefix}-${String(selectedClaims.length).padStart(2, '0')}`;
 }
 
 type UserDirectoryEntry = {
