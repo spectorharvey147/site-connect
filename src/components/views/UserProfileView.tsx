@@ -12,7 +12,6 @@ import { toast } from 'sonner';
 import { Badge } from '@/components/ui/badge';
 import ImageUpload from '@/components/ImageUpload';
 import RupeeIcon from '@/components/icons/RupeeIcon';
-import { getStoredUserSignature, setStoredUserSignature } from '@/lib/user-signatures';
 
 export default function UserProfileView() {
   const { user } = useAuth();
@@ -134,18 +133,14 @@ export default function UserProfileView() {
           <Label className="mb-3 block">Signature for Vouchers</Label>
           <ImageUpload
             bucket="user-avatars"
-            currentUrl={user.signature_url || getStoredUserSignature(user.email) || null}
+            currentUrl={user.signature_url || null}
             onUploaded={async (url) => {
               try {
                 const { error } = await supabase
                   .from('users')
                   .update({ signature_url: url || null })
                   .eq('email', user.email);
-                if (error) {
-                  const message = String(error.message || error.details || '');
-                  if (!message.includes('signature_url') && !message.includes('schema cache')) throw error;
-                }
-                setStoredUserSignature(user.email, url || '');
+                if (error) throw error;
                 toast.success(url ? 'Signature updated' : 'Signature removed');
                 window.location.reload();
               } catch (e: any) {

@@ -27,6 +27,7 @@ const allNavItems = [
   { id: 'manager-approval', icon: UserCheck, label: 'Manager Approval', roles: ['Manager', 'Super Admin'] },
   { id: 'admin-approval', icon: ShieldCheck, label: 'Admin Verification', roles: ['Admin', 'Super Admin'] },
   { id: 'final-approval', icon: ShieldCheck, label: 'Final Approval', roles: ['Super Admin'] },
+  { id: 'accounts-processing', icon: Receipt, label: 'Accounts Processing', roles: ['Accounts', 'Super Admin'] },
   { id: 'voucher', icon: Receipt, label: 'Payment Voucher', roles: ['Accounts', 'Admin', 'Super Admin'] },
   { id: 'users', icon: Users, label: 'User Management', roles: ['Admin', 'Super Admin'] },
   { id: 'audit', icon: Shield, label: 'Audit Trail', roles: ['Admin', 'Super Admin'] },
@@ -38,7 +39,7 @@ export default function MobileBottomNav({ activeView, onNavigate }: MobileBottom
   const { user, logout } = useAuth();
   const [sheetOpen, setSheetOpen] = useState(false);
   const primaryAction = user?.role === 'Accounts'
-    ? { id: 'voucher', icon: Receipt, label: 'Payment Voucher' }
+    ? { id: 'accounts-processing', icon: Receipt, label: 'Accounts Processing' }
     : { id: 'submit', icon: Plus, label: 'Submit Claim' };
   const PrimaryIcon = primaryAction.icon;
 

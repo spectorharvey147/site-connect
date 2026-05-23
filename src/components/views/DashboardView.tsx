@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import type { ComponentType, SVGProps } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { getDashboardChartData, getDashboardSummary, getManagerAssignedUsersWithBalances } from '@/lib/claims-api';
-import { FileText, Users, Clock, UserCheck, ShieldCheck, RefreshCw } from 'lucide-react';
+import { CheckCircle2, CreditCard, FileText, Users, Clock, UserCheck, ShieldCheck, RefreshCw } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, Legend } from 'recharts';
@@ -19,6 +19,9 @@ interface DashboardSummary {
   pendingManagerClaims?: number;
   pendingAdminClaims?: number;
   pendingFinalClaims?: number;
+  pendingAccountsClaims?: number;
+  accountsProcessingClaims?: number;
+  paidClaims?: number;
   myClaims?: number;
   myAmount?: number;
   myBalance?: number;
@@ -148,12 +151,32 @@ function AdminDashboard({ data, isManager, managerUsers }: { data: DashboardSumm
   );
 }
 
+function AccountsDashboard({ data }: { data: DashboardSummary | null }) {
+  return (
+    <>
+      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4 mb-4">
+        <StatCard icon={FileText} label="Accounts Verification" value={data?.pendingAccountsClaims ?? 0} subtitle="Final approved, awaiting accounts" color="text-warning" />
+        <StatCard icon={CreditCard} label="Processing" value={data?.accountsProcessingClaims ?? 0} subtitle="Accounts verified, payment pending" color="text-info" />
+        <StatCard icon={CheckCircle2} label="Paid Claims" value={data?.paidClaims ?? 0} subtitle="Marked paid by accounts" color="text-success" />
+        <StatCard icon={RupeeIcon} label="Paid Amount" value={formatCurrency(data?.totalAmount ?? 0)} subtitle="Total paid claims" color="text-success" />
+      </div>
+    </>
+  );
+}
+
 const COLORS = ['#0ea5e9', '#14b8a6', '#22c55e', '#f59e0b', '#ef4444', '#8b5cf6', '#06b6d4', '#84cc16'];
 
 const STATUS_COLORS: Record<string, string> = {
   Approved: '#22c55e',
   Closed: '#22c55e',
   Rejected: '#ef4444',
+  Submitted: '#0ea5e9',
+  'Admin Verified': '#f59e0b',
+  'Manager Approved': '#8b5cf6',
+  'Accounts Verification': '#06b6d4',
+  'Sent to Accounts': '#06b6d4',
+  'Accounts Processing': '#0284c7',
+  Paid: '#22c55e',
   'Pending Admin Verification': '#0ea5e9',
   'Pending Manager Approval': '#f59e0b',
   'Pending Super Admin Approval': '#8b5cf6',
@@ -294,6 +317,7 @@ export default function DashboardView() {
   }
 
   const isUserRole = data?.role === 'User';
+  const isAccountsRole = user?.role === 'Accounts';
 
   return (
     <div className="animate-in fade-in slide-in-from-bottom-4 duration-500">
@@ -301,6 +325,8 @@ export default function DashboardView() {
 
       {isUserRole ? (
         <UserDashboard data={data} />
+      ) : isAccountsRole ? (
+        <AccountsDashboard data={data} />
       ) : (
         <AdminDashboard data={data} isManager={user?.role === 'Manager'} managerUsers={managerUsers} />
       )}

@@ -12,7 +12,6 @@ import { amountToWords } from '@/lib/amount-to-words';
 import AttachmentPreview from '@/components/views/AttachmentPreview';
 import { toast } from 'sonner';
 import { supabase } from '@/integrations/supabase/client';
-import { getStoredUserSignature } from '@/lib/user-signatures';
 
 function formatDate(d: string) {
   if (!d) return '';
@@ -55,7 +54,7 @@ function buildUserDirectory(users: any[]) {
     String(entry.email || '').trim().toLowerCase(),
     {
       name: entry.name || entry.email,
-      signatureUrl: entry.signatureUrl || entry.signature_url || getStoredUserSignature(entry.email),
+      signatureUrl: entry.signatureUrl || entry.signature_url || '',
     },
   ]));
 }
@@ -159,7 +158,7 @@ function getVoucherDocumentStyles() {
   `;
 }
 
-function summarizeApproval(voucher: any, stage: 'admin' | 'manager' | 'final') {
+function summarizeApproval(voucher: any, stage: 'admin' | 'manager' | 'final' | 'accounts' | 'paid') {
   const stamps = (voucher?.claims || [])
     .map((claim: any) => voucher?.approvals?.[claim.claimIdInternal]?.[stage])
     .filter(Boolean);
@@ -227,6 +226,7 @@ export default function PaymentVoucherView() {
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [filters, setFilters] = useState({ userEmail: '', startDate: '', endDate: '' });
   const [exportingPdf, setExportingPdf] = useState(false);
+  const [exportingCombinedPdf, setExportingCombinedPdf] = useState(false);
 
   const loadClaims = async () => {
     if (!user) return;
@@ -237,7 +237,7 @@ export default function PaymentVoucherView() {
         getCompanySettings(),
         getAllUsers(),
       ]);
-      setClaims(all.filter(c => ['approved', 'closed'].includes(c.status.toLowerCase())));
+      setClaims(all.filter(c => ['approved', 'closed', 'accounts verification', 'sent to accounts', 'accounts processing', 'paid'].includes(c.status.toLowerCase())));
       setCompanySettings(settings);
       setUsers(allUsers || []);
       setUserDirectory(buildUserDirectory(allUsers || []));
@@ -304,16 +304,7 @@ export default function PaymentVoucherView() {
         .select('email,name,signature_url')
         .in('email', emails);
       if (error) {
-        const fallbackUsers = emails.map((email) => ({
-          email,
-          name: userDirectory[email]?.name || email,
-          signature_url: getStoredUserSignature(email),
-        }));
-        voucherUserDirectory = {
-          ...userDirectory,
-          ...buildUserDirectory(fallbackUsers),
-        };
-        setUserDirectory(voucherUserDirectory);
+        console.warn('Could not refresh voucher user signatures', error);
       } else {
         voucherUserDirectory = {
           ...userDirectory,
@@ -367,42 +358,51 @@ export default function PaymentVoucherView() {
     w.print();
   };
 
-  const downloadVoucherPDF = async () => {
+  const buildVoucherPdf = async () => {
     if (!voucher) return;
     const content = document.getElementById('voucher-content');
     if (!content) return;
 
-    setExportingPdf(true);
-    try {
-      const [{ default: html2canvas }, { jsPDF }] = await Promise.all([
-        import('html2canvas'),
-        import('jspdf'),
-      ]);
-      const canvas = await html2canvas(content, {
-        scale: 2,
-        useCORS: true,
-        backgroundColor: '#ffffff',
-      });
-      const pdf = new jsPDF('p', 'mm', 'a4');
-      const pageWidth = pdf.internal.pageSize.getWidth();
-      const pageHeight = pdf.internal.pageSize.getHeight();
-      const margin = 8;
-      const imgWidth = pageWidth - margin * 2;
-      const imgHeight = (canvas.height * imgWidth) / canvas.width;
-      const pageBodyHeight = pageHeight - margin * 2;
-      const imageData = canvas.toDataURL('image/png');
+    const [{ default: html2canvas }, { jsPDF }] = await Promise.all([
+      import('html2canvas'),
+      import('jspdf'),
+    ]);
+    const canvas = await html2canvas(content, {
+      scale: 2,
+      useCORS: true,
+      backgroundColor: '#ffffff',
+    });
+    const pdf = new jsPDF('p', 'mm', 'a4');
+    const pageWidth = pdf.internal.pageSize.getWidth();
+    const pageHeight = pdf.internal.pageSize.getHeight();
+    const margin = 8;
+    const imgWidth = pageWidth - margin * 2;
+    const imgHeight = (canvas.height * imgWidth) / canvas.width;
+    const pageBodyHeight = pageHeight - margin * 2;
+    const imageData = canvas.toDataURL('image/png');
 
-      let heightLeft = imgHeight;
-      let position = margin;
+    let heightLeft = imgHeight;
+    let position = margin;
+    pdf.addImage(imageData, 'PNG', margin, position, imgWidth, imgHeight, undefined, 'FAST');
+    heightLeft -= pageBodyHeight;
+
+    while (heightLeft > 0) {
+      position = margin - (imgHeight - heightLeft);
+      pdf.addPage();
       pdf.addImage(imageData, 'PNG', margin, position, imgWidth, imgHeight, undefined, 'FAST');
       heightLeft -= pageBodyHeight;
+    }
 
-      while (heightLeft > 0) {
-        position = margin - (imgHeight - heightLeft);
-        pdf.addPage();
-        pdf.addImage(imageData, 'PNG', margin, position, imgWidth, imgHeight, undefined, 'FAST');
-        heightLeft -= pageBodyHeight;
-      }
+    return pdf;
+  };
+
+  const downloadVoucherPDF = async () => {
+    if (!voucher) return;
+
+    setExportingPdf(true);
+    try {
+      const pdf = await buildVoucherPdf();
+      if (!pdf) return;
 
       pdf.save(`voucher-${voucher.voucherNo}.pdf`);
       toast.success('Payment voucher PDF downloaded');
@@ -414,6 +414,114 @@ export default function PaymentVoucherView() {
     }
   };
 
+  const downloadBlob = (blob: Blob, filename: string) => {
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = filename;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
+  };
+
+  const fetchAttachment = async (fileId: string) => {
+    const { data } = supabase.storage.from('claim-attachments').getPublicUrl(fileId);
+    const response = await fetch(data.publicUrl);
+    if (!response.ok) throw new Error(`Unable to fetch attachment ${fileId}`);
+    const contentType = response.headers.get('content-type') || '';
+    const bytes = await response.arrayBuffer();
+    return {
+      bytes,
+      contentType,
+      name: fileId.split('/').pop() || fileId,
+      url: data.publicUrl,
+    };
+  };
+
+  const downloadCombinedVoucherPDF = async () => {
+    if (!voucher) return;
+
+    setExportingCombinedPdf(true);
+    try {
+      const voucherPdf = await buildVoucherPdf();
+      if (!voucherPdf) return;
+
+      const { PDFDocument, StandardFonts, rgb } = await import('pdf-lib');
+      const mergedPdf = await PDFDocument.load(voucherPdf.output('arraybuffer'));
+      const font = await mergedPdf.embedFont(StandardFonts.Helvetica);
+      const pageSize: [number, number] = [595.28, 841.89];
+      const margin = 36;
+
+      const addTextPage = (title: string, lines: string[]) => {
+        const page = mergedPdf.addPage(pageSize);
+        const { width, height } = page.getSize();
+        page.drawText(title, { x: margin, y: height - margin, size: 16, font, color: rgb(0.02, 0.23, 0.35) });
+        lines.slice(0, 28).forEach((line, index) => {
+          page.drawText(line, { x: margin, y: height - margin - 32 - (index * 18), size: 10, font, color: rgb(0.17, 0.24, 0.31) });
+        });
+        page.drawText('Open the original attachment from ClaimFlow if this page could not be embedded.', {
+          x: margin,
+          y: margin,
+          size: 9,
+          font,
+          color: rgb(0.39, 0.45, 0.55),
+        });
+      };
+
+      for (const fileId of voucherFileIds) {
+        try {
+          const attachment = await fetchAttachment(fileId);
+          const isPdf = attachment.contentType.includes('pdf') || /\.pdf$/i.test(attachment.name);
+          const isPng = attachment.contentType.includes('png') || /\.png$/i.test(attachment.name);
+          const isJpeg = attachment.contentType.includes('jpeg') || attachment.contentType.includes('jpg') || /\.jpe?g$/i.test(attachment.name);
+
+          if (isPdf) {
+            const sourcePdf = await PDFDocument.load(attachment.bytes);
+            const copiedPages = await mergedPdf.copyPages(sourcePdf, sourcePdf.getPageIndices());
+            copiedPages.forEach((page) => mergedPdf.addPage(page));
+            continue;
+          }
+
+          if (isPng || isJpeg) {
+            const image = isPng
+              ? await mergedPdf.embedPng(attachment.bytes)
+              : await mergedPdf.embedJpg(attachment.bytes);
+            const page = mergedPdf.addPage(pageSize);
+            const { width, height } = page.getSize();
+            page.drawText(`Attachment: ${attachment.name}`, { x: margin, y: height - 28, size: 10, font, color: rgb(0.17, 0.24, 0.31) });
+            const maxWidth = width - (margin * 2);
+            const maxHeight = height - 76;
+            const scale = Math.min(maxWidth / image.width, maxHeight / image.height, 1);
+            const drawWidth = image.width * scale;
+            const drawHeight = image.height * scale;
+            page.drawImage(image, {
+              x: (width - drawWidth) / 2,
+              y: (height - drawHeight) / 2 - 14,
+              width: drawWidth,
+              height: drawHeight,
+            });
+            continue;
+          }
+
+          addTextPage(`Attachment: ${attachment.name}`, [`Unsupported attachment type: ${attachment.contentType || 'unknown'}`, attachment.url]);
+        } catch (error) {
+          console.warn('Could not append attachment to combined voucher PDF:', error);
+          addTextPage(`Attachment: ${fileId}`, ['This attachment could not be embedded in the combined PDF.']);
+        }
+      }
+
+      const bytes = await mergedPdf.save();
+      downloadBlob(new Blob([bytes], { type: 'application/pdf' }), `voucher-${voucher.voucherNo}-with-attachments.pdf`);
+      toast.success('Combined voucher PDF downloaded');
+    } catch (error) {
+      console.error(error);
+      toast.error('Could not generate combined PDF. Please try the regular PDF or print option.');
+    } finally {
+      setExportingCombinedPdf(false);
+    }
+  };
+
   const allFilteredSelected = filteredClaims.length > 0 && filteredClaims.every((claim) => selectedIds.has(claim.claimIdInternal));
   const voucherFileIds = voucher
     ? [...new Set(voucher.claims.flatMap((claim: any) => claim.fileIds || []))]
@@ -421,6 +529,8 @@ export default function PaymentVoucherView() {
   const adminApproval = voucher ? summarizeApproval(voucher, 'admin') : null;
   const managerApproval = voucher ? summarizeApproval(voucher, 'manager') : null;
   const finalApproval = voucher ? summarizeApproval(voucher, 'final') : null;
+  const accountsApproval = voucher ? summarizeApproval(voucher, 'accounts') : null;
+  const paidApproval = voucher ? summarizeApproval(voucher, 'paid') : null;
 
   return (
     <div className="animate-in fade-in slide-in-from-bottom-4 duration-500 space-y-4">
@@ -525,6 +635,9 @@ export default function PaymentVoucherView() {
               <div className="flex flex-wrap gap-2">
                 <Button variant="outline" size="sm" onClick={() => void downloadVoucherPDF()} disabled={exportingPdf}>
                   <Download className="h-4 w-4 mr-1" /> {exportingPdf ? 'Creating PDF...' : 'Download PDF'}
+                </Button>
+                <Button variant="outline" size="sm" onClick={() => void downloadCombinedVoucherPDF()} disabled={exportingCombinedPdf || voucherFileIds.length === 0}>
+                  <Download className="h-4 w-4 mr-1" /> {exportingCombinedPdf ? 'Combining...' : 'PDF + Attachments'}
                 </Button>
                 <Button variant="outline" size="sm" onClick={printVoucher}><Printer className="h-4 w-4 mr-1" /> Print</Button>
               </div>
@@ -699,10 +812,12 @@ export default function PaymentVoucherView() {
                   </div>
                 )}
 
-                <div className="voucher-signatures mt-10 grid grid-cols-1 gap-8 text-center text-xs sm:grid-cols-3">
+                <div className="voucher-signatures mt-10 grid grid-cols-1 gap-8 text-center text-xs sm:grid-cols-5">
                   <SignatureBlock title="Prepared & Verified by Admin" approval={adminApproval} />
                   <SignatureBlock title="Approved by Manager" approval={managerApproval} />
                   <SignatureBlock title="Final Approval by HOD" approval={finalApproval} />
+                  <SignatureBlock title="Accounts Verified" approval={accountsApproval} />
+                  <SignatureBlock title="Payment Marked Paid" approval={paidApproval} />
                 </div>
               </div>
             </div>

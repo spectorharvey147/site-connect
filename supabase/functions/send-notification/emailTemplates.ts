@@ -34,9 +34,17 @@ const buttonSuccess = 'display: inline-block; padding: 12px 18px; margin: 0 12px
 const thStyles = 'background: #eff6ff; padding: 9px; border: 1px solid #dbe4ee; text-align: left; font-size: 12px; color: #0f172a; vertical-align: top; line-height: 1.35; overflow-wrap: anywhere; word-break: break-word;';
 const tdStyles = 'padding: 9px; border: 1px solid #dbe4ee; font-size: 12px; vertical-align: top; line-height: 1.4; overflow-wrap: anywhere; word-break: break-word;';
 const softCardStyles = 'padding: 16px; background: #f8fafc; border: 1px solid #e2e8f0; border-left: 4px solid #0284c7; border-radius: 12px; margin: 16px 0;';
-const itemCardStyles = 'margin: 12px 0; padding: 14px; background: #ffffff; border: 1px solid #dbe4ee; border-radius: 12px;';
-const itemGridStyles = 'display: flex; flex-wrap: wrap; gap: 10px 14px; margin-top: 10px;';
-const itemFieldStyles = 'flex: 1 1 150px; min-width: 140px;';
+
+interface ClaimEmailItem {
+  category?: string;
+  projectCode?: string;
+  claimDate?: string;
+  description?: string;
+  amountWithBill?: number;
+  amountWithoutBill?: number;
+  totalAmount?: number;
+  amount?: number;
+}
 
 function escapeHtml(value: unknown) {
   return String(value ?? '')
@@ -178,53 +186,45 @@ function renderAttachments(attachments?: Attachment[]) {
   `;
 }
 
-function field(label: string, value: string) {
-  return `
-    <div style="${itemFieldStyles}">
-      <div style="font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; color: #64748b; font-weight: 700;">${safeText(label)}</div>
-      <div style="font-size: 13px; color: #0f172a; font-weight: 700; overflow-wrap: anywhere; word-break: break-word;">${value}</div>
-    </div>
-  `;
-}
-
-function renderClaimItems(items: Array<{
-  category: string;
-  projectCode?: string;
-  claimDate?: string;
-  description: string;
-  amountWithBill?: number;
-  amountWithoutBill?: number;
-  totalAmount?: number;
-  amount?: number;
-}>, currency: string) {
-  if (!items.length) {
+function renderClaimItems(items: ClaimEmailItem[] | undefined, currency: string) {
+  const rows = Array.isArray(items) ? items : [];
+  if (!rows.length) {
     return `
       <div style="${softCardStyles}">
-        <p style="margin: 0; color: #475569;">Line item details are available in the claim screen.</p>
+        <p style="margin: 0; color: #475569;">Claim item summary was not included in this email payload.</p>
       </div>
     `;
   }
 
-  const cards = items.map((item, index) => `
-    <div style="${itemCardStyles}">
-      <div style="display: flex; justify-content: space-between; gap: 12px; align-items: flex-start;">
-        <div style="font-size: 13px; font-weight: 800; color: #0f172a;">Item ${index + 1}: ${safeText(item.category)}</div>
-        <div style="font-size: 14px; font-weight: 800; color: #0f766e; white-space: nowrap;">${fmtAmount(item.totalAmount ?? item.amount, currency)}</div>
-      </div>
-      <div style="${itemGridStyles}">
-        ${field('Project Code', safeText(item.projectCode || '-'))}
-        ${field('Claim Date', safeText(item.claimDate || '-'))}
-        ${field('With Bill', fmtAmount(item.amountWithBill, currency))}
-        ${field('Without Bill', fmtAmount(item.amountWithoutBill, currency))}
-      </div>
-      ${item.description ? `<div style="margin-top: 10px; font-size: 13px; color: #334155; overflow-wrap: anywhere; word-break: break-word;">${safeText(item.description)}</div>` : ''}
-    </div>
+  const bodyRows = rows.map((item) => `
+    <tr>
+      <td style="${tdStyles}">${safeText(item.category || '-')}</td>
+      <td style="${tdStyles}">${safeText(item.projectCode || '-')}</td>
+      <td style="${tdStyles}">${safeText(item.claimDate || '-')}</td>
+      <td style="${tdStyles}">${safeText(item.description || '-')}</td>
+      <td style="${tdStyles} text-align: right; white-space: nowrap;">${fmtAmount(item.amountWithBill, currency)}</td>
+      <td style="${tdStyles} text-align: right; white-space: nowrap;">${fmtAmount(item.amountWithoutBill, currency)}</td>
+      <td style="${tdStyles} text-align: right; white-space: nowrap; font-weight: 700; color: #0f766e;">${fmtAmount(item.totalAmount ?? item.amount, currency)}</td>
+    </tr>
   `).join('');
 
   return `
     <div style="margin: 18px 0;">
-      <div style="font-size: 13px; font-weight: 800; color: #0f172a; margin-bottom: 8px;">Claim line items</div>
-      ${cards}
+      <div style="font-size: 13px; font-weight: 800; color: #0f172a; margin-bottom: 8px;">Claim Summary</div>
+      <table cellpadding="0" cellspacing="0" role="presentation" style="width: 100%; border-collapse: collapse; table-layout: fixed; background: #ffffff; border: 1px solid #dbe4ee;">
+        <thead>
+          <tr>
+            <th style="${thStyles} width: 13%;">Category</th>
+            <th style="${thStyles} width: 14%;">Project Code</th>
+            <th style="${thStyles} width: 13%;">Claim Date</th>
+            <th style="${thStyles} width: 24%;">Description</th>
+            <th style="${thStyles} width: 12%; text-align: right;">With Bill</th>
+            <th style="${thStyles} width: 12%; text-align: right;">Without Bill</th>
+            <th style="${thStyles} width: 12%; text-align: right;">Total</th>
+          </tr>
+        </thead>
+        <tbody>${bodyRows}</tbody>
+      </table>
     </div>
   `;
 }
@@ -312,16 +312,7 @@ export function claimSubmittedUserTemplate(data: {
   project_site?: string;
   primary_project_code?: string;
   status?: string;
-  items: Array<{
-    category: string;
-    projectCode?: string;
-    claimDate?: string;
-    description: string;
-    amountWithBill?: number;
-    amountWithoutBill?: number;
-    totalAmount?: number;
-    amount?: number;
-  }>;
+  items?: ClaimEmailItem[];
   total_amount: number;
   total_with_bill?: number;
   total_without_bill?: number;
@@ -329,6 +320,7 @@ export function claimSubmittedUserTemplate(data: {
   employee_name?: string;
 } & BrandData): { subject: string; html: string } {
   const info = brand(data);
+  const items = Array.isArray(data.items) ? data.items : [];
   const body = `
     <p style="margin-top: 0;">Dear ${safeText(data.employee_name || data.submitted_by || 'User')},</p>
     <p>Your claim has been submitted successfully and is now in the workflow queue.</p>
@@ -342,9 +334,9 @@ export function claimSubmittedUserTemplate(data: {
     ])}
     <div style="${softCardStyles}">
       <p style="margin: 0 0 8px 0; font-weight: 700; color: #0f172a;">Claim Summary</p>
-      <div style="font-size: 13px; color: #475569;">${safeText(data.claim_number)} has been recorded with ${data.items.length} line item(s).</div>
+      <div style="font-size: 13px; color: #475569;">${safeText(data.claim_number)} has been recorded with ${items.length} line item(s).</div>
     </div>
-    ${renderClaimItems(data.items, info.currency)}
+    ${renderClaimItems(items, info.currency)}
     ${infoGrid([
       { label: 'Total With Bill', value: fmtAmount(data.total_with_bill, info.currency), html: true },
       { label: 'Total Without Bill', value: fmtAmount(data.total_without_bill, info.currency), html: true },
@@ -367,17 +359,10 @@ export function claimSubmittedManagerTemplate(data: {
   submission_date?: string;
   manager_status?: string;
   admin_status?: string;
-  items: Array<{
-    category: string;
-    projectCode?: string;
-    claimDate?: string;
-    description: string;
-    amountWithBill?: number;
-    amountWithoutBill?: number;
-    totalAmount?: number;
-    amount?: number;
-  }>;
+  items?: ClaimEmailItem[];
   total_amount: number;
+  total_with_bill?: number;
+  total_without_bill?: number;
   submitted_amount?: number;
   verified_amount?: number;
   attachments?: Attachment[];
@@ -385,6 +370,7 @@ export function claimSubmittedManagerTemplate(data: {
   reject_link: string;
 } & BrandData): { subject: string; html: string } {
   const info = brand(data);
+  const items = Array.isArray(data.items) ? data.items : [];
   const body = `
     <p style="margin-top: 0;">A claim has been submitted and requires approval.</p>
     ${infoGrid([
@@ -402,7 +388,12 @@ export function claimSubmittedManagerTemplate(data: {
       <p style="margin: 0 0 8px 0; font-weight: 700; color: #0f172a;">Quick actions</p>
       <p style="margin: 0; color: #475569;">Approve or reject this claim from the links below.</p>
     </div>
-    ${renderClaimItems(data.items, info.currency)}
+    ${renderClaimItems(items, info.currency)}
+    ${infoGrid([
+      { label: 'Total With Bill', value: fmtAmount(data.total_with_bill, info.currency), html: true },
+      { label: 'Total Without Bill', value: fmtAmount(data.total_without_bill, info.currency), html: true },
+      { label: 'Grand Total', value: fmtAmount(data.submitted_amount ?? data.total_amount, info.currency), html: true },
+    ])}
     <p style="margin: 16px 0 0;"><strong>Payable / Verified Amount:</strong> ${fmtAmount(data.verified_amount ?? data.total_amount, info.currency)}</p>
     ${renderAttachments(data.attachments)}
     ${renderButtons([
@@ -419,13 +410,17 @@ export function claimSubmittedManagerTemplate(data: {
 export function claimApprovedTemplate(data: {
   claim_no: string;
   total: number;
+  total_with_bill?: number;
+  total_without_bill?: number;
   submitted_amount?: number;
   verified_amount?: number;
   approved_by: string;
   employee_name?: string;
   status?: string;
+  items?: ClaimEmailItem[];
 } & BrandData): { subject: string; html: string } {
   const info = brand(data);
+  const items = Array.isArray(data.items) ? data.items : [];
   const body = `
     <p style="margin-top: 0;">Dear ${safeText(data.employee_name || 'User')},</p>
     <p>Your claim has been approved and the workflow has been completed.</p>
@@ -434,6 +429,12 @@ export function claimApprovedTemplate(data: {
       { label: 'Approved By', value: data.approved_by },
       { label: 'Submitted Amount', value: fmtAmount(data.submitted_amount ?? data.total, info.currency), html: true },
       { label: 'Final Verified Amount', value: fmtAmount(data.verified_amount ?? data.total, info.currency), html: true },
+    ])}
+    ${renderClaimItems(items, info.currency)}
+    ${infoGrid([
+      { label: 'Total With Bill', value: fmtAmount(data.total_with_bill, info.currency), html: true },
+      { label: 'Total Without Bill', value: fmtAmount(data.total_without_bill, info.currency), html: true },
+      { label: 'Grand Total', value: fmtAmount(data.submitted_amount ?? data.total, info.currency), html: true },
     ])}
     <div style="${softCardStyles}; border-left-color: #16a34a;">
       <p style="margin: 0 0 6px 0; color: #166534; font-weight: 700;">Approval complete</p>
@@ -447,14 +448,107 @@ export function claimApprovedTemplate(data: {
   };
 }
 
+export function claimAccountsVerifiedTemplate(data: {
+  claim_no: string;
+  total: number;
+  total_with_bill?: number;
+  total_without_bill?: number;
+  submitted_amount?: number;
+  verified_amount?: number;
+  accounts_by: string;
+  employee_name?: string;
+  status?: string;
+  note?: string;
+  items?: ClaimEmailItem[];
+} & BrandData): { subject: string; html: string } {
+  const info = brand(data);
+  const items = Array.isArray(data.items) ? data.items : [];
+  const body = `
+    <p style="margin-top: 0;">Dear ${safeText(data.employee_name || 'User')},</p>
+    <p>Your claim has been verified by accounts and moved to payment processing.</p>
+    ${infoGrid([
+      { label: 'Claim ID', value: data.claim_no },
+      { label: 'Accounts Verified By', value: data.accounts_by },
+      { label: 'Submitted Amount', value: fmtAmount(data.submitted_amount ?? data.total, info.currency), html: true },
+      { label: 'Accounts Verified Amount', value: fmtAmount(data.verified_amount ?? data.total, info.currency), html: true },
+    ])}
+    ${renderClaimItems(items, info.currency)}
+    ${infoGrid([
+      { label: 'Total With Bill', value: fmtAmount(data.total_with_bill, info.currency), html: true },
+      { label: 'Total Without Bill', value: fmtAmount(data.total_without_bill, info.currency), html: true },
+      { label: 'Grand Total', value: fmtAmount(data.submitted_amount ?? data.total, info.currency), html: true },
+    ])}
+    <div style="${softCardStyles}; border-left-color: #0284c7;">
+      <p style="margin: 0 0 6px 0; color: #075985; font-weight: 700;">Accounts verification complete</p>
+      <p style="margin: 0; color: #0f172a;">Status: <strong>${safeText(data.status || 'Accounts Processing')}</strong></p>
+      ${data.note ? `<p style="margin: 6px 0 0; color: #0f172a;">Note: ${safeText(data.note)}</p>` : ''}
+    </div>
+  `;
+  return {
+    subject: `Accounts Verified - ${data.claim_no}`,
+    html: wrapEmail('Accounts Verified', body, info),
+  };
+}
+
+export function claimPaidTemplate(data: {
+  claim_no: string;
+  total: number;
+  total_with_bill?: number;
+  total_without_bill?: number;
+  submitted_amount?: number;
+  verified_amount?: number;
+  paid_amount?: number;
+  paid_by: string;
+  paid_date?: string;
+  payment_reference?: string;
+  employee_name?: string;
+  status?: string;
+  note?: string;
+  items?: ClaimEmailItem[];
+} & BrandData): { subject: string; html: string } {
+  const info = brand(data);
+  const items = Array.isArray(data.items) ? data.items : [];
+  const body = `
+    <p style="margin-top: 0;">Dear ${safeText(data.employee_name || 'User')},</p>
+    <p>Your claim payment has been marked as paid by accounts.</p>
+    ${infoGrid([
+      { label: 'Claim ID', value: data.claim_no },
+      { label: 'Paid By', value: data.paid_by },
+      { label: 'Paid On', value: fmtDate(data.paid_date) },
+      { label: 'Payment Reference', value: data.payment_reference || '-' },
+      { label: 'Verified Amount', value: fmtAmount(data.verified_amount ?? data.total, info.currency), html: true },
+      { label: 'Paid Amount', value: fmtAmount(data.paid_amount ?? data.total, info.currency), html: true },
+    ])}
+    ${renderClaimItems(items, info.currency)}
+    ${infoGrid([
+      { label: 'Total With Bill', value: fmtAmount(data.total_with_bill, info.currency), html: true },
+      { label: 'Total Without Bill', value: fmtAmount(data.total_without_bill, info.currency), html: true },
+      { label: 'Submitted Grand Total', value: fmtAmount(data.submitted_amount ?? data.total, info.currency), html: true },
+    ])}
+    <div style="${softCardStyles}; border-left-color: #16a34a;">
+      <p style="margin: 0 0 6px 0; color: #166534; font-weight: 700;">Payment complete</p>
+      <p style="margin: 0; color: #0f172a;">Status: <strong>${safeText(data.status || 'Paid')}</strong></p>
+      ${data.note ? `<p style="margin: 6px 0 0; color: #0f172a;">Note: ${safeText(data.note)}</p>` : ''}
+    </div>
+  `;
+  return {
+    subject: `Claim Paid - ${data.claim_no}`,
+    html: wrapEmail('Claim Paid', body, info),
+  };
+}
+
 export function claimRejectedTemplate(data: {
   claim_no: string;
   total: number;
+  total_with_bill?: number;
+  total_without_bill?: number;
   rejected_by: string;
   reason: string;
   employee_name?: string;
+  items?: ClaimEmailItem[];
 } & BrandData): { subject: string; html: string } {
   const info = brand(data);
+  const items = Array.isArray(data.items) ? data.items : [];
   const body = `
     <p style="margin-top: 0;">Dear ${safeText(data.employee_name || 'User')},</p>
     <p>Your claim has been rejected during review.</p>
@@ -462,6 +556,12 @@ export function claimRejectedTemplate(data: {
       { label: 'Claim ID', value: data.claim_no },
       { label: 'Rejected By', value: data.rejected_by },
       { label: 'Claim Amount', value: fmtAmount(data.total, info.currency), html: true },
+    ])}
+    ${renderClaimItems(items, info.currency)}
+    ${infoGrid([
+      { label: 'Total With Bill', value: fmtAmount(data.total_with_bill, info.currency), html: true },
+      { label: 'Total Without Bill', value: fmtAmount(data.total_without_bill, info.currency), html: true },
+      { label: 'Grand Total', value: fmtAmount(data.total, info.currency), html: true },
     ])}
     <div style="${softCardStyles}; border-left-color: #dc2626;">
       <p style="margin: 0 0 6px 0; font-weight: 700; color: #991b1b;">Reason</p>
@@ -511,6 +611,8 @@ export type EmailTemplateType =
   | 'claim_submitted_user'
   | 'claim_submitted_manager'
   | 'claim_approved'
+  | 'claim_accounts_verified'
+  | 'claim_paid'
   | 'claim_rejected'
   | 'user_created'
   | 'password_reset';
@@ -526,6 +628,10 @@ export function getTemplate(type: EmailTemplateType, data: any): { subject: stri
       return claimSubmittedManagerTemplate(data);
     case 'claim_approved':
       return claimApprovedTemplate(data);
+    case 'claim_accounts_verified':
+      return claimAccountsVerifiedTemplate(data);
+    case 'claim_paid':
+      return claimPaidTemplate(data);
     case 'claim_rejected':
       return claimRejectedTemplate(data);
     case 'user_created':

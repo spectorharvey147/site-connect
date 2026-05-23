@@ -1,6 +1,5 @@
 import { supabase } from '@/integrations/supabase/client';
 import { hashPassword, isDemoEmail } from '@/lib/auth';
-import { getStoredUserSignature } from '@/lib/user-signatures';
 
 export interface ProjectCodeOption {
   code: string;
@@ -27,6 +26,13 @@ function isDemoMode() {
 const STATUS_PENDING_ADMIN_VERIFICATION = 'Pending Admin Verification';
 const STATUS_PENDING_MANAGER_APPROVAL = 'Pending Manager Approval';
 const STATUS_PENDING_SUPER_ADMIN_APPROVAL = 'Pending Super Admin Approval';
+const STATUS_SUBMITTED = 'Submitted';
+const STATUS_ADMIN_VERIFIED = 'Admin Verified';
+const STATUS_MANAGER_APPROVED = 'Manager Approved';
+const STATUS_ACCOUNTS_VERIFICATION = 'Accounts Verification';
+const LEGACY_STATUS_SENT_TO_ACCOUNTS = 'Sent to Accounts';
+const STATUS_ACCOUNTS_PROCESSING = 'Accounts Processing';
+const STATUS_PAID = 'Paid';
 const STATUS_CLOSED = 'Closed';
 const STATUS_REJECTED = 'Rejected';
 const DEFAULT_APP_URL = 'https://claimflow-pro-kappa.vercel.app';
@@ -37,20 +43,43 @@ function normalizeStatus(status?: string | null) {
 
 function isSettledStatus(status?: string | null) {
   const normalized = normalizeStatus(status);
-  return normalized === 'closed' || (normalized.includes('approved') && !normalized.includes('pending') && !normalized.includes('reject'));
+  return normalized === normalizeStatus(STATUS_PAID)
+    || normalized === 'closed'
+    || normalized === 'approved'
+    || normalized === 'settled';
 }
 
 function isPendingAdminVerificationStatus(status?: string | null) {
-  return normalizeStatus(status) === normalizeStatus(STATUS_PENDING_ADMIN_VERIFICATION);
+  const normalized = normalizeStatus(status);
+  return normalized === normalizeStatus(STATUS_SUBMITTED)
+    || normalized === normalizeStatus(STATUS_PENDING_ADMIN_VERIFICATION);
 }
 
 function isPendingManagerStatus(status?: string | null) {
-  return normalizeStatus(status) === normalizeStatus(STATUS_PENDING_MANAGER_APPROVAL);
+  const normalized = normalizeStatus(status);
+  return normalized === normalizeStatus(STATUS_ADMIN_VERIFIED)
+    || normalized === normalizeStatus(STATUS_PENDING_MANAGER_APPROVAL);
 }
 
 function isPendingSuperAdminStatus(status?: string | null) {
   const normalized = normalizeStatus(status);
-  return normalized === normalizeStatus(STATUS_PENDING_SUPER_ADMIN_APPROVAL) || normalized === 'pending admin approval';
+  return normalized === normalizeStatus(STATUS_MANAGER_APPROVED)
+    || normalized === normalizeStatus(STATUS_PENDING_SUPER_ADMIN_APPROVAL)
+    || normalized === 'pending admin approval';
+}
+
+function isPendingAccountsStatus(status?: string | null) {
+  const normalized = normalizeStatus(status);
+  return normalized === normalizeStatus(STATUS_ACCOUNTS_VERIFICATION)
+    || normalized === normalizeStatus(LEGACY_STATUS_SENT_TO_ACCOUNTS);
+}
+
+function isAccountsProcessingStatus(status?: string | null) {
+  return normalizeStatus(status) === normalizeStatus(STATUS_ACCOUNTS_PROCESSING);
+}
+
+function isPaidStatus(status?: string | null) {
+  return normalizeStatus(status) === normalizeStatus(STATUS_PAID);
 }
 
 function canViewAllFinanceData(role: string) {
@@ -340,6 +369,85 @@ function collectClaimFileIds(claim: { fileIds?: string[]; expenses?: Array<{ att
   ]);
 }
 
+type ClaimEmailItem = {
+  category: string;
+  projectCode: string;
+  claimDate: string;
+  description: string;
+  amountWithBill: number;
+  amountWithoutBill: number;
+  amount: number;
+  totalAmount: number;
+  attachmentCount?: number;
+};
+
+function toNumber(value: unknown) {
+  const amount = parseFloat(String(value ?? 0));
+  return Number.isFinite(amount) ? amount : 0;
+}
+
+function mapExpenseRowForEmail(row: any): ClaimEmailItem {
+  const amountWithBill = toNumber(row.amount_with_bill);
+  const amountWithoutBill = toNumber(row.amount_without_bill);
+  const totalAmount = amountWithBill + amountWithoutBill;
+  return {
+    category: String(row.category || ''),
+    projectCode: String(row.project_code || ''),
+    claimDate: String(row.expense_date || ''),
+    description: String(row.description || ''),
+    amountWithBill,
+    amountWithoutBill,
+    amount: totalAmount,
+    totalAmount,
+    attachmentCount: uniqueFileIds(row.attachment_ids).length,
+  };
+}
+
+function mapSubmittedExpenseForEmail(expense: { category: string; projectCode: string; claimDate: string; description: string; amountWithBill: number; amountWithoutBill: number; attachmentIds?: string[] }): ClaimEmailItem {
+  const amountWithBill = toNumber(expense.amountWithBill);
+  const amountWithoutBill = toNumber(expense.amountWithoutBill);
+  const totalAmount = amountWithBill + amountWithoutBill;
+  return {
+    category: expense.category,
+    projectCode: expense.projectCode,
+    claimDate: expense.claimDate,
+    description: expense.description,
+    amountWithBill,
+    amountWithoutBill,
+    amount: totalAmount,
+    totalAmount,
+    attachmentCount: uniqueFileIds(expense.attachmentIds).length,
+  };
+}
+
+function summarizeClaimEmailItems(items: ClaimEmailItem[], claim?: any) {
+  const itemTotalWithBill = items.reduce((sum, item) => sum + item.amountWithBill, 0);
+  const itemTotalWithoutBill = items.reduce((sum, item) => sum + item.amountWithoutBill, 0);
+  const totalWithBill = toNumber(claim?.total_with_bill ?? itemTotalWithBill);
+  const totalWithoutBill = toNumber(claim?.total_without_bill ?? itemTotalWithoutBill);
+  const totalAmount = toNumber(claim?.grand_total ?? (totalWithBill + totalWithoutBill));
+  return {
+    items,
+    primaryProjectCode: items.find((item) => item.projectCode)?.projectCode || '',
+    totalWithBill,
+    totalWithoutBill,
+    totalAmount,
+  };
+}
+
+async function getClaimEmailSummary(claimId: string, claim?: any) {
+  const { data, error } = await supabase
+    .from('expense_items')
+    .select('category,project_code,expense_date,description,amount_with_bill,amount_without_bill,attachment_ids')
+    .eq('claim_id', claimId);
+
+  if (error) {
+    console.warn('Failed to load claim expense details for email:', error);
+  }
+
+  return summarizeClaimEmailItems((data || []).map(mapExpenseRowForEmail), claim);
+}
+
 async function getAdminApproverEmails() {
   const { data } = await supabase
     .from('users')
@@ -369,6 +477,16 @@ async function getSuperAdminApproverEmails() {
     .from('users')
     .select('email')
     .eq('role', 'Super Admin')
+    .eq('active', true);
+
+  return [...new Set((data || []).map((user: any) => user.email).filter(Boolean))];
+}
+
+async function getAccountsUserEmails() {
+  const { data } = await supabase
+    .from('users')
+    .select('email')
+    .eq('role', 'Accounts')
     .eq('active', true);
 
   return [...new Set((data || []).map((user: any) => user.email).filter(Boolean))];
@@ -478,6 +596,9 @@ export async function getDashboardSummary(userEmail: string, userRole: string) {
       pendingManagerClaims: claims.filter((claim) => isPendingManagerStatus(claim.status)).length,
       pendingAdminClaims: claims.filter((claim) => isPendingAdminVerificationStatus(claim.status)).length,
       pendingFinalClaims: claims.filter((claim) => isPendingSuperAdminStatus(claim.status)).length,
+      pendingAccountsClaims: claims.filter((claim) => isPendingAccountsStatus(claim.status)).length,
+      accountsProcessingClaims: claims.filter((claim) => isAccountsProcessingStatus(claim.status)).length,
+      paidClaims: claims.filter((claim) => isPaidStatus(claim.status)).length,
     };
   }
 
@@ -499,7 +620,7 @@ export async function getDashboardSummary(userEmail: string, userRole: string) {
   }));
 
   if (canViewAllFinanceData(role) || role === 'manager') {
-    let total = 0, totalAmount = 0, pending = 0, pendingManager = 0, pendingAdmin = 0, pendingFinal = 0;
+    let total = 0, totalAmount = 0, pending = 0, pendingManager = 0, pendingAdmin = 0, pendingFinal = 0, pendingAccounts = 0, accountsProcessing = 0, paid = 0;
     const myEmail = userEmail.toLowerCase();
 
     for (const c of processedClaims) {
@@ -513,18 +634,21 @@ export async function getDashboardSummary(userEmail: string, userRole: string) {
       if (isSettledStatus(c.status)) {
         totalAmount += c.amount;
       }
-      if (c.status.includes('pending')) pending++;
+      if (!isSettledStatus(c.status) && !normalizeStatus(c.status).includes('reject')) pending++;
       if (isPendingManagerStatus(c.status)) {
         if (role === 'manager') { if (c.managerEmail === myEmail) pendingManager++; }
         else pendingManager++;
       }
       if (isPendingAdminVerificationStatus(c.status)) pendingAdmin++;
       if (isPendingSuperAdminStatus(c.status)) pendingFinal++;
+      if (isPendingAccountsStatus(c.status)) pendingAccounts++;
+      if (isAccountsProcessingStatus(c.status)) accountsProcessing++;
+      if (isPaidStatus(c.status)) paid++;
     }
 
     const { count: userCount } = await supabase.from('users').select('*', { count: 'exact', head: true });
 
-    return { role: userRole, totalClaims: total, totalUsers: userCount || 0, totalAmount, pendingClaims: pending, pendingManagerClaims: pendingManager, pendingAdminClaims: pendingAdmin, pendingFinalClaims: pendingFinal };
+    return { role: userRole, totalClaims: total, totalUsers: userCount || 0, totalAmount, pendingClaims: pending, pendingManagerClaims: pendingManager, pendingAdminClaims: pendingAdmin, pendingFinalClaims: pendingFinal, pendingAccountsClaims: pendingAccounts, accountsProcessingClaims: accountsProcessing, paidClaims: paid };
   } else {
     let myClaims = 0, myAmount = 0;
     const myEmail = userEmail.toLowerCase();
@@ -611,12 +735,12 @@ export async function submitClaim(claim: {
   const requireManager = companySettings?.require_manager_approval ?? true;
   const autoApproveThreshold = parseFloat(companySettings?.auto_approve_below || 0);
 
-  let status = STATUS_PENDING_ADMIN_VERIFICATION;
+  let status = STATUS_SUBMITTED;
   let managerApprovalStatus = 'Not Started';
 
   // Auto-approve if below threshold
   if (autoApproveThreshold > 0 && grandTotal <= autoApproveThreshold) {
-    status = STATUS_CLOSED;
+    status = STATUS_ACCOUNTS_VERIFICATION;
     managerApprovalStatus = 'Skipped';
   }
 
@@ -656,44 +780,24 @@ export async function submitClaim(claim: {
 
   const attachmentsForEmail = mapAttachmentEmailData(allFileIds);
   const primaryProjectCode = claim.expenses.find((expense) => expense.projectCode)?.projectCode || '';
-  const expenseItemsForEmail = claim.expenses.map((expense) => ({
-    category: expense.category,
-    projectCode: expense.projectCode,
-    claimDate: expense.claimDate,
-    description: expense.description,
-    amountWithBill: expense.amountWithBill || 0,
-    amountWithoutBill: expense.amountWithoutBill || 0,
-    amount: (expense.amountWithBill || 0) + (expense.amountWithoutBill || 0),
-    totalAmount: (expense.amountWithBill || 0) + (expense.amountWithoutBill || 0),
-    attachmentCount: uniqueFileIds(expense.attachmentIds).length,
-  }));
+  const expenseItemsForEmail = claim.expenses.map(mapSubmittedExpenseForEmail);
   const appUrl = getAppUrl(companySettings);
 
   // Notifications & audit
   await logAudit('claim_submitted', userEmail, 'claim', claimID, `Amount: ₹${grandTotal}`);
-  if (status === STATUS_CLOSED) {
-    // Auto-closed below the configured threshold.
-    const bal = await getCurrentBalance(userEmail);
-    await supabase.from('transactions').insert({
-      user_email: userEmail,
-      admin_email: 'system',
-      type: 'claim_approved',
-      reference_id: claimID,
-      credit: grandTotal,
-      debit: 0,
-      balance_after: bal + grandTotal,
-        description: `Claim ${claimNumber} auto-approved (below threshold)`,
-    });
+  if (status === STATUS_ACCOUNTS_VERIFICATION) {
+    await logAudit('claim_auto_accounts_verification', 'system', 'claim', claimID, `Amount: Rs. ${grandTotal}`);
+    await createNotification(userEmail, 'Claim Sent for Accounts Verification', `Your claim ${claimID} was auto-approved and sent for accounts verification.`, 'success', claimID);
     await createNotification(userEmail, 'Claim Auto-Approved', `Your claim ${claimID} (₹${grandTotal.toLocaleString('en-IN')}) was auto-approved.`, 'success', claimID);
   } else {
     const adminVerifiers = await getAdminVerifierEmails();
     await Promise.all(adminVerifiers.map((email) =>
       createNotification(email, 'Claim Awaiting Admin Verification', `${userName} submitted claim ${claimID} (Rs. ${grandTotal.toLocaleString('en-IN')})`, 'info', claimID)
     ));
-    if (status === 'Pending Manager Approval' && managerEmail) {
+    if (isPendingManagerStatus(status) && managerEmail) {
       await createNotification(managerEmail, 'New Claim for Approval', `${userName} submitted claim ${claimID} (₹${grandTotal.toLocaleString('en-IN')})`, 'info', claimID);
     }
-    if (status === 'Pending Admin Approval') {
+    if (isPendingSuperAdminStatus(status)) {
       const adminApprovers = await getAdminApproverEmails();
       await Promise.all(adminApprovers.map((email) =>
         createNotification(email, 'New Claim for Approval', `${userName} submitted claim ${claimID} (₹${grandTotal.toLocaleString('en-IN')})`, 'info', claimID)
@@ -719,7 +823,7 @@ export async function submitClaim(claim: {
     items: expenseItemsForEmail,
     attachments: attachmentsForEmail,
   });
-  if (status === STATUS_PENDING_ADMIN_VERIFICATION) {
+  if (isPendingAdminVerificationStatus(status)) {
     const adminVerifiers = await getAdminVerifierEmails();
     await Promise.all(adminVerifiers.map((email) =>
       sendEmailNotification('claim_submitted_manager', email, {
@@ -733,6 +837,8 @@ export async function submitClaim(claim: {
         manager_status: managerEmail ? 'Not Started' : 'Not Required',
         admin_status: 'Pending Verification',
         total_amount: grandTotal,
+        total_with_bill: totalWithBill,
+        total_without_bill: totalWithoutBill,
         currency: 'Rs.',
         items: expenseItemsForEmail,
         attachments: attachmentsForEmail,
@@ -741,7 +847,7 @@ export async function submitClaim(claim: {
       })
     ));
   }
-  if (status === 'Pending Manager Approval' && managerEmail) {
+  if (isPendingManagerStatus(status) && managerEmail) {
     await sendEmailNotification('claim_submitted_manager', managerEmail, { 
       claim_id: claimID,
       claim_number: claimNumber,
@@ -753,6 +859,8 @@ export async function submitClaim(claim: {
       manager_status: 'Pending',
       admin_status: 'Pending',
       total_amount: grandTotal,
+      total_with_bill: totalWithBill,
+      total_without_bill: totalWithoutBill,
       currency: '₹',
       items: expenseItemsForEmail,
       attachments: attachmentsForEmail,
@@ -772,6 +880,8 @@ export async function submitClaim(claim: {
         manager_status: 'Pending',
         admin_status: 'Pending',
         total_amount: grandTotal,
+        total_with_bill: totalWithBill,
+        total_without_bill: totalWithoutBill,
         currency: '₹',
         items: expenseItemsForEmail,
         attachments: attachmentsForEmail,
@@ -792,13 +902,15 @@ export async function submitClaim(claim: {
         admin_status: 'Pending',
         total_amount: grandTotal,
         currency: '₹',
+        total_with_bill: totalWithBill,
+        total_without_bill: totalWithoutBill,
         items: expenseItemsForEmail,
         attachments: attachmentsForEmail,
         approve_link: buildClaimActionLink(appUrl, claimID, 'approve', 'manager', email),
         reject_link: buildClaimActionLink(appUrl, claimID, 'reject', 'manager', email),
       })
     ));
-  } else if (status === 'Pending Admin Approval') {
+  } else if (isPendingSuperAdminStatus(status)) {
     const adminApprovers = await getAdminApproverEmails();
     await Promise.all(adminApprovers.map((email) =>
       sendEmailNotification('claim_submitted_manager', email, {
@@ -812,6 +924,8 @@ export async function submitClaim(claim: {
         manager_status: requireManager ? 'Not Required / Skipped' : 'Not Required',
         admin_status: 'Pending',
         total_amount: grandTotal,
+        total_with_bill: totalWithBill,
+        total_without_bill: totalWithoutBill,
         currency: '₹',
         items: expenseItemsForEmail,
         attachments: attachmentsForEmail,
@@ -833,7 +947,7 @@ export async function getPendingManagerClaims(userEmail: string, userRole: strin
   }
 
   const { data: claims } = await supabase.from('claims').select('*')
-    .eq('status', STATUS_PENDING_MANAGER_APPROVAL)
+    .in('status', [STATUS_ADMIN_VERIFIED, STATUS_PENDING_MANAGER_APPROVAL])
     .order('created_at', { ascending: false });
 
   if (!claims) return [];
@@ -925,7 +1039,7 @@ export async function approveClaimAsManager(claimId: string, approverEmail: stri
   const claimData = claim as any;
   
   const updates: any = {
-    status: STATUS_PENDING_SUPER_ADMIN_APPROVAL,
+    status: STATUS_MANAGER_APPROVED,
     manager_approval_status: 'Approved',
     manager_approval_date: new Date().toISOString(),
   };
@@ -945,15 +1059,19 @@ export async function approveClaimAsManager(claimId: string, approverEmail: stri
     ));
     const submittedAmt = getSubmittedAmount(claimData);
     const verifiedAmt = verifiedAmountInput == null ? (claimData.verified_amount == null ? getClaimAmount(claimData) : parseFloat(claimData.verified_amount)) : verifiedAmountInput;
+    const emailSummary = await getClaimEmailSummary(claimId, claimData);
     await sendEmailNotification('claim_approved', claimData.user_email, {
       claim_no: claimData.claim_number || claimId,
       total: getClaimAmount(claimData),
+      total_with_bill: emailSummary.totalWithBill,
+      total_without_bill: emailSummary.totalWithoutBill,
       submitted_amount: submittedAmt,
       verified_amount: verifiedAmt,
       approved_by: approverEmail,
       employee_name: claimData.user_name || claimData.submitted_by || 'there',
       currency: '₹',
-      status: STATUS_PENDING_SUPER_ADMIN_APPROVAL
+      status: STATUS_MANAGER_APPROVED,
+      items: emailSummary.items,
     });
     queueEmailNotifications(superAdminApprovers.map((email) =>
       sendEmailNotification('claim_submitted_manager', email, {
@@ -962,15 +1080,17 @@ export async function approveClaimAsManager(claimId: string, approverEmail: stri
         employee_name: claimData.submitted_by,
         employee_email: claimData.user_email,
         project_site: claimData.site_name,
-        primary_project_code: '',
+        primary_project_code: emailSummary.primaryProjectCode,
         submission_date: claimData.created_at,
         manager_status: 'Approved',
         admin_status: 'Pending Final Approval',
-        total_amount: getClaimAmount(claimData),
+        total_amount: emailSummary.totalAmount,
+        total_with_bill: emailSummary.totalWithBill,
+        total_without_bill: emailSummary.totalWithoutBill,
         submitted_amount: getSubmittedAmount(claimData),
         verified_amount: verifiedAmt,
         currency: '₹',
-        items: [],
+        items: emailSummary.items,
         attachments: mapAttachmentEmailData(claimData.drive_file_ids || []),
         approve_link: buildClaimActionLink(appUrl, claimId, 'approve', 'super-admin', email),
         reject_link: buildClaimActionLink(appUrl, claimId, 'reject', 'super-admin', email),
@@ -992,7 +1112,7 @@ export async function approveClaimAsAdmin(claimId: string, approverEmail: string
   const requireManager = settings?.require_manager_approval ?? true;
   const managerEmail = String(c.manager_email || '').trim().toLowerCase();
   const skipManagerStage = !requireManager || !managerEmail || (await isManagerAlsoSuperAdmin(managerEmail));
-  const nextStatus = skipManagerStage ? STATUS_PENDING_SUPER_ADMIN_APPROVAL : STATUS_PENDING_MANAGER_APPROVAL;
+  const nextStatus = skipManagerStage ? STATUS_MANAGER_APPROVED : STATUS_ADMIN_VERIFIED;
   const managerApprovalStatus = skipManagerStage ? 'Skipped' : 'Pending';
 
   const claimUpdates = {
@@ -1017,6 +1137,7 @@ export async function approveClaimAsAdmin(claimId: string, approverEmail: string
 
   const appUrl = getAppUrl(settings);
   const amount = verifiedAmount;
+  const emailSummary = await getClaimEmailSummary(claimId, c);
 
   if (skipManagerStage) {
     const superAdminApprovers = await getSuperAdminApproverEmails();
@@ -1030,15 +1151,17 @@ export async function approveClaimAsAdmin(claimId: string, approverEmail: string
         employee_name: c.submitted_by,
         employee_email: c.user_email,
         project_site: c.site_name,
-        primary_project_code: '',
+        primary_project_code: emailSummary.primaryProjectCode,
         submission_date: c.created_at,
         manager_status: 'Skipped',
         admin_status: 'Pending Final Approval',
         total_amount: amount,
+        total_with_bill: emailSummary.totalWithBill,
+        total_without_bill: emailSummary.totalWithoutBill,
         submitted_amount: submittedAmount,
         verified_amount: verifiedAmount,
         currency: 'Rs.',
-        items: [],
+        items: emailSummary.items,
         attachments: mapAttachmentEmailData(c.drive_file_ids || []),
         approve_link: buildClaimActionLink(appUrl, claimId, 'approve', 'super-admin', email),
         reject_link: buildClaimActionLink(appUrl, claimId, 'reject', 'super-admin', email),
@@ -1052,15 +1175,17 @@ export async function approveClaimAsAdmin(claimId: string, approverEmail: string
       employee_name: c.submitted_by,
       employee_email: c.user_email,
       project_site: c.site_name,
-      primary_project_code: '',
+      primary_project_code: emailSummary.primaryProjectCode,
       submission_date: c.created_at,
       manager_status: 'Pending',
       admin_status: 'Verified',
       total_amount: amount,
+      total_with_bill: emailSummary.totalWithBill,
+      total_without_bill: emailSummary.totalWithoutBill,
       submitted_amount: submittedAmount,
       verified_amount: verifiedAmount,
       currency: 'Rs.',
-      items: [],
+      items: emailSummary.items,
       attachments: mapAttachmentEmailData(c.drive_file_ids || []),
       approve_link: buildClaimActionLink(appUrl, claimId, 'approve', 'manager', managerEmail),
       reject_link: buildClaimActionLink(appUrl, claimId, 'reject', 'manager', managerEmail),
@@ -1081,7 +1206,7 @@ export async function approveClaimAsSuperAdmin(claimId: string, approverEmail: s
 
   const finalApprovalDate = new Date().toISOString();
   const updates: any = {
-    status: STATUS_CLOSED,
+    status: STATUS_ACCOUNTS_VERIFICATION,
     final_approval_email: approverEmail,
     final_approval_date: finalApprovalDate,
     verified_amount: amount,
@@ -1090,13 +1215,37 @@ export async function approveClaimAsSuperAdmin(claimId: string, approverEmail: s
   if (error) {
     if (!isMissingFinalApprovalColumnError(error)) throw error;
     const { error: fallbackError } = await supabase.from('claims').update({
-      status: STATUS_CLOSED,
+      status: STATUS_ACCOUNTS_VERIFICATION,
       admin_email: approverEmail,
       admin_approval_date: finalApprovalDate,
       verified_amount: amount,
     } as any).eq('claim_id', claimId);
     if (fallbackError) throw fallbackError;
   }
+
+  const approvedAmount = amount;
+    const emailSummary = await getClaimEmailSummary(claimId, c);
+    await logAudit('claim_final_approved', approverEmail, 'claim', claimId, description ? `Amount: Rs. ${approvedAmount} | ${description}` : `Amount: Rs. ${approvedAmount}`);
+    await createNotification(c.user_email, 'Claim Sent for Accounts Verification', `Your claim ${claimId} has final approval and is now with accounts verification.`, 'success', claimId);
+    const accountsUsers = await getAccountsUserEmails();
+    await Promise.all(accountsUsers.map((email) =>
+      createNotification(email, 'Claim Ready for Accounts', `${c.submitted_by} claim ${c.claim_number || claimId} is ready for payment processing.`, 'info', claimId)
+    ));
+  await sendEmailNotification('claim_approved', c.user_email, {
+      claim_no: c.claim_number || claimId,
+      total: approvedAmount,
+      total_with_bill: emailSummary.totalWithBill,
+      total_without_bill: emailSummary.totalWithoutBill,
+      submitted_amount: submittedAmount,
+      verified_amount: approvedAmount,
+      approved_by: approverEmail,
+      employee_name: c.user_name || c.submitted_by || 'there',
+      currency: 'Rs.',
+      status: STATUS_ACCOUNTS_VERIFICATION,
+      items: emailSummary.items,
+  });
+  return;
+  {
 
   // Create settlement/credit transaction for the final approval using a clear reversal+adjustment so ledger shows waived amount as a separate line.
   const approvedAmount = amount; // getClaimAmount(c)
@@ -1137,15 +1286,160 @@ export async function approveClaimAsSuperAdmin(claimId: string, approverEmail: s
 
   await logAudit('claim_admin_approved', approverEmail, 'claim', claimId, description ? `Amount: ₹${approvedAmount} | ${description}` : `Amount: ₹${approvedAmount}`);
   await createNotification(c.user_email, 'Claim Fully Approved', `Your claim ${claimId} has been approved by admin. ₹${approvedAmount.toLocaleString('en-IN')} settled.`, 'success', claimId);
+  const emailSummary = await getClaimEmailSummary(claimId, c);
   await sendEmailNotification('claim_approved', c.user_email, { 
     claim_no: c.claim_number || claimId, 
     total: approvedAmount,
+    total_with_bill: emailSummary.totalWithBill,
+    total_without_bill: emailSummary.totalWithoutBill,
     submitted_amount: submittedAmount,
     verified_amount: approvedAmount,
     approved_by: approverEmail,
     employee_name: c.user_name || c.submitted_by || 'there',
     currency: '₹',
-    status: STATUS_CLOSED
+    status: STATUS_CLOSED,
+    items: emailSummary.items,
+  });
+  }
+}
+
+function mapClaimQueueRow(c: any) {
+  return {
+    claimId: c.claim_number || c.claim_id,
+    claimIdInternal: c.claim_id,
+    date: c.created_at,
+    submittedBy: c.submitted_by,
+    userEmail: c.user_email,
+    site: c.site_name,
+    totalWithBill: parseFloat(c.total_with_bill || 0),
+    totalWithoutBill: parseFloat(c.total_without_bill || 0),
+    submittedAmount: getSubmittedAmount(c),
+    verifiedAmount: c.verified_amount == null ? null : parseFloat(c.verified_amount),
+    paidAmount: c.paid_amount == null ? null : parseFloat(c.paid_amount),
+    amount: getClaimAmount(c),
+    status: c.status,
+    accountsVerifiedBy: c.accounts_verified_email,
+    accountsVerifiedDate: c.accounts_verified_date,
+    paidBy: c.paid_email,
+    paidDate: c.paid_date,
+    paymentReference: c.payment_reference,
+  };
+}
+
+export async function getAccountsClaims() {
+  if (isDemoMode()) {
+    return demoClaims
+      .filter((claim) => isPendingAccountsStatus(claim.status) || isAccountsProcessingStatus(claim.status))
+      .map((claim) => ({ ...claim, claimIdInternal: claim.claimIdInternal || claim.claimId }));
+  }
+
+  const { data } = await supabase
+    .from('claims')
+    .select('*')
+    .in('status', [STATUS_ACCOUNTS_VERIFICATION, LEGACY_STATUS_SENT_TO_ACCOUNTS, STATUS_ACCOUNTS_PROCESSING])
+    .order('created_at', { ascending: false });
+
+  return (data || []).map(mapClaimQueueRow);
+}
+
+export async function approveClaimAsAccounts(claimId: string, accountsEmail: string, note?: string, processingAmountInput?: number) {
+  if (isDemoEmail(accountsEmail)) return;
+
+  const { data: claim } = await supabase.from('claims').select('*').eq('claim_id', claimId).single();
+  if (!claim) throw new Error('Claim not found');
+  const c = claim as any;
+  if (!isPendingAccountsStatus(c.status)) {
+    throw new Error('Only claims in accounts verification can be verified by accounts.');
+  }
+
+  const submittedAmount = getSubmittedAmount(c);
+  const amount = normalizeVerifiedAmount(processingAmountInput ?? getClaimAmount(c), getClaimAmount(c) || submittedAmount);
+  const updates: any = {
+    status: STATUS_ACCOUNTS_PROCESSING,
+    accounts_verified_email: accountsEmail,
+    accounts_verified_date: new Date().toISOString(),
+    accounts_note: note || null,
+    verified_amount: amount,
+  };
+  const { error } = await supabase.from('claims').update(updates).eq('claim_id', claimId);
+  if (error) throw error;
+
+  await logAudit('claim_accounts_verified', accountsEmail, 'claim', claimId, note ? `Amount: Rs. ${amount} | ${note}` : `Amount: Rs. ${amount}`);
+  await createNotification(c.user_email, 'Payment Processing', `Your claim ${c.claim_number || claimId} is being processed by accounts.`, 'info', claimId);
+  const emailSummary = await getClaimEmailSummary(claimId, c);
+  await sendEmailNotification('claim_accounts_verified', c.user_email, {
+    claim_no: c.claim_number || claimId,
+    total: amount,
+    total_with_bill: emailSummary.totalWithBill,
+    total_without_bill: emailSummary.totalWithoutBill,
+    submitted_amount: submittedAmount,
+    verified_amount: amount,
+    accounts_by: accountsEmail,
+    employee_name: c.user_name || c.submitted_by || 'there',
+    status: STATUS_ACCOUNTS_PROCESSING,
+    note,
+    currency: 'Rs.',
+    items: emailSummary.items,
+  });
+}
+
+export async function markClaimPaid(claimId: string, accountsEmail: string, paidAmountInput: number, paymentReference?: string, note?: string) {
+  if (isDemoEmail(accountsEmail)) return;
+
+  const { data: claim } = await supabase.from('claims').select('*').eq('claim_id', claimId).single();
+  if (!claim) throw new Error('Claim not found');
+  const c = claim as any;
+  if (!isAccountsProcessingStatus(c.status)) {
+    throw new Error('Only accounts processing claims can be marked paid.');
+  }
+
+  const paidAmount = normalizeVerifiedAmount(paidAmountInput, getClaimAmount(c));
+  if (paidAmount <= 0) throw new Error('Paid amount must be greater than zero.');
+  const currentBalance = await getCurrentBalance(c.user_email);
+  const balanceAfter = currentBalance + paidAmount;
+  const paidDate = new Date().toISOString();
+
+  const { error } = await supabase.from('claims').update({
+    status: STATUS_PAID,
+    paid_email: accountsEmail,
+    paid_date: paidDate,
+    paid_amount: paidAmount,
+    payment_reference: paymentReference || null,
+    payment_note: note || null,
+  } as any).eq('claim_id', claimId);
+  if (error) throw error;
+
+  const { error: txError } = await supabase.from('transactions').insert({
+    user_email: c.user_email,
+    admin_email: accountsEmail,
+    type: 'claim_paid',
+    reference_id: claimId,
+    credit: paidAmount,
+    debit: 0,
+    balance_after: balanceAfter,
+    description: `Claim ${c.claim_number || claimId} paid${paymentReference ? ` - Ref: ${paymentReference}` : ''}`,
+  });
+  if (txError) throw txError;
+
+  await logAudit('claim_paid', accountsEmail, 'claim', claimId, note ? `Paid: Rs. ${paidAmount} | Ref: ${paymentReference || '-'} | ${note}` : `Paid: Rs. ${paidAmount} | Ref: ${paymentReference || '-'}`);
+  await createNotification(c.user_email, 'Claim Paid', `Your claim ${c.claim_number || claimId} has been paid for Rs. ${paidAmount.toLocaleString('en-IN')}.`, 'success', claimId);
+  const emailSummary = await getClaimEmailSummary(claimId, c);
+  await sendEmailNotification('claim_paid', c.user_email, {
+    claim_no: c.claim_number || claimId,
+    total: paidAmount,
+    total_with_bill: emailSummary.totalWithBill,
+    total_without_bill: emailSummary.totalWithoutBill,
+    submitted_amount: getSubmittedAmount(c),
+    verified_amount: getClaimAmount(c),
+    paid_amount: paidAmount,
+    paid_by: accountsEmail,
+    paid_date: paidDate,
+    payment_reference: paymentReference,
+    employee_name: c.user_name || c.submitted_by || 'there',
+    status: STATUS_PAID,
+    note,
+    currency: 'Rs.',
+    items: emailSummary.items,
   });
 }
 
@@ -1182,12 +1476,16 @@ export async function rejectClaim(claimId: string, reason: string, rejectorEmail
 
     await logAudit('claim_rejected', rejectorEmail, 'claim', claimId, `Reason: ${reason}`);
     await createNotification((claim as any).user_email, 'Claim Rejected', `Your claim ${displayClaimNo} was rejected. Reason: ${reason}`, 'error', claimId);
+    const emailSummary = await getClaimEmailSummary(claimId, claim);
     await sendEmailNotification('claim_rejected', (claim as any).user_email, {
       claim_no: displayClaimNo,
       total: amount,
+      total_with_bill: emailSummary.totalWithBill,
+      total_without_bill: emailSummary.totalWithoutBill,
       rejected_by: rejectorEmail,
       reason,
       employee_name: (claim as any).submitted_by || 'there',
+      items: emailSummary.items,
       currency: '₹',
     });
   }
@@ -1331,6 +1629,8 @@ type ClaimApprovalTrail = {
   admin?: ApprovalStamp;
   manager?: ApprovalStamp;
   final?: ApprovalStamp;
+  accounts?: ApprovalStamp;
+  paid?: ApprovalStamp;
 };
 
 function approvalStamp(email: string | null | undefined, date: string | null | undefined, usersMap: Record<string, { name: string; signatureUrl?: string }>): ApprovalStamp | undefined {
@@ -1363,7 +1663,7 @@ export async function getClaimApprovalTrail(claimIds: string[]): Promise<Record<
   }
 
   let claimRows: any[] = [];
-  const claimSelect = 'claim_id,status,manager_email,manager_approval_date,admin_email,admin_approval_date,final_approval_email,final_approval_date';
+  const claimSelect = 'claim_id,status,manager_email,manager_approval_date,admin_email,admin_approval_date,final_approval_email,final_approval_date,accounts_verified_email,accounts_verified_date,paid_email,paid_date';
   const { data: rowsWithFinal, error: rowsWithFinalError } = await supabase
     .from('claims')
     .select(claimSelect)
@@ -1384,12 +1684,12 @@ export async function getClaimApprovalTrail(claimIds: string[]): Promise<Record<
     .select('target_id,action,performed_by,created_at')
     .eq('target_type', 'claim')
     .in('target_id', uniqueIds)
-    .in('action', ['claim_admin_verified', 'claim_manager_approved', 'claim_admin_approved'])
+    .in('action', ['claim_admin_verified', 'claim_manager_approved', 'claim_admin_approved', 'claim_final_approved', 'claim_accounts_verified', 'claim_paid'])
     .order('created_at', { ascending: true });
 
   const emails = new Set<string>();
   claimRows.forEach((row) => {
-    [row.manager_email, row.admin_email, row.final_approval_email].forEach((email) => {
+    [row.manager_email, row.admin_email, row.final_approval_email, row.accounts_verified_email, row.paid_email].forEach((email) => {
       const normalized = String(email || '').trim().toLowerCase();
       if (normalized) emails.add(normalized);
     });
@@ -1419,7 +1719,7 @@ export async function getClaimApprovalTrail(claimIds: string[]): Promise<Record<
       const email = String(entry.email || '').trim().toLowerCase();
       usersMap[email] = {
         name: entry.name || entry.email,
-        signatureUrl: entry.signature_url || getStoredUserSignature(email),
+        signatureUrl: entry.signature_url || '',
       };
     });
   }
@@ -1432,6 +1732,8 @@ export async function getClaimApprovalTrail(claimIds: string[]): Promise<Record<
     const trail = trails[id] || {};
     trail.manager = approvalStamp(row.manager_email, row.manager_approval_date, usersMap) || trail.manager;
     trail.final = approvalStamp(row.final_approval_email, row.final_approval_date, usersMap) || trail.final;
+    trail.accounts = approvalStamp(row.accounts_verified_email, row.accounts_verified_date, usersMap) || trail.accounts;
+    trail.paid = approvalStamp(row.paid_email, row.paid_date, usersMap) || trail.paid;
 
     const adminStamp = approvalStamp(row.admin_email, row.admin_approval_date, usersMap);
     if (adminStamp) {
@@ -1449,7 +1751,9 @@ export async function getClaimApprovalTrail(claimIds: string[]): Promise<Record<
     const trail = trails[id] || {};
     if (row.action === 'claim_admin_verified') trail.admin = stamp;
     if (row.action === 'claim_manager_approved') trail.manager = stamp;
-    if (row.action === 'claim_admin_approved') trail.final = stamp;
+    if (row.action === 'claim_admin_approved' || row.action === 'claim_final_approved') trail.final = stamp;
+    if (row.action === 'claim_accounts_verified') trail.accounts = stamp;
+    if (row.action === 'claim_paid') trail.paid = stamp;
     trails[id] = trail;
   });
 
@@ -1544,7 +1848,7 @@ export async function getAllUsers() {
       balance: user.email === 'user@siteconnect.demo' ? 110800 : 0,
       manager: user.manager_email || '',
       active: user.active,
-      signatureUrl: (user as any).signature_url || getStoredUserSignature(user.email),
+      signatureUrl: (user as any).signature_url || '',
     }));
   }
 
@@ -1566,7 +1870,7 @@ export async function getAllUsers() {
       employee_id: u.employee_id || '',
       mobile_number: u.mobile_number || '',
       date_of_joining: u.date_of_joining || '',
-      signatureUrl: u.signature_url || getStoredUserSignature(u.email),
+      signatureUrl: u.signature_url || '',
     });
   }
   return users;
@@ -1880,7 +2184,7 @@ export async function getUsersDirectory() {
 
   return data.map((user: any) => ({
     ...user,
-    signatureUrl: user.signature_url || getStoredUserSignature(user.email),
+    signatureUrl: user.signature_url || '',
   })) as any[];
 }
 
