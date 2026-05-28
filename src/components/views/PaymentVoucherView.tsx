@@ -39,48 +39,9 @@ function formatInputDate(d: string) {
   return date.toISOString().slice(0, 10);
 }
 
-async function buildVoucherNo() {
-
-  const today = new Date()
-    .toISOString()
-    .slice(0, 10)
-    .replace(/-/g, '');
-
-  const { data, error } = await supabase
-    .from('claims')
-    .select('paymentvouchercode')
-    .not('paymentvouchercode', 'is', null);
-
-  if (error) {
-    console.error('Voucher fetch error:', error);
-    return `PV-${today}-0001`;
-  }
-
-  let maxSequence = 0;
-
-  (data || []).forEach((row: any) => {
-
-    const code = row.paymentvouchercode;
-
-    if (
-      code &&
-      code.startsWith(`PV-${today}-`)
-    ) {
-
-      const seq = parseInt(
-        code.split('-')[2] || '0',
-        10
-      );
-
-      if (seq > maxSequence) {
-        maxSequence = seq;
-      }
-    }
-  });
-
-  const nextNumber = maxSequence + 1;
-
-  return `PV-${today}-${String(nextNumber).padStart(4, '0')}`;
+function buildVoucherNo(selectedClaims: any[]) {
+  const prefix = `PV-${new Date().toISOString().slice(0, 10).replace(/-/g, '')}`;
+  return `${prefix}-${String(selectedClaims.length).padStart(2, '0')}`;
 }
 
 type UserDirectoryEntry = {
@@ -333,178 +294,46 @@ export default function PaymentVoucherView() {
   };
 
   const openVoucher = async (claimsForVoucher: any[]) => {
-  if (claimsForVoucher.length === 0) return;
+    if (claimsForVoucher.length === 0) return;
+    let voucherUserDirectory = userDirectory;
+    const emails = [...new Set(claimsForVoucher.map((claim) => String(claim.userEmail || '').trim().toLowerCase()).filter(Boolean))];
 
-  let voucherUserDirectory = userDirectory;
-
-  const emails = [
-    ...new Set(
-      claimsForVoucher
-        .map((claim) =>
-          String(claim.userEmail || '').trim().toLowerCase()
-        )
-        .filter(Boolean)
-    ),
-  ];
-
-  if (emails.length > 0) {
-    const { data, error } = await supabase
-      .from('users')
-      .select('email,name,signature_url')
-      .in('email', emails);
-
-    if (error) {
-      console.warn('Could not refresh voucher user signatures', error);
-    } else {
-      voucherUserDirectory = {
-        ...userDirectory,
-        ...buildUserDirectory(data || []),
-      };
-
-      setUserDirectory(voucherUserDirectory);
+    if (emails.length > 0) {
+      const { data, error } = await supabase
+        .from('users')
+        .select('email,name,signature_url')
+        .in('email', emails);
+      if (error) {
+        console.warn('Could not refresh voucher user signatures', error);
+      } else {
+        voucherUserDirectory = {
+          ...userDirectory,
+          ...buildUserDirectory(data || []),
+        };
+        setUserDirectory(voucherUserDirectory);
+      }
     }
-  }
 
-  // =========================
-  // PAYMENT VOUCHER LOGIC
-  // =========================
-
-  let voucherNo = claimsForVoucher[0]?.paymentvouchercode;
-
-  // Generate only if no voucher exists
-  if (!voucherNo) {
-
-    voucherNo = await buildVoucherNo();
-
-    console.log('Claims for voucher:', claimsForVoucher);
-
-const claimIds = claimsForVoucher.map(
-  c => c.claimIdInternal
-);
-
-const { data, error } = await supabase
-  .from('claims')
-  .update({
-    paymentvouchercode: voucherNo
-  })
-  .in(
-    'claim_id',
-    claimIds
-  )
-  .select();
-
-console.log('Voucher save response:', data);
-console.log('Voucher save error:', error);
-
-if (error) {
-  console.error('Voucher save error:', error);
-  toast.error('Failed to save voucher number');
-  return;
-}
-    // Update current selected claims
-    claimsForVoucher.forEach(claim => {
-      claim.paymentvouchercode = voucherNo;
+    const userTotals = buildUserTotals(claimsForVoucher, voucherUserDirectory);
+    const projectCodeTotals = buildProjectCodeTotals(claimsForVoucher);
+    const approvals = await getClaimApprovalTrail(claimsForVoucher.map((claim) => claim.claimIdInternal));
+    setVoucher({
+      voucherNo: buildVoucherNo(claimsForVoucher),
+      date: new Date().toISOString(),
+      claims: claimsForVoucher,
+      claimIds: claimsForVoucher.map((claim) => claim.claimId),
+      approvals,
+      paidTo: userTotals.length === 1 ? `${userTotals[0].name}${userTotals[0].email ? ` (${userTotals[0].email})` : ''}` : 'Multiple Users',
+      periodFrom: claimsForVoucher.reduce((min, claim) => !min || claim.date < min ? claim.date : min, ''),
+      periodTo: claimsForVoucher.reduce((max, claim) => !max || claim.date > max ? claim.date : max, ''),
+      userTotals,
+      projectCodeTotals,
+      totalWithBill: claimsForVoucher.reduce((sum, claim) => sum + (claim.totalWithBill || 0), 0),
+      totalWithoutBill: claimsForVoucher.reduce((sum, claim) => sum + (claim.totalWithoutBill || 0), 0),
+      submittedAmount: claimsForVoucher.reduce((sum, claim) => sum + (claim.submittedAmount || claim.amount || 0), 0),
+      amount: claimsForVoucher.reduce((sum, claim) => sum + (claim.amount || 0), 0),
     });
-
-    // Update full claims state
-    setClaims(prev =>
-      prev.map(claim =>
-        claimsForVoucher.some(
-          c => c.id === claim.id
-        )
-          ? {
-              ...claim,
-              paymentvouchercode: voucherNo
-            }
-          : claim
-      )
-    );
-  }
-
-  // =========================
-  // VOUCHER SUMMARY
-  // =========================
-
-  const userTotals = buildUserTotals(
-    claimsForVoucher,
-    voucherUserDirectory
-  );
-
-  const projectCodeTotals =
-    buildProjectCodeTotals(claimsForVoucher);
-
-  const approvals = await getClaimApprovalTrail(
-    claimsForVoucher.map(
-      (claim) => claim.claimIdInternal
-    )
-  );
-
-  setVoucher({
-    voucherNo,
-    date: new Date().toISOString(),
-
-    claims: claimsForVoucher,
-
-    claimIds: claimsForVoucher.map(
-      (claim) => claim.claimId
-    ),
-
-    approvals,
-
-    paidTo:
-      userTotals.length === 1
-        ? `${userTotals[0].name}${
-            userTotals[0].email
-              ? ` (${userTotals[0].email})`
-              : ''
-          }`
-        : 'Multiple Users',
-
-    periodFrom: claimsForVoucher.reduce(
-      (min, claim) =>
-        !min || claim.date < min
-          ? claim.date
-          : min,
-      ''
-    ),
-
-    periodTo: claimsForVoucher.reduce(
-      (max, claim) =>
-        !max || claim.date > max
-          ? claim.date
-          : max,
-      ''
-    ),
-
-    userTotals,
-
-    projectCodeTotals,
-
-    totalWithBill: claimsForVoucher.reduce(
-      (sum, claim) =>
-        sum + (claim.totalWithBill || 0),
-      0
-    ),
-
-    totalWithoutBill: claimsForVoucher.reduce(
-      (sum, claim) =>
-        sum + (claim.totalWithoutBill || 0),
-      0
-    ),
-
-    submittedAmount: claimsForVoucher.reduce(
-      (sum, claim) =>
-        sum + (claim.submittedAmount || claim.amount || 0),
-      0
-    ),
-
-    amount: claimsForVoucher.reduce(
-      (sum, claim) =>
-        sum + (claim.amount || 0),
-      0
-    ),
-  });
-};
+  };
 
   const getVoucherMarkup = () => {
     const content = document.getElementById('voucher-content');
