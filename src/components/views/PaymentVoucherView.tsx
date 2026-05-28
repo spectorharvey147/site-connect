@@ -47,12 +47,12 @@ async function buildVoucherNo() {
 
   const { data, error } = await supabase
     .from('claims')
-    .select('payment_voucher_code')
+    .select('paymentvouchercode')
     .ilike(
-      'payment_voucher_code',
+      'paymentvouchercode',
       `PV-${today}-%`
     )
-    .order('payment_voucher_code', {
+    .order('paymentvouchercode', {
       ascending: false
     })
     .limit(1);
@@ -67,10 +67,10 @@ async function buildVoucherNo() {
   if (
     data &&
     data.length > 0 &&
-    data[0].payment_voucher_code
+    data[0].paymentvouchercode
   ) {
     const lastCode =
-      data[0].payment_voucher_code;
+      data[0].paymentvouchercode;
 
     const lastSequence = parseInt(
       lastCode.split('-')[2] || '0',
@@ -369,7 +369,7 @@ export default function PaymentVoucherView() {
   // PAYMENT VOUCHER LOGIC
   // =========================
 
-  let voucherNo = claimsForVoucher[0]?.paymentVoucherCode;
+  let voucherNo = claimsForVoucher[0]?.paymentvouchercode;
 
   // Generate only if no voucher exists
   if (!voucherNo) {
@@ -379,8 +379,8 @@ export default function PaymentVoucherView() {
     const { error } = await supabase
   .from('claims')
   .update({
-  payment_voucher_code: voucherNo
-})
+    paymentvouchercode: voucherNo
+  })
   .in(
     'id',
     claimsForVoucher.map(c => c.id)
@@ -394,7 +394,7 @@ export default function PaymentVoucherView() {
 
     // Update current selected claims
     claimsForVoucher.forEach(claim => {
-      claim.paymentVoucherCode = voucherNo;
+      claim.paymentvouchercode = voucherNo;
     });
 
     // Update full claims state
@@ -405,7 +405,7 @@ export default function PaymentVoucherView() {
         )
           ? {
               ...claim,
-              paymentVoucherCode: voucherNo
+              paymentvouchercode: voucherNo
             }
           : claim
       )
