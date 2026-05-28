@@ -390,7 +390,7 @@ const { data, error } = await supabase
     paymentvouchercode: voucherNo
   })
   .in(
-  'id',
+  'claim_id',
   claimIds
 )
   .select();
