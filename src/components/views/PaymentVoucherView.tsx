@@ -40,13 +40,21 @@ function formatInputDate(d: string) {
 }
 
 async function buildVoucherNo() {
-  const today = new Date().toISOString().slice(0, 10).replace(/-/g, '');
+  const today = new Date()
+    .toISOString()
+    .slice(0, 10)
+    .replace(/-/g, '');
 
   const { data, error } = await supabase
     .from('claims')
-    .select('paymentVoucherCode')
-    .ilike('paymentVoucherCode', `PV-${today}-%`)
-    .order('paymentVoucherCode', { ascending: false })
+    .select('payment_voucher_code')
+    .ilike(
+      'payment_voucher_code',
+      `PV-${today}-%`
+    )
+    .order('payment_voucher_code', {
+      ascending: false
+    })
     .limit(1);
 
   if (error) {
@@ -56,8 +64,13 @@ async function buildVoucherNo() {
 
   let nextNumber = 1;
 
-  if (data && data.length > 0 && data[0].paymentVoucherCode) {
-    const lastCode = data[0].paymentVoucherCode;
+  if (
+    data &&
+    data.length > 0 &&
+    data[0].payment_voucher_code
+  ) {
+    const lastCode =
+      data[0].payment_voucher_code;
 
     const lastSequence = parseInt(
       lastCode.split('-')[2] || '0',
@@ -366,8 +379,8 @@ export default function PaymentVoucherView() {
     const { error } = await supabase
   .from('claims')
   .update({
-    paymentVoucherCode: voucherNo
-  })
+  payment_voucher_code: voucherNo
+})
   .in(
     'id',
     claimsForVoucher.map(c => c.id)
