@@ -388,7 +388,7 @@ export default function PaymentVoucherView() {
     setClaims(prev =>
       prev.map(claim =>
         claimsForVoucher.some(
-          c => c.claimIdInternal === claim.claimIdInternal
+          c => c.id === claim.id
         )
           ? {
               ...claim,
