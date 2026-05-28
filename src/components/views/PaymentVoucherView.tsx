@@ -364,14 +364,14 @@ export default function PaymentVoucherView() {
     voucherNo = await buildVoucherNo();
 
     const { error } = await supabase
-      .from('claims')
-      .update({
-        paymentVoucherCode: voucherNo
-      })
-      .in(
-        'claimIdInternal',
-        claimsForVoucher.map(c => c.claimIdInternal)
-      );
+  .from('claims')
+  .update({
+    paymentVoucherCode: voucherNo
+  })
+  .in(
+    'id',
+    claimsForVoucher.map(c => c.id)
+  );
 
     if (error) {
       console.error('Voucher save error:', error);
