@@ -39,9 +39,35 @@ function formatInputDate(d: string) {
   return date.toISOString().slice(0, 10);
 }
 
-function buildVoucherNo(selectedClaims: any[]) {
-  const prefix = `PV-${new Date().toISOString().slice(0, 10).replace(/-/g, '')}`;
-  return `${prefix}-${String(selectedClaims.length).padStart(2, '0')}`;
+async function buildVoucherNo() {
+  const today = new Date().toISOString().slice(0, 10).replace(/-/g, '');
+
+  const { data, error } = await supabase
+    .from('claims')
+    .select('paymentVoucherCode')
+    .ilike('paymentVoucherCode', `PV-${today}-%`)
+    .order('paymentVoucherCode', { ascending: false })
+    .limit(1);
+
+  if (error) {
+    console.error('Voucher fetch error:', error);
+    return `PV-${today}-0001`;
+  }
+
+  let nextNumber = 1;
+
+  if (data && data.length > 0 && data[0].paymentVoucherCode) {
+    const lastCode = data[0].paymentVoucherCode;
+
+    const lastSequence = parseInt(
+      lastCode.split('-')[2] || '0',
+      10
+    );
+
+    nextNumber = lastSequence + 1;
+  }
+
+  return `PV-${today}-${String(nextNumber).padStart(4, '0')}`;
 }
 
 type UserDirectoryEntry = {
@@ -317,9 +343,21 @@ export default function PaymentVoucherView() {
     const userTotals = buildUserTotals(claimsForVoucher, voucherUserDirectory);
     const projectCodeTotals = buildProjectCodeTotals(claimsForVoucher);
     const approvals = await getClaimApprovalTrail(claimsForVoucher.map((claim) => claim.claimIdInternal));
-    setVoucher({
-      voucherNo: buildVoucherNo(claimsForVoucher),
-      date: new Date().toISOString(),
+    const voucherNo = await buildVoucherNo();
+
+await supabase
+  .from('claims')
+  .update({
+    paymentVoucherCode: voucherNo
+  })
+  .in(
+    'claimIdInternal',
+    claimsForVoucher.map(c => c.claimIdInternal)
+  );
+
+setVoucher({
+  voucherNo,
+  date: new Date().toISOString(),
       claims: claimsForVoucher,
       claimIds: claimsForVoucher.map((claim) => claim.claimId),
       approvals,
