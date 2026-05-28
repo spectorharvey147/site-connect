@@ -58,7 +58,7 @@ async function buildVoucherNo() {
 
   let maxSequence = 0;
 
-  (data || []).forEach((row) => {
+  (data || []).forEach((row: any) => {
 
     const code = row.paymentvouchercode;
 
@@ -382,28 +382,25 @@ const claimIds = claimsForVoucher.map(
   c => c.claimIdInternal
 );
 
-console.log('Updating claims:', claimIds);
-
 const { data, error } = await supabase
   .from('claims')
   .update({
     paymentvouchercode: voucherNo
   })
   .in(
-  'claim_id',
-  claimIds
-)
+    'claim_id',
+    claimIds
+  )
   .select();
 
-console.log('Update response:', data);
-console.log('Update error:', error);
+console.log('Voucher save response:', data);
+console.log('Voucher save error:', error);
 
-    if (error) {
-      console.error('Voucher save error:', error);
-      toast.error('Failed to save voucher number');
-      return;
-    }
-
+if (error) {
+  console.error('Voucher save error:', error);
+  toast.error('Failed to save voucher number');
+  return;
+}
     // Update current selected claims
     claimsForVoucher.forEach(claim => {
       claim.paymentvouchercode = voucherNo;
