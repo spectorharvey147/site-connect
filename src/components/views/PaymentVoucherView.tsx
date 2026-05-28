@@ -379,7 +379,7 @@ export default function PaymentVoucherView() {
     console.log('Claims for voucher:', claimsForVoucher);
 
 const claimIds = claimsForVoucher.map(
-  c => c.claimId
+  c => c.claimIdInternal
 );
 
 console.log('Updating claims:', claimIds);
@@ -390,7 +390,7 @@ const { data, error } = await supabase
     paymentvouchercode: voucherNo
   })
   .in(
-  'claim_id',
+  'id',
   claimIds
 )
   .select();
