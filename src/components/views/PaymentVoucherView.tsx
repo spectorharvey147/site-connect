@@ -40,6 +40,7 @@ function formatInputDate(d: string) {
 }
 
 async function buildVoucherNo() {
+
   const today = new Date()
     .toISOString()
     .slice(0, 10)
@@ -48,37 +49,36 @@ async function buildVoucherNo() {
   const { data, error } = await supabase
     .from('claims')
     .select('paymentvouchercode')
-    .ilike(
-      'paymentvouchercode',
-      `PV-${today}-%`
-    )
-    .order('paymentvouchercode', {
-      ascending: false
-    })
-    .limit(1);
+    .not('paymentvouchercode', 'is', null);
 
   if (error) {
     console.error('Voucher fetch error:', error);
     return `PV-${today}-0001`;
   }
 
-  let nextNumber = 1;
+  let maxSequence = 0;
 
-  if (
-    data &&
-    data.length > 0 &&
-    data[0].paymentvouchercode
-  ) {
-    const lastCode =
-      data[0].paymentvouchercode;
+  (data || []).forEach((row) => {
 
-    const lastSequence = parseInt(
-      lastCode.split('-')[2] || '0',
-      10
-    );
+    const code = row.paymentvouchercode;
 
-    nextNumber = lastSequence + 1;
-  }
+    if (
+      code &&
+      code.startsWith(`PV-${today}-`)
+    ) {
+
+      const seq = parseInt(
+        code.split('-')[2] || '0',
+        10
+      );
+
+      if (seq > maxSequence) {
+        maxSequence = seq;
+      }
+    }
+  });
+
+  const nextNumber = maxSequence + 1;
 
   return `PV-${today}-${String(nextNumber).padStart(4, '0')}`;
 }
