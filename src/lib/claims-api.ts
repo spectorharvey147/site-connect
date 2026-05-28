@@ -1652,6 +1652,9 @@ function isMissingFinalApprovalColumnError(error: any) {
 
 export async function getClaimApprovalTrail(claimIds: string[]): Promise<Record<string, ClaimApprovalTrail>> {
   const uniqueIds = [...new Set(claimIds.map((id) => String(id || '').trim()).filter(Boolean))];
+  console.log('Approval trail input:', claimIds);
+console.log('Approval trail uniqueIds:', uniqueIds);
+console.log('Is array?', Array.isArray(uniqueIds));
   if (uniqueIds.length === 0) return {};
 
   if (isDemoMode()) {
