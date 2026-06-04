@@ -17,6 +17,8 @@ const viewRoles: Record<string, string[]> = {
   'manager-approval': ['Manager', 'Super Admin'],
   'admin-approval': ['Admin', 'Super Admin'],
   'final-approval': ['Super Admin'],
+  'accounts-processing': ['Accounts', 'Super Admin'],
+  'accounts-sap-entry': ['Accounts', 'Super Admin'],
   voucher: ['Accounts', 'Admin', 'Super Admin'],
   users: ['Admin', 'Super Admin'],
   settings: ['Admin', 'Super Admin'],

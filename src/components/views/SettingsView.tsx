@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { getCompanySettings, updateCompanySettings, getAppLists, addAppListItem, deleteAppListItem, getDropdownOptions, getAllUsers, createUser } from '@/lib/claims-api';
+import { getCompanySettings, updateCompanySettings, getAppLists, addAppListItem, updateAppListItem, deleteAppListItem, getDropdownOptions, getAllUsers, createUser } from '@/lib/claims-api';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -7,7 +7,8 @@ import { Textarea } from '@/components/ui/textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Switch } from '@/components/ui/switch';
-import { Settings, Save, Loader2, Plus, Trash2, Building2, List, Bell, Download, Upload } from 'lucide-react';
+import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { Settings, Save, Loader2, Plus, Trash2, Building2, List, Bell, Download, Upload, Pencil } from 'lucide-react';
 import { toast } from 'sonner';
 import ImageUpload from '@/components/ImageUpload';
 
@@ -16,12 +17,14 @@ const emptyNewItem = {
   value: '',
   project_code: '',
   project: '',
+  customer_mode: 'unique',
+  customer_names: [] as string[],
   allows_all_categories: true,
   expense_categories: [] as string[],
 };
 
 const userCsvHeaders = ['name', 'email', 'password', 'role', 'advance', 'manager_email', 'employee_id', 'mobile_number', 'date_of_joining'];
-const masterCsvHeaders = ['type', 'value', 'project_code', 'project', 'allows_all_categories', 'expense_categories'];
+const masterCsvHeaders = ['type', 'value', 'project_code', 'project', 'customer_names', 'allows_all_categories', 'expense_categories'];
 
 function parseCsv(text: string) {
   const rows: string[][] = [];
@@ -77,6 +80,77 @@ function downloadCsv(filename: string, headers: string[], rows: Record<string, u
   URL.revokeObjectURL(url);
 }
 
+function parseListInput(value: string) {
+  return [...new Set(value.split(/[|,\n]/).map((item) => item.trim()).filter(Boolean))]
+    .sort((a, b) => a.localeCompare(b));
+}
+
+function itemCustomerMode(item: { customer_names?: string[] }) {
+  return (item.customer_names?.length || 0) > 1 ? 'common' : 'unique';
+}
+
+function normalizeCustomerNamesForMode(mode: string, names: string[]) {
+  const normalized = [...new Set(names.map((name) => name.trim()).filter(Boolean))];
+  return mode === 'common' ? normalized : normalized.slice(0, 1);
+}
+
+function CustomerNameEditor({
+  names,
+  onChange,
+  inputValue,
+  onInputChange,
+  placeholder = 'Enter customer name',
+}: {
+  names: string[];
+  onChange: (names: string[]) => void;
+  inputValue: string;
+  onInputChange: (value: string) => void;
+  placeholder?: string;
+}) {
+  const addCustomer = () => {
+    const nextName = inputValue.trim();
+    if (!nextName) return;
+    onChange([...new Set([...names, nextName])].sort((a, b) => a.localeCompare(b)));
+    onInputChange('');
+  };
+
+  return (
+    <div className="space-y-2">
+      <div className="flex gap-2">
+        <Input
+          placeholder={placeholder}
+          value={inputValue}
+          onChange={(event) => onInputChange(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.key === 'Enter') {
+              event.preventDefault();
+              addCustomer();
+            }
+          }}
+        />
+        <Button type="button" variant="outline" onClick={addCustomer}>Add</Button>
+      </div>
+      {names.length > 0 && (
+        <div className="flex flex-wrap gap-2 rounded-md border border-border bg-muted/20 p-2">
+          {names.map((name) => (
+            <span key={name} className="inline-flex items-center gap-2 rounded-md border border-border bg-background px-2 py-1 text-xs">
+              {name}
+              <button
+                type="button"
+                className="text-muted-foreground hover:text-destructive"
+                onClick={() => onChange(names.filter((item) => item !== name))}
+                aria-label={`Remove ${name}`}
+              >
+                <Trash2 className="h-3 w-3" />
+              </button>
+            </span>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function SettingsView() {
   const [settings, setSettings] = useState<any>({});
   const [loading, setLoading] = useState(true);
@@ -85,6 +159,9 @@ export default function SettingsView() {
   const [projects, setProjects] = useState<any[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [newItem, setNewItem] = useState(emptyNewItem);
+  const [editingItem, setEditingItem] = useState<any>(null);
+  const [newCustomerInput, setNewCustomerInput] = useState('');
+  const [editCustomerInput, setEditCustomerInput] = useState('');
   const [bulkProcessing, setBulkProcessing] = useState(false);
 
   const categories = [...new Set(
@@ -166,14 +243,69 @@ export default function SettingsView() {
         value: newItem.value.trim(),
         project_code: newItem.project_code.trim() || undefined,
         project: newItem.type === 'projectcode' ? newItem.project : undefined,
+        customer_names: ['project', 'projectcode'].includes(newItem.type)
+          ? normalizeCustomerNamesForMode(newItem.type === 'project' ? newItem.customer_mode : 'common', newItem.customer_names)
+          : [],
         allows_all_categories: newItem.type === 'projectcode' ? newItem.allows_all_categories : undefined,
         expense_categories: newItem.type === 'projectcode' && !newItem.allows_all_categories ? newItem.expense_categories : [],
       });
       toast.success('Item added');
       setNewItem(emptyNewItem);
+      setNewCustomerInput('');
       loadSettings();
     } catch (err: any) {
       toast.error(err.message);
+    }
+  };
+
+  const openEditItem = (item: any) => {
+    setEditCustomerInput('');
+    setEditingItem({
+      ...emptyNewItem,
+      ...item,
+      customer_mode: String(item.type || '').toLowerCase() === 'project' ? itemCustomerMode(item) : 'common',
+      customer_names: Array.isArray(item.customer_names) ? item.customer_names : [],
+      allows_all_categories: item.allows_all_categories ?? true,
+      expense_categories: Array.isArray(item.expense_categories) ? item.expense_categories : [],
+    });
+  };
+
+  const handleSaveItemEdit = async () => {
+    if (!editingItem) return;
+    const type = String(editingItem.type || '').toLowerCase();
+    if (!String(editingItem.value || '').trim()) {
+      toast.error('Value required');
+      return;
+    }
+    if (type === 'project' && !String(editingItem.project_code || '').trim()) {
+      toast.error('Project code is required');
+      return;
+    }
+    if (type === 'projectcode' && !String(editingItem.project_code || '').trim()) {
+      toast.error('Cost code is required');
+      return;
+    }
+    if (type === 'projectcode' && !editingItem.project) {
+      toast.error('Please select a project');
+      return;
+    }
+
+    try {
+      await updateAppListItem(editingItem.id, {
+        value: String(editingItem.value || '').trim(),
+        project_code: String(editingItem.project_code || '').trim() || null,
+        project: type === 'projectcode' ? editingItem.project : null,
+        customer_names: ['project', 'projectcode'].includes(type)
+          ? normalizeCustomerNamesForMode(type === 'project' ? editingItem.customer_mode : 'common', editingItem.customer_names || [])
+          : [],
+        allows_all_categories: type === 'projectcode' ? editingItem.allows_all_categories : true,
+        expense_categories: type === 'projectcode' && !editingItem.allows_all_categories ? editingItem.expense_categories : [],
+      });
+      toast.success('Item updated');
+      setEditingItem(null);
+      await loadSettings();
+    } catch (err: any) {
+      toast.error(err.message || 'Update failed');
     }
   };
 
@@ -257,8 +389,8 @@ export default function SettingsView() {
   const handleDownloadMasterTemplate = () => {
     downloadCsv('master-data-import-template.csv', masterCsvHeaders, [
       { type: 'category', value: 'Travel', project_code: '', project: '', allows_all_categories: '', expense_categories: '' },
-      { type: 'project', value: 'Site A', project_code: 'SA', project: '', allows_all_categories: '', expense_categories: '' },
-      { type: 'projectcode', value: 'Material Purchase', project_code: 'SA-MAT', project: 'Site A', allows_all_categories: 'false', expense_categories: 'Travel|Material' },
+      { type: 'project', value: 'Site A', project_code: 'SA', project: '', customer_names: 'Customer A|Customer B', allows_all_categories: '', expense_categories: '' },
+      { type: 'projectcode', value: 'Material Purchase', project_code: 'SA-MAT', project: 'Site A', customer_names: 'Customer A', allows_all_categories: 'false', expense_categories: 'Travel|Material' },
     ]);
   };
 
@@ -268,6 +400,7 @@ export default function SettingsView() {
       value: item.value,
       project_code: item.project_code || '',
       project: item.project || '',
+      customer_names: Array.isArray(item.customer_names) ? item.customer_names.join('|') : '',
       allows_all_categories: item.allows_all_categories ?? '',
       expense_categories: Array.isArray(item.expense_categories) ? item.expense_categories.join('|') : '',
     })));
@@ -287,6 +420,9 @@ export default function SettingsView() {
           value: row.value,
           project_code: row.project_code || undefined,
           project: type === 'projectcode' ? row.project || undefined : undefined,
+          customer_names: ['project', 'projectcode'].includes(type) && row.customer_names
+            ? parseListInput(row.customer_names)
+            : [],
           allows_all_categories: type === 'projectcode' ? String(row.allows_all_categories || 'true').toLowerCase() !== 'false' : undefined,
           expense_categories: type === 'projectcode' && row.expense_categories
             ? row.expense_categories.split('|').map((item: string) => item.trim()).filter(Boolean)
@@ -472,14 +608,47 @@ export default function SettingsView() {
           </div>
 
           {newItem.type === 'project' && (
-            <div>
-              <Label className="text-xs">Project Code</Label>
-              <Input placeholder="Code" className="w-36" value={newItem.project_code} onChange={e => setNewItem({ ...newItem, project_code: e.target.value })} />
-            </div>
+            <>
+              <div>
+                <Label className="text-xs">Project Code</Label>
+                <Input placeholder="Code" className="w-36" value={newItem.project_code} onChange={e => setNewItem({ ...newItem, project_code: e.target.value })} />
+              </div>
+              <div>
+                <Label className="text-xs">Project Type</Label>
+                <Select value={newItem.customer_mode} onValueChange={value => {
+                  setNewCustomerInput('');
+                  setNewItem({ ...newItem, customer_mode: value, customer_names: value === 'unique' ? newItem.customer_names.slice(0, 1) : newItem.customer_names });
+                }}>
+                  <SelectTrigger className="w-36"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="unique">Unique</SelectItem>
+                    <SelectItem value="common">Common</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div>
+                <Label className="text-xs">{newItem.customer_mode === 'common' ? 'Customer Names' : 'Customer Name'}</Label>
+                {newItem.customer_mode === 'common' ? (
+                  <CustomerNameEditor
+                    names={newItem.customer_names}
+                    onChange={(names) => setNewItem({ ...newItem, customer_names: names })}
+                    inputValue={newCustomerInput}
+                    onInputChange={setNewCustomerInput}
+                  />
+                ) : (
+                  <Input
+                    placeholder="Customer name"
+                    className="w-72"
+                    value={newItem.customer_names[0] || ''}
+                    onChange={e => setNewItem({ ...newItem, customer_names: e.target.value.trim() ? [e.target.value] : [] })}
+                  />
+                )}
+              </div>
+            </>
           )}
 
           {newItem.type === 'projectcode' && (
-            <div className="grid w-full gap-4 rounded-xl border border-border bg-muted/20 p-4 md:grid-cols-[minmax(0,180px)_minmax(0,220px)_1fr]">
+            <div className="grid w-full gap-4 rounded-xl border border-border bg-muted/20 p-4 md:grid-cols-[minmax(0,180px)_minmax(0,220px)_minmax(0,260px)_1fr]">
               <div>
                 <Label className="text-xs">Cost Code</Label>
                 <Input placeholder="Cost Code" value={newItem.project_code} onChange={e => setNewItem({ ...newItem, project_code: e.target.value })} />
@@ -495,6 +664,16 @@ export default function SettingsView() {
                     ))}
                   </SelectContent>
                 </Select>
+              </div>
+
+              <div>
+                <Label className="text-xs">Customer Names</Label>
+                <Input
+                  placeholder="Leave blank for all"
+                  value={newItem.customer_names.join(' | ')}
+                  onChange={e => setNewItem({ ...newItem, customer_names: parseListInput(e.target.value) })}
+                />
+                <p className="mt-1 text-xs text-muted-foreground">Restrict this cost code to selected customers.</p>
               </div>
 
               <div className="space-y-3">
@@ -553,6 +732,7 @@ export default function SettingsView() {
                 <th className="p-3 text-left">Value</th>
                 <th className="p-3 text-left">Code</th>
                 <th className="p-3 text-left">Project</th>
+                <th className="p-3 text-left">Customers</th>
                 <th className="p-3 text-left">Allowed Categories</th>
                 <th className="p-3 text-center">Actions</th>
               </tr>
@@ -564,6 +744,7 @@ export default function SettingsView() {
                   <td className="p-3">{item.value}</td>
                   <td className="p-3">{item.project_code || '-'}</td>
                   <td className="p-3">{item.project || '-'}</td>
+                  <td className="p-3">{item.customer_names?.length ? item.customer_names.join(', ') : '-'}</td>
                   <td className="p-3">
                     {String(item.type || '').toLowerCase() === 'projectcode'
                       ? (item.allows_all_categories
@@ -572,6 +753,9 @@ export default function SettingsView() {
                       : '-'}
                   </td>
                   <td className="p-3 text-center">
+                    <Button variant="ghost" size="sm" onClick={() => openEditItem(item)}>
+                      <Pencil className="h-4 w-4" />
+                    </Button>
                     <Button variant="ghost" size="sm" className="text-destructive" onClick={() => handleDeleteItem(item.id)}>
                       <Trash2 className="h-4 w-4" />
                     </Button>
@@ -582,6 +766,139 @@ export default function SettingsView() {
           </table>
         </div>
       </div>
+
+      <Dialog open={!!editingItem} onOpenChange={(open) => !open && setEditingItem(null)}>
+        <DialogContent className="max-w-3xl">
+          <DialogHeader>
+            <DialogTitle>Edit Master Data</DialogTitle>
+          </DialogHeader>
+          {editingItem && (
+            <div className="grid gap-4 md:grid-cols-2">
+              <div>
+                <Label>Type</Label>
+                <Input value={editingItem.type} readOnly className="bg-muted capitalize" />
+              </div>
+              <div>
+                <Label>{editingItem.type === 'projectcode' ? 'Code Name' : 'Value'}</Label>
+                <Input value={editingItem.value || ''} onChange={event => setEditingItem({ ...editingItem, value: event.target.value })} />
+              </div>
+
+              {editingItem.type === 'project' && (
+                <>
+                  <div>
+                    <Label>Project Code</Label>
+                    <Input value={editingItem.project_code || ''} onChange={event => setEditingItem({ ...editingItem, project_code: event.target.value })} />
+                  </div>
+                  <div>
+                    <Label>Project Type</Label>
+                    <Select value={editingItem.customer_mode} onValueChange={value => {
+                      setEditCustomerInput('');
+                      setEditingItem({ ...editingItem, customer_mode: value, customer_names: value === 'unique' ? (editingItem.customer_names || []).slice(0, 1) : editingItem.customer_names });
+                    }}>
+                      <SelectTrigger><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="unique">Unique</SelectItem>
+                        <SelectItem value="common">Common</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="md:col-span-2">
+                    <Label>{editingItem.customer_mode === 'common' ? 'Customer Names' : 'Customer Name'}</Label>
+                    {editingItem.customer_mode === 'common' ? (
+                      <CustomerNameEditor
+                        names={editingItem.customer_names || []}
+                        onChange={(names) => setEditingItem({ ...editingItem, customer_names: names })}
+                        inputValue={editCustomerInput}
+                        onInputChange={setEditCustomerInput}
+                      />
+                    ) : (
+                      <Input
+                        value={editingItem.customer_names?.[0] || ''}
+                        onChange={event => setEditingItem({ ...editingItem, customer_names: event.target.value.trim() ? [event.target.value] : [] })}
+                        placeholder="Customer name"
+                      />
+                    )}
+                  </div>
+                </>
+              )}
+
+              {editingItem.type === 'projectcode' && (
+                <>
+                  <div>
+                    <Label>Cost Code</Label>
+                    <Input value={editingItem.project_code || ''} onChange={event => setEditingItem({ ...editingItem, project_code: event.target.value })} />
+                  </div>
+                  <div>
+                    <Label>Belongs to Project</Label>
+                    <Select value={editingItem.project || ''} onValueChange={value => setEditingItem({ ...editingItem, project: value })}>
+                      <SelectTrigger><SelectValue placeholder="Select project" /></SelectTrigger>
+                      <SelectContent>
+                        {projects.map((project) => (
+                          <SelectItem key={project.name} value={project.name}>{project.name}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="md:col-span-2">
+                    <Label>Customer Names</Label>
+                    <Input
+                      value={(editingItem.customer_names || []).join(' | ')}
+                      onChange={event => setEditingItem({ ...editingItem, customer_names: parseListInput(event.target.value) })}
+                      placeholder="Leave blank for all customers"
+                    />
+                  </div>
+                  <div className="md:col-span-2">
+                    <div className="mb-2 flex items-center justify-between gap-3">
+                      <div>
+                        <Label>Allowed Expense Categories</Label>
+                        <p className="text-xs text-muted-foreground">Choose all categories or limit this cost code.</p>
+                      </div>
+                      <div className="flex items-center gap-2 rounded-lg border border-border px-3 py-2">
+                        <Switch
+                          checked={editingItem.allows_all_categories}
+                          onCheckedChange={(checked) => setEditingItem({ ...editingItem, allows_all_categories: checked, expense_categories: checked ? [] : editingItem.expense_categories })}
+                        />
+                        <span className="text-sm font-medium">Allow all</span>
+                      </div>
+                    </div>
+                    {!editingItem.allows_all_categories && (
+                      <div className="grid gap-2 rounded-lg border border-border p-3 sm:grid-cols-2">
+                        {categories.map((category) => {
+                          const checked = (editingItem.expense_categories || []).includes(category);
+                          return (
+                            <label key={category} className="flex cursor-pointer items-center gap-3 rounded-lg px-3 py-2 hover:bg-muted/40">
+                              <Checkbox
+                                checked={checked}
+                                onCheckedChange={(value) => setEditingItem({
+                                  ...editingItem,
+                                  expense_categories: value
+                                    ? [...new Set([...(editingItem.expense_categories || []), category])].sort((a, b) => a.localeCompare(b))
+                                    : (editingItem.expense_categories || []).filter((item: string) => item !== category),
+                                })}
+                              />
+                              <span className="text-sm">{category}</span>
+                            </label>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+                </>
+              )}
+
+              {editingItem.type === 'category' && (
+                <div className="md:col-span-2">
+                  <p className="text-sm text-muted-foreground">Update the category name above, then save.</p>
+                </div>
+              )}
+            </div>
+          )}
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setEditingItem(null)}>Cancel</Button>
+            <Button onClick={() => void handleSaveItemEdit()}><Save className="mr-2 h-4 w-4" /> Save</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

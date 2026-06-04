@@ -51,6 +51,7 @@ export default function SubmitClaimView() {
   const expenseCardRefs = useRef<Record<string, HTMLDivElement | null>>({});
   const pendingExpenseFocusRef = useRef<string | null>(null);
   const [site, setSite] = useState('');
+  const [customerName, setCustomerName] = useState('');
   const [expenses, setExpenses] = useState<ExpenseRow[]>([emptyExpenseRow()]);
   const [activeExpenseId, setActiveExpenseId] = useState(() => expenses[0]?.id || '');
   const [loading, setLoading] = useState(false);
@@ -102,6 +103,7 @@ export default function SubmitClaimView() {
         const rowAttachmentIds = new Set(rows.flatMap((row) => row.attachmentIds || []));
         setEditingClaim(claim);
         setSite(claim.site || '');
+        setCustomerName(claim.customerName || '');
         setExpenses(rows);
         setActiveExpenseId(rows[0]?.id || '');
         setExistingFileIds((claim.fileIds || []).filter((fileId: string) => !rowAttachmentIds.has(fileId)));
@@ -118,18 +120,26 @@ export default function SubmitClaimView() {
     };
   }, [editClaimId, navigate, user]);
 
+  const selectedProject = dropdown.projects.find((project: any) => project.name === site);
+  const projectCustomers = selectedProject?.customerNames || [];
+  const requiresCustomerSelection = projectCustomers.length > 0;
+
   const getFilteredProjectCodes = (category: string) => {
-    if (!site || !category) return [];
+    if (!site || !category || (requiresCustomerSelection && !customerName)) return [];
 
     const matchingCategory = category.trim().toLowerCase();
+    const matchingCustomer = customerName.trim().toLowerCase();
     const scopedCodes = [...(dropdown.byProject?.[site] || []), ...(dropdown.byProject?.[''] || [])] as ProjectCodeOption[];
     const unique = new Map<string, ProjectCodeOption>();
 
     scopedCodes.forEach((code) => {
       const isAllowed = code.allowsAllCategories
         || code.expenseCategories.some((item) => item.trim().toLowerCase() === matchingCategory);
+      const isCustomerAllowed = !code.customerNames?.length
+        || !matchingCustomer
+        || code.customerNames.some((item) => item.trim().toLowerCase() === matchingCustomer);
 
-      if (isAllowed) {
+      if (isAllowed && isCustomerAllowed) {
         unique.set(`${code.project}|${code.code}`, code);
       }
     });
@@ -176,7 +186,14 @@ export default function SubmitClaimView() {
   useEffect(() => {
     if (editingClaim) return;
     setExpenses((prev) => prev.map((expense) => ({ ...expense, projectCode: '' })));
-  }, [site, editingClaim]);
+    const customers = dropdown.projects.find((project: any) => project.name === site)?.customerNames || [];
+    setCustomerName(customers.length === 1 ? customers[0] : '');
+  }, [site, editingClaim, dropdown.projects]);
+
+  useEffect(() => {
+    if (editingClaim) return;
+    setExpenses((prev) => prev.map((expense) => ({ ...expense, projectCode: '' })));
+  }, [customerName, editingClaim]);
 
   useEffect(() => {
     const focusId = pendingExpenseFocusRef.current;
@@ -190,6 +207,10 @@ export default function SubmitClaimView() {
     e.preventDefault();
     if (!site) {
       toast.error('Please select a project site');
+      return;
+    }
+    if (requiresCustomerSelection && !customerName) {
+      toast.error('Please select a customer name');
       return;
     }
     if (expenses.some((expense) => !expense.category || !expense.projectCode || (expense.amountWithBill === 0 && expense.amountWithoutBill === 0))) {
@@ -235,6 +256,7 @@ export default function SubmitClaimView() {
 
       const payload = {
         site,
+        customerName,
         expenses: expensesWithAttachments,
         fileIds: allFileIds,
       };
@@ -245,6 +267,7 @@ export default function SubmitClaimView() {
       if (result.ok) {
         toast.success(result.message);
         setSite('');
+        setCustomerName('');
         const nextRow = emptyExpenseRow();
         setExpenses([nextRow]);
         setActiveExpenseId(nextRow.id);
@@ -294,7 +317,7 @@ export default function SubmitClaimView() {
           </div>
         )}
         <form onSubmit={handleSubmit}>
-          <div className="mb-4 grid grid-cols-1 gap-4 md:grid-cols-2">
+          <div className="mb-4 grid grid-cols-1 gap-4 md:grid-cols-3">
             <div className="space-y-2">
               <Label>Name</Label>
               <Input value={user?.name || ''} readOnly className="bg-muted" />
@@ -309,6 +332,26 @@ export default function SubmitClaimView() {
                   ))}
                 </SelectContent>
               </Select>
+            </div>
+            <div className="space-y-2">
+              <Label>Customer Name</Label>
+              {projectCustomers.length > 1 ? (
+                <Select value={customerName} onValueChange={setCustomerName} disabled={!site}>
+                  <SelectTrigger><SelectValue placeholder="Select customer" /></SelectTrigger>
+                  <SelectContent>
+                    {projectCustomers.map((customer: string) => (
+                      <SelectItem key={customer} value={customer}>{customer}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              ) : (
+                <Input
+                  value={customerName || (site ? 'No customer mapped' : '')}
+                  readOnly
+                  className="bg-muted"
+                  placeholder="Select project site first"
+                />
+              )}
             </div>
           </div>
 

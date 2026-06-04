@@ -5,6 +5,7 @@ export interface ProjectCodeOption {
   code: string;
   label: string;
   project: string;
+  customerNames: string[];
   allowsAllCategories: boolean;
   expenseCategories: string[];
 }
@@ -30,8 +31,10 @@ const STATUS_SUBMITTED = 'Submitted';
 const STATUS_ADMIN_VERIFIED = 'Admin Verified';
 const STATUS_MANAGER_APPROVED = 'Manager Approved';
 const STATUS_ACCOUNTS_VERIFICATION = 'Accounts Verification';
+const STATUS_ACCOUNTS_VERIFIED = 'Accounts Verified';
 const LEGACY_STATUS_SENT_TO_ACCOUNTS = 'Sent to Accounts';
 const STATUS_ACCOUNTS_PROCESSING = 'Accounts Processing';
+const STATUS_PAYMENT_PROCESSING = 'Payment Processing';
 const STATUS_PAID = 'Paid';
 const STATUS_CLOSED = 'Closed';
 const STATUS_REJECTED = 'Rejected';
@@ -47,6 +50,16 @@ function isSettledStatus(status?: string | null) {
     || normalized === 'closed'
     || normalized === 'approved'
     || normalized === 'settled';
+}
+
+function normalizeCustomerList(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+
+  return [...new Set(
+    value
+      .map((entry) => String(entry || '').trim())
+      .filter(Boolean)
+  )].sort((a, b) => a.localeCompare(b));
 }
 
 function isPendingAdminVerificationStatus(status?: string | null) {
@@ -75,7 +88,13 @@ function isPendingAccountsStatus(status?: string | null) {
 }
 
 function isAccountsProcessingStatus(status?: string | null) {
-  return normalizeStatus(status) === normalizeStatus(STATUS_ACCOUNTS_PROCESSING);
+  const normalized = normalizeStatus(status);
+  return normalized === normalizeStatus(STATUS_ACCOUNTS_PROCESSING)
+    || normalized === normalizeStatus(STATUS_PAYMENT_PROCESSING);
+}
+
+function isAccountsVerifiedStatus(status?: string | null) {
+  return normalizeStatus(status) === normalizeStatus(STATUS_ACCOUNTS_VERIFIED);
 }
 
 function isPaidStatus(status?: string | null) {
@@ -204,10 +223,10 @@ const demoClaims = [
 ];
 
 const demoProjectCodes: ProjectCodeOption[] = [
-  { code: 'PROJ-METRO-CC-TRAVEL', label: 'Travel and conveyance', project: 'Metro Station Foundation', allowsAllCategories: false, expenseCategories: ['Travel'] },
-  { code: 'PROJ-METRO-CC-FOOD', label: 'Food and beverage', project: 'Metro Station Foundation', allowsAllCategories: false, expenseCategories: ['Food & Beverage'] },
-  { code: 'PROJ-METRO-CC-FUEL', label: 'Fuel and vehicle running', project: 'Metro Station Foundation', allowsAllCategories: false, expenseCategories: ['Fuel'] },
-  { code: 'PROJ-WARE-CC-MATERIAL', label: 'Materials and consumables', project: 'Warehouse Retrofit', allowsAllCategories: false, expenseCategories: ['Material'] },
+  { code: 'PROJ-METRO-CC-TRAVEL', label: 'Travel and conveyance', project: 'Metro Station Foundation', customerNames: ['Metro Rail Corp'], allowsAllCategories: false, expenseCategories: ['Travel'] },
+  { code: 'PROJ-METRO-CC-FOOD', label: 'Food and beverage', project: 'Metro Station Foundation', customerNames: ['Metro Rail Corp'], allowsAllCategories: false, expenseCategories: ['Food & Beverage'] },
+  { code: 'PROJ-METRO-CC-FUEL', label: 'Fuel and vehicle running', project: 'Metro Station Foundation', customerNames: ['Metro Rail Corp'], allowsAllCategories: false, expenseCategories: ['Fuel'] },
+  { code: 'PROJ-WARE-CC-MATERIAL', label: 'Materials and consumables', project: 'Warehouse Retrofit', customerNames: ['North Warehouse'], allowsAllCategories: false, expenseCategories: ['Material'] },
 ];
 
 const demoCompanySettings = {
@@ -230,8 +249,8 @@ function demoDropdownOptions() {
   });
   return {
     projects: [
-      { name: 'Metro Station Foundation', code: 'PROJ-METRO' },
-      { name: 'Warehouse Retrofit', code: 'PROJ-WARE' },
+      { name: 'Metro Station Foundation', code: 'PROJ-METRO', customerNames: ['Metro Rail Corp', 'Metro Maintenance'] },
+      { name: 'Warehouse Retrofit', code: 'PROJ-WARE', customerNames: ['North Warehouse'] },
     ],
     categories: ['Travel', 'Food & Beverage', 'Fuel', 'Material'],
     projectCodes: demoProjectCodes,
@@ -523,7 +542,11 @@ export async function getDropdownOptions() {
 
   const projects = (data as any[])
     .filter(r => String(r.type || '').toLowerCase() === 'project')
-    .map(r => ({ name: String(r.value || '').trim(), code: String(r.project_code || '').trim() }))
+    .map(r => ({
+      name: String(r.value || '').trim(),
+      code: String(r.project_code || '').trim(),
+      customerNames: normalizeCustomerList(r.customer_names),
+    }))
     .filter(p => p.name);
 
   const projectCodes = (data as any[])
@@ -532,6 +555,7 @@ export async function getDropdownOptions() {
       code: String(r.project_code || '').trim(),
       label: String(r.value || '').trim(),
       project: String(r.project || '').trim(),
+      customerNames: normalizeCustomerList(r.customer_names),
       allowsAllCategories: Boolean(r.allows_all_categories ?? true),
       expenseCategories: normalizeCategoryList(r.expense_categories),
     }))
@@ -683,6 +707,7 @@ export async function getCurrentBalance(email: string): Promise<number> {
 // ============= CLAIMS =============
 export async function submitClaim(claim: {
   site: string;
+  customerName?: string;
   expenses: Array<{ category: string; projectCode: string; claimDate: string; description: string; amountWithBill: number; amountWithoutBill: number; attachmentIds?: string[] }>;
   fileIds?: string[];
 }, userEmail: string, userName: string) {
@@ -716,6 +741,7 @@ export async function submitClaim(claim: {
       claim_id: claimID,
       category: e.category,
       project_code: e.projectCode || '',
+      customer_name: claim.customerName || null,
       expense_date: e.claimDate || null,
       description: e.description,
       amount_with_bill: e.amountWithBill || 0,
@@ -754,6 +780,7 @@ export async function submitClaim(claim: {
     user_email: userEmail,
     submitted_by: userName,
     site_name: claim.site,
+    customer_name: claim.customerName || null,
     status,
     manager_email: managerEmail,
     manager_approval_status: managerApprovalStatus,
@@ -813,6 +840,7 @@ export async function submitClaim(claim: {
     submitted_by: userName,
     submission_date: new Date().toISOString(),
     project_site: claim.site,
+    customer_name: claim.customerName || '',
     primary_project_code: primaryProjectCode,
     status,
     total_amount: grandTotal, 
@@ -832,6 +860,7 @@ export async function submitClaim(claim: {
         employee_name: userName,
         employee_email: userEmail,
         project_site: claim.site,
+        customer_name: claim.customerName || '',
         primary_project_code: primaryProjectCode,
         submission_date: new Date().toISOString(),
         manager_status: managerEmail ? 'Not Started' : 'Not Required',
@@ -854,6 +883,7 @@ export async function submitClaim(claim: {
       employee_name: userName,
       employee_email: userEmail,
       project_site: claim.site,
+      customer_name: claim.customerName || '',
       primary_project_code: primaryProjectCode,
       submission_date: new Date().toISOString(),
       manager_status: 'Pending',
@@ -875,6 +905,7 @@ export async function submitClaim(claim: {
         employee_name: userName,
         employee_email: userEmail,
         project_site: claim.site,
+        customer_name: claim.customerName || '',
         primary_project_code: primaryProjectCode,
         submission_date: new Date().toISOString(),
         manager_status: 'Pending',
@@ -896,6 +927,7 @@ export async function submitClaim(claim: {
         employee_name: userName,
         employee_email: userEmail,
         project_site: claim.site,
+        customer_name: claim.customerName || '',
         primary_project_code: primaryProjectCode,
         submission_date: new Date().toISOString(),
         manager_status: 'Pending',
@@ -919,6 +951,7 @@ export async function submitClaim(claim: {
         employee_name: userName,
         employee_email: userEmail,
         project_site: claim.site,
+        customer_name: claim.customerName || '',
         primary_project_code: primaryProjectCode,
         submission_date: new Date().toISOString(),
         manager_status: requireManager ? 'Not Required / Skipped' : 'Not Required',
@@ -1311,6 +1344,7 @@ function mapClaimQueueRow(c: any) {
     submittedBy: c.submitted_by,
     userEmail: c.user_email,
     site: c.site_name,
+    customerName: c.customer_name,
     totalWithBill: parseFloat(c.total_with_bill || 0),
     totalWithoutBill: parseFloat(c.total_without_bill || 0),
     submittedAmount: getSubmittedAmount(c),
@@ -1323,6 +1357,11 @@ function mapClaimQueueRow(c: any) {
     paidBy: c.paid_email,
     paidDate: c.paid_date,
     paymentReference: c.payment_reference,
+    sapExported: !!c.sap_exported,
+    sapExportedAt: c.sap_exported_at,
+    sapExportBatchId: c.sap_export_batch_id,
+    paymentVoucherCode: c.payment_voucher_code,
+    paymentVoucherGeneratedAt: c.payment_voucher_generated_at,
   };
 }
 
@@ -1336,10 +1375,352 @@ export async function getAccountsClaims() {
   const { data } = await supabase
     .from('claims')
     .select('*')
-    .in('status', [STATUS_ACCOUNTS_VERIFICATION, LEGACY_STATUS_SENT_TO_ACCOUNTS, STATUS_ACCOUNTS_PROCESSING])
+    .in('status', [STATUS_ACCOUNTS_VERIFICATION, LEGACY_STATUS_SENT_TO_ACCOUNTS, STATUS_ACCOUNTS_VERIFIED, STATUS_ACCOUNTS_PROCESSING, STATUS_PAYMENT_PROCESSING])
     .order('created_at', { ascending: false });
 
   return (data || []).map(mapClaimQueueRow);
+}
+
+function normalizeSapCategory(category: string) {
+  return String(category || '').trim().toLowerCase();
+}
+
+function sapBucketForCategory(category: string): 'boarding' | 'travel' | 'da' | 'other' {
+  const normalized = normalizeSapCategory(category);
+  if (normalized === 'lodging') return 'boarding';
+  if (['fuel', 'toll / parking', 'travel & transport', 'travel'].includes(normalized)) return 'travel';
+  if (normalized === 'da') return 'da';
+  return 'other';
+}
+
+function formatSapDate(value?: string | null) {
+  if (!value) return '';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '';
+  return date.toLocaleDateString('en-IN', { day: '2-digit', month: '2-digit', year: 'numeric' });
+}
+
+function amountFromExpense(row: any) {
+  return toNumber(row.amount_with_bill) + toNumber(row.amount_without_bill);
+}
+
+function summarizeSapClaim(c: any) {
+  const expenses = c.expense_items || [];
+  const totals = expenses.reduce((acc: { boarding: number; travel: number; da: number; other: number }, expense: any) => {
+    acc[sapBucketForCategory(expense.category)] += amountFromExpense(expense);
+    return acc;
+  }, { boarding: 0, travel: 0, da: 0, other: 0 });
+  const firstExpense = expenses.find((expense: any) => expense.project_code) || expenses[0] || {};
+  const amount = c.verified_amount == null ? getClaimAmount(c) : toNumber(c.verified_amount);
+
+  return {
+    claimId: c.claim_number || c.claim_id,
+    claimIdInternal: c.claim_id,
+    projectCode: firstExpense.project_code || '',
+    customerName: c.customer_name || c.site_name || '',
+    employeeName: c.submitted_by || '',
+    submittedDate: c.created_at,
+    serviceType: c.service_type || 'Site Execution',
+    boardingAmount: totals.boarding,
+    otherAmount: totals.other,
+    daAmount: totals.da,
+    travelAmount: totals.travel,
+    grandTotal: amount,
+    status: c.status,
+    sapStatus: c.sap_exported ? 'Exported' : 'Pending',
+  };
+}
+
+function sapExcelRows(claims: any[]) {
+  return claims.map((claim) => {
+    const summary = summarizeSapClaim(claim);
+    return {
+      'JC NO': summary.projectCode,
+      'Service Engineer': summary.employeeName,
+      CustName: summary.customerName,
+      PostingDate: formatSapDate(summary.submittedDate),
+      'Visit Dt': formatSapDate(summary.submittedDate),
+      ID: summary.claimId,
+      'Service Type': summary.serviceType,
+      'BOARDING(ROOM RENT)': summary.boardingAmount,
+      'OTHER EXPENSES': summary.otherAmount,
+      'PERDIEM (DA)': summary.daAmount,
+      'TRAVEL EXPENSE- BUS,TRAIN,BIKE': summary.travelAmount,
+      'Grand Total': summary.grandTotal,
+    };
+  });
+}
+
+async function fetchSapClaimsByIds(claimIds: string[]) {
+  const ids = [...new Set(claimIds.map((id) => String(id || '').trim()).filter(Boolean))];
+  if (ids.length === 0) throw new Error('Select at least one claim.');
+
+  const { data, error } = await supabase
+    .from('claims')
+    .select('*, expense_items(*)')
+    .in('claim_id', ids);
+  if (error) throw error;
+
+  const claims = (data || []) as any[];
+  if (claims.length !== ids.length) throw new Error('One or more selected claims could not be found.');
+  const invalid = claims.find((claim) => !isAccountsVerifiedStatus(claim.status) || claim.sap_exported === true);
+  if (invalid) throw new Error(`Claim ${invalid.claim_number || invalid.claim_id} is not eligible for SAP export.`);
+  return claims;
+}
+
+async function nextSapBatchId() {
+  const today = new Date();
+  const yyyymmdd = today.toISOString().slice(0, 10).replace(/-/g, '');
+  const prefix = `SAP-${yyyymmdd}-`;
+  const { data, error } = await supabase
+    .from('sap_export_batches' as any)
+    .select('batch_id')
+    .like('batch_id', `${prefix}%`)
+    .order('batch_id', { ascending: false })
+    .limit(1);
+  if (error) throw error;
+  const last = String((data as any[])?.[0]?.batch_id || '');
+  const next = (parseInt(last.slice(prefix.length), 10) || 0) + 1;
+  return `${prefix}${String(next).padStart(3, '0')}`;
+}
+
+export async function getSapPendingClaims() {
+  if (isDemoMode()) return [];
+
+  const { data, error } = await supabase
+    .from('claims')
+    .select('*, expense_items(*)')
+    .eq('status', STATUS_ACCOUNTS_VERIFIED)
+    .or('sap_exported.is.false,sap_exported.is.null')
+    .order('created_at', { ascending: false });
+  if (error) throw error;
+
+  return ((data || []) as any[]).map(summarizeSapClaim);
+}
+
+function isSapHistoricalStatus(status?: string | null) {
+  const normalized = normalizeStatus(status);
+  return normalized === normalizeStatus(STATUS_ACCOUNTS_VERIFIED)
+    || normalized === normalizeStatus(STATUS_ACCOUNTS_PROCESSING)
+    || normalized === normalizeStatus(STATUS_PAYMENT_PROCESSING)
+    || normalized === normalizeStatus(STATUS_PAID);
+}
+
+export async function getSapHistoricalClaims() {
+  if (isDemoMode()) return demoClaims.map((claim) => ({
+    claimId: claim.claimId,
+    claimIdInternal: claim.claimIdInternal,
+    projectCode: claim.expenses?.[0]?.projectCode || '',
+    customerName: claim.customerName || claim.site,
+    employeeName: claim.submittedBy,
+    submittedDate: claim.date,
+    serviceType: 'Site Execution',
+    boardingAmount: 0,
+    otherAmount: claim.amount,
+    daAmount: 0,
+    travelAmount: 0,
+    grandTotal: claim.amount,
+    status: claim.status,
+    sapStatus: 'Preview',
+  }));
+
+  const { data, error } = await supabase
+    .from('claims')
+    .select('*, expense_items(*)')
+    .order('created_at', { ascending: false });
+  if (error) throw error;
+
+  return ((data || []) as any[])
+    .filter((claim) => isSapHistoricalStatus(claim.status) || claim.accounts_verified_email || claim.paid_date)
+    .slice(0, 200)
+    .map(summarizeSapClaim);
+}
+
+async function fetchSapPreviewClaimsByIds(claimIds: string[]) {
+  const ids = [...new Set(claimIds.map((id) => String(id || '').trim()).filter(Boolean))];
+  if (ids.length === 0) throw new Error('Select at least one claim.');
+
+  const { data, error } = await supabase
+    .from('claims')
+    .select('*, expense_items(*)')
+    .in('claim_id', ids);
+  if (error) throw error;
+
+  const claims = (data || []) as any[];
+  if (claims.length !== ids.length) throw new Error('One or more selected claims could not be found.');
+  return claims;
+}
+
+export async function downloadSapPreviewExcel(claimIds: string[], generatedBy?: string) {
+  const claims = isDemoMode()
+    ? demoClaims.filter((claim) => claimIds.includes(claim.claimIdInternal || claim.claimId)).map((claim: any) => ({
+      claim_id: claim.claimIdInternal,
+      claim_number: claim.claimId,
+      created_at: claim.date,
+      submitted_by: claim.submittedBy,
+      site_name: claim.site,
+      customer_name: claim.customerName || claim.site,
+      status: claim.status,
+      verified_amount: claim.verifiedAmount ?? claim.amount,
+      grand_total: claim.amount,
+      total_with_bill: claim.totalWithBill,
+      total_without_bill: claim.totalWithoutBill,
+      expense_items: (claim.expenses || []).map((expense: any) => ({
+        category: expense.category,
+        project_code: expense.projectCode,
+        amount_with_bill: expense.amountWithBill,
+        amount_without_bill: expense.amountWithoutBill,
+      })),
+    }))
+    : await fetchSapPreviewClaimsByIds(claimIds);
+
+  if (claims.length === 0) throw new Error('Select at least one claim.');
+
+  const XLSX = await import('xlsx');
+  const worksheet = XLSX.utils.json_to_sheet(sapExcelRows(claims));
+  const workbook = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(workbook, worksheet, 'SAP Preview');
+  const workbookData = XLSX.write(workbook, { bookType: 'xlsx', type: 'array' });
+  const blob = new Blob([workbookData], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+  const generatedAt = new Date();
+  const fileName = `SAP_Preview_${generatedAt.toISOString().slice(0, 10).replace(/-/g, '')}_${generatedAt.toTimeString().slice(0, 5).replace(':', '')}.xlsx`;
+  let fileUrl = '';
+
+  if (!isDemoMode()) {
+    const storagePath = `previews/${generatedAt.getFullYear()}/${String(generatedAt.getMonth() + 1).padStart(2, '0')}/${fileName}`;
+    const { error: uploadError } = await supabase.storage
+      .from('sap-exports')
+      .upload(storagePath, blob, { contentType: blob.type, upsert: true });
+    if (uploadError) throw uploadError;
+    const { data: publicUrl } = supabase.storage.from('sap-exports').getPublicUrl(storagePath);
+    fileUrl = publicUrl.publicUrl;
+  }
+
+  const url = fileUrl || URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = fileName;
+  link.target = '_blank';
+  link.rel = 'noopener noreferrer';
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  if (!fileUrl) URL.revokeObjectURL(url);
+
+  if (generatedBy) {
+    await logAudit('sap_preview_report_downloaded', generatedBy, 'sap_preview', fileName, `Claims: ${claims.length}`);
+  }
+
+  return { fileName, totalClaims: claims.length, fileUrl };
+}
+
+export async function generateSapExcelExport(claimIds: string[], generatedBy: string) {
+  if (isDemoEmail(generatedBy)) {
+    throw new Error('SAP export is disabled in demo mode.');
+  }
+
+  const claims = await fetchSapClaimsByIds(claimIds);
+  const batchId = await nextSapBatchId();
+  const generatedAt = new Date();
+  const fileName = `SAP_Export_${generatedAt.toISOString().slice(0, 10).replace(/-/g, '')}_${generatedAt.toTimeString().slice(0, 5).replace(':', '')}.xlsx`;
+  const storagePath = `${generatedAt.getFullYear()}/${String(generatedAt.getMonth() + 1).padStart(2, '0')}/${fileName}`;
+
+  const XLSX = await import('xlsx');
+  const worksheet = XLSX.utils.json_to_sheet(sapExcelRows(claims));
+  const workbook = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(workbook, worksheet, 'SAP Export');
+  const workbookData = XLSX.write(workbook, { bookType: 'xlsx', type: 'array' });
+  const fileBlob = new Blob([workbookData], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+
+  const { error: uploadError } = await supabase.storage
+    .from('sap-exports')
+    .upload(storagePath, fileBlob, { contentType: fileBlob.type, upsert: false });
+  if (uploadError) throw uploadError;
+
+  const { data: publicUrl } = supabase.storage.from('sap-exports').getPublicUrl(storagePath);
+  const totalAmount = claims.reduce((sum, claim) => sum + (claim.verified_amount == null ? getClaimAmount(claim) : toNumber(claim.verified_amount)), 0);
+
+  const { error: batchError } = await supabase.from('sap_export_batches' as any).insert({
+    batch_id: batchId,
+    generated_by: generatedBy,
+    generated_at: generatedAt.toISOString(),
+    total_claims: claims.length,
+    total_amount: totalAmount,
+    file_url: publicUrl.publicUrl,
+    file_path: storagePath,
+  });
+  if (batchError) throw batchError;
+
+  const { error: itemsError } = await supabase.from('sap_export_batch_items' as any).insert(
+    claims.map((claim) => ({ batch_id: batchId, claim_id: claim.claim_id }))
+  );
+  if (itemsError) throw itemsError;
+
+  const { error: updateError } = await supabase.from('claims').update({
+    sap_exported: true,
+    sap_exported_at: generatedAt.toISOString(),
+    sap_exported_by: generatedBy,
+    sap_export_batch_id: batchId,
+    status: STATUS_PAYMENT_PROCESSING,
+  } as any).in('claim_id', claims.map((claim) => claim.claim_id));
+  if (updateError) throw updateError;
+
+  await Promise.all(claims.map((claim) => ensurePaymentVoucherCode(claim.claim_id)));
+
+  await logAudit('sap_report_generated', generatedBy, 'sap_export_batch', batchId, `Claims: ${claims.length} | Total: Rs. ${totalAmount.toLocaleString('en-IN')}`);
+  await Promise.all(claims.map((claim) =>
+    logAudit('sap_report_claim_included', generatedBy, 'claim', claim.claim_id, `Batch: ${batchId}`)
+  ));
+
+  return {
+    batchId,
+    fileName,
+    fileUrl: publicUrl.publicUrl,
+    totalClaims: claims.length,
+    totalAmount,
+  };
+}
+
+export async function getSapExportBatches() {
+  if (isDemoMode()) return [];
+
+  const { data, error } = await supabase
+    .from('sap_export_batches' as any)
+    .select('*')
+    .order('generated_at', { ascending: false });
+  if (error) throw error;
+  return (data || []) as any[];
+}
+
+export async function getSapExportBatchClaims(batchId: string) {
+  if (isDemoMode()) return [];
+
+  const { data: items, error: itemsError } = await supabase
+    .from('sap_export_batch_items' as any)
+    .select('claim_id')
+    .eq('batch_id', batchId);
+  if (itemsError) throw itemsError;
+  const claimIds = ((items || []) as any[]).map((item) => item.claim_id).filter(Boolean);
+  if (claimIds.length === 0) return [];
+
+  const { data, error } = await supabase
+    .from('claims')
+    .select('*, expense_items(*)')
+    .in('claim_id', claimIds);
+  if (error) throw error;
+  return ((data || []) as any[]).map(summarizeSapClaim);
+}
+
+export async function logSapReportDownloaded(batchId: string, downloadedBy: string) {
+  await logAudit('sap_report_downloaded', downloadedBy, 'sap_export_batch', batchId);
+}
+
+export async function ensurePaymentVoucherCode(claimId: string) {
+  const { data, error } = await (supabase as any).rpc('assign_payment_voucher_code', {
+    target_claim_id: claimId,
+  });
+  if (error) throw error;
+  return String(data || '');
 }
 
 export async function approveClaimAsAccounts(claimId: string, accountsEmail: string, note?: string, processingAmountInput?: number) {
@@ -1355,7 +1736,7 @@ export async function approveClaimAsAccounts(claimId: string, accountsEmail: str
   const submittedAmount = getSubmittedAmount(c);
   const amount = normalizeVerifiedAmount(processingAmountInput ?? getClaimAmount(c), getClaimAmount(c) || submittedAmount);
   const updates: any = {
-    status: STATUS_ACCOUNTS_PROCESSING,
+    status: STATUS_ACCOUNTS_VERIFIED,
     accounts_verified_email: accountsEmail,
     accounts_verified_date: new Date().toISOString(),
     accounts_note: note || null,
@@ -1365,7 +1746,7 @@ export async function approveClaimAsAccounts(claimId: string, accountsEmail: str
   if (error) throw error;
 
   await logAudit('claim_accounts_verified', accountsEmail, 'claim', claimId, note ? `Amount: Rs. ${amount} | ${note}` : `Amount: Rs. ${amount}`);
-  await createNotification(c.user_email, 'Payment Processing', `Your claim ${c.claim_number || claimId} is being processed by accounts.`, 'info', claimId);
+  await createNotification(c.user_email, 'Accounts Verified', `Your claim ${c.claim_number || claimId} has been verified by accounts and is pending SAP entry.`, 'info', claimId);
   const emailSummary = await getClaimEmailSummary(claimId, c);
   await sendEmailNotification('claim_accounts_verified', c.user_email, {
     claim_no: c.claim_number || claimId,
@@ -1376,7 +1757,7 @@ export async function approveClaimAsAccounts(claimId: string, accountsEmail: str
     verified_amount: amount,
     accounts_by: accountsEmail,
     employee_name: c.user_name || c.submitted_by || 'there',
-    status: STATUS_ACCOUNTS_PROCESSING,
+    status: STATUS_ACCOUNTS_VERIFIED,
     note,
     currency: 'Rs.',
     items: emailSummary.items,
@@ -1398,6 +1779,7 @@ export async function markClaimPaid(claimId: string, accountsEmail: string, paid
   const currentBalance = await getCurrentBalance(c.user_email);
   const balanceAfter = currentBalance + paidAmount;
   const paidDate = new Date().toISOString();
+  const voucherCode = await ensurePaymentVoucherCode(claimId);
 
   const { error } = await supabase.from('claims').update({
     status: STATUS_PAID,
@@ -1422,6 +1804,7 @@ export async function markClaimPaid(claimId: string, accountsEmail: string, paid
   if (txError) throw txError;
 
   await logAudit('claim_paid', accountsEmail, 'claim', claimId, note ? `Paid: Rs. ${paidAmount} | Ref: ${paymentReference || '-'} | ${note}` : `Paid: Rs. ${paidAmount} | Ref: ${paymentReference || '-'}`);
+  await logAudit('payment_voucher_code_assigned', accountsEmail, 'claim', claimId, `Voucher: ${voucherCode}`);
   await createNotification(c.user_email, 'Claim Paid', `Your claim ${c.claim_number || claimId} has been paid for Rs. ${paidAmount.toLocaleString('en-IN')}.`, 'success', claimId);
   const emailSummary = await getClaimEmailSummary(claimId, c);
   await sendEmailNotification('claim_paid', c.user_email, {
@@ -1435,6 +1818,7 @@ export async function markClaimPaid(claimId: string, accountsEmail: string, paid
     paid_by: accountsEmail,
     paid_date: paidDate,
     payment_reference: paymentReference,
+    payment_voucher_code: voucherCode,
     employee_name: c.user_name || c.submitted_by || 'there',
     status: STATUS_PAID,
     note,
@@ -1493,6 +1877,7 @@ export async function rejectClaim(claimId: string, reason: string, rejectorEmail
 
 export async function resubmitRejectedClaim(claimId: string, claim: {
   site: string;
+  customerName?: string;
   expenses: Array<{ category: string; projectCode: string; claimDate: string; description: string; amountWithBill: number; amountWithoutBill: number; attachmentIds?: string[] }>;
   fileIds?: string[];
 }, userEmail: string, userName: string) {
@@ -1555,6 +1940,7 @@ export async function getClaimsHistory(userEmail: string, userRole: string, filt
     submittedBy: c.submitted_by,
     userEmail: c.user_email,
     site: c.site_name,
+    customerName: c.customer_name,
     amount: getClaimAmount(c),
     submittedAmount: getSubmittedAmount(c),
     verifiedAmount: c.verified_amount == null ? null : parseFloat(c.verified_amount),
@@ -1562,10 +1948,13 @@ export async function getClaimsHistory(userEmail: string, userRole: string, filt
     totalWithoutBill: parseFloat(c.total_without_bill || 0),
     status: c.status,
     rejectionReason: c.rejection_reason,
+    paymentVoucherCode: c.payment_voucher_code,
+    paymentVoucherGeneratedAt: c.payment_voucher_generated_at,
     fileIds: c.drive_file_ids || [],
     expenses: (c.expense_items || []).map((e: any) => ({
       category: e.category,
       projectCode: e.project_code,
+      customerName: e.customer_name || c.customer_name || '',
       claimDate: e.expense_date,
       description: e.description,
       amountWithBill: parseFloat(e.amount_with_bill || 0),
@@ -1592,6 +1981,7 @@ export async function getClaimById(claimId: string) {
     submittedBy: c.submitted_by,
     userEmail: c.user_email,
     site: c.site_name,
+    customerName: c.customer_name,
     amount: getClaimAmount(c),
     submittedAmount: getSubmittedAmount(c),
     verifiedAmount: c.verified_amount == null ? null : parseFloat(c.verified_amount),
@@ -1604,9 +1994,12 @@ export async function getClaimById(claimId: string) {
     adminEmail: c.admin_email,
     adminApprovalDate: c.admin_approval_date,
     rejectionReason: c.rejection_reason,
+    paymentVoucherCode: c.payment_voucher_code,
+    paymentVoucherGeneratedAt: c.payment_voucher_generated_at,
     expenses: (items || []).map((e: any) => ({
       category: e.category,
       projectCode: e.project_code,
+      customerName: e.customer_name || c.customer_name || '',
       claimDate: e.expense_date,
       description: e.description,
       amountWithBill: parseFloat(e.amount_with_bill || 0),
@@ -2090,10 +2483,10 @@ export async function getUserBalanceSummary(userEmail: string, userRole: string)
 export async function getAppLists() {
   if (isDemoMode()) {
     return [
-      { id: 'demo-project-1', type: 'project', value: 'Metro Station Foundation', project_code: 'PROJ-METRO', active: true },
-      { id: 'demo-project-2', type: 'project', value: 'Warehouse Retrofit', project_code: 'PROJ-WARE', active: true },
+      { id: 'demo-project-1', type: 'project', value: 'Metro Station Foundation', project_code: 'PROJ-METRO', customer_names: ['Metro Rail Corp', 'Metro Maintenance'], active: true },
+      { id: 'demo-project-2', type: 'project', value: 'Warehouse Retrofit', project_code: 'PROJ-WARE', customer_names: ['North Warehouse'], active: true },
       ...demoDropdownOptions().categories.map((category, index) => ({ id: `demo-category-${index}`, type: 'category', value: category, active: true })),
-      ...demoProjectCodes.map((code, index) => ({ id: `demo-code-${index}`, type: 'projectcode', value: code.label, project_code: code.code, project: code.project, allows_all_categories: code.allowsAllCategories, expense_categories: code.expenseCategories, active: true })),
+      ...demoProjectCodes.map((code, index) => ({ id: `demo-code-${index}`, type: 'projectcode', value: code.label, project_code: code.code, project: code.project, customer_names: code.customerNames, allows_all_categories: code.allowsAllCategories, expense_categories: code.expenseCategories, active: true })),
     ];
   }
 
@@ -2106,12 +2499,27 @@ export async function addAppListItem(item: {
   value: string;
   project_code?: string;
   project?: string;
+  customer_names?: string[];
   allows_all_categories?: boolean;
   expense_categories?: string[];
 }) {
   if (isDemoMode()) return;
 
   const { error } = await supabase.from('app_lists').insert({ ...item, active: true });
+  if (error) throw error;
+}
+
+export async function updateAppListItem(id: string, item: {
+  value?: string;
+  project_code?: string | null;
+  project?: string | null;
+  customer_names?: string[];
+  allows_all_categories?: boolean;
+  expense_categories?: string[];
+}) {
+  if (isDemoMode()) return;
+
+  const { error } = await supabase.from('app_lists').update(item as any).eq('id', id);
   if (error) throw error;
 }
 

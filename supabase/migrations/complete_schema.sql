@@ -33,6 +33,7 @@ CREATE TABLE public.claims (
   user_email TEXT NOT NULL,
   submitted_by TEXT NOT NULL,
   site_name TEXT NOT NULL,
+  customer_name TEXT,
   status TEXT NOT NULL DEFAULT 'Pending Manager Approval',
   manager_email TEXT,
   manager_approval_status TEXT DEFAULT 'Pending',
@@ -49,6 +50,8 @@ CREATE TABLE public.claims (
   paid_amount NUMERIC,
   payment_reference TEXT,
   payment_note TEXT,
+  payment_voucher_code TEXT,
+  payment_voucher_generated_at TIMESTAMP WITH TIME ZONE,
   rejection_reason TEXT,
   total_with_bill NUMERIC NOT NULL DEFAULT 0,
   total_without_bill NUMERIC NOT NULL DEFAULT 0,
@@ -63,6 +66,7 @@ CREATE TABLE public.expense_items (
   claim_id TEXT NOT NULL REFERENCES public.claims(claim_id) ON DELETE CASCADE,
   category TEXT NOT NULL,
   project_code TEXT,
+  customer_name TEXT,
   expense_date DATE,
   description TEXT,
   amount_with_bill NUMERIC NOT NULL DEFAULT 0,
@@ -92,6 +96,7 @@ CREATE TABLE public.app_lists (
   value TEXT NOT NULL,
   project_code TEXT,
   project TEXT,
+  customer_names TEXT[] DEFAULT '{}',
   active BOOLEAN NOT NULL DEFAULT true,
   created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT now()
 );
@@ -137,6 +142,57 @@ CREATE TABLE public.audit_logs (
   details text,
   created_at timestamp with time zone NOT NULL DEFAULT now()
 );
+
+CREATE SEQUENCE IF NOT EXISTS public.payment_voucher_code_seq;
+
+CREATE OR REPLACE FUNCTION public.next_payment_voucher_code()
+RETURNS TEXT
+LANGUAGE plpgsql
+SECURITY DEFINER
+AS $$
+BEGIN
+  RETURN 'PV-' || to_char(now(), 'YYYYMMDD') || '-' || lpad(nextval('public.payment_voucher_code_seq')::text, 6, '0');
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION public.assign_payment_voucher_code(target_claim_id TEXT)
+RETURNS TEXT
+LANGUAGE plpgsql
+SECURITY DEFINER
+AS $$
+DECLARE
+  existing_code TEXT;
+  generated_code TEXT;
+BEGIN
+  SELECT payment_voucher_code
+  INTO existing_code
+  FROM public.claims
+  WHERE claim_id = target_claim_id
+  FOR UPDATE;
+
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'Claim % not found', target_claim_id;
+  END IF;
+
+  IF existing_code IS NOT NULL AND length(trim(existing_code)) > 0 THEN
+    RETURN existing_code;
+  END IF;
+
+  LOOP
+    generated_code := public.next_payment_voucher_code();
+    BEGIN
+      UPDATE public.claims
+      SET payment_voucher_code = generated_code,
+          payment_voucher_generated_at = now()
+      WHERE claim_id = target_claim_id
+        AND (payment_voucher_code IS NULL OR length(trim(payment_voucher_code)) = 0);
+
+      RETURN generated_code;
+    EXCEPTION WHEN unique_violation THEN
+    END;
+  END LOOP;
+END;
+$$;
 
 -- ========== ENABLE RLS FOR ALL TABLES ==========
 ALTER TABLE public.users ENABLE ROW LEVEL SECURITY;
@@ -194,6 +250,7 @@ CREATE INDEX idx_sessions_expires ON public.sessions(expires_at);
 CREATE INDEX idx_claims_claim_id ON public.claims(claim_id);
 CREATE INDEX idx_claims_user_email ON public.claims(user_email);
 CREATE INDEX idx_claims_status ON public.claims(status);
+CREATE UNIQUE INDEX idx_claims_payment_voucher_code_unique ON public.claims(payment_voucher_code) WHERE payment_voucher_code IS NOT NULL;
 CREATE INDEX idx_expense_items_claim_id ON public.expense_items(claim_id);
 CREATE INDEX idx_transactions_user_email ON public.transactions(user_email);
 CREATE INDEX idx_transactions_reference_id ON public.transactions(reference_id);

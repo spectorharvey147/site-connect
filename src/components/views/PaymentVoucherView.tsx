@@ -1,6 +1,6 @@
 import { Fragment, useEffect, useMemo, useState } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
-import { getClaimsHistory, getCompanySettings, getAllUsers, getClaimApprovalTrail } from '@/lib/claims-api';
+import { ensurePaymentVoucherCode, getClaimsHistory, getCompanySettings, getAllUsers, getClaimApprovalTrail } from '@/lib/claims-api';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
@@ -55,7 +55,11 @@ function claimNumberSortValue(claim: any) {
 }
 
 function buildVoucherNo(selectedClaims: any[]) {
-  const prefix = `PV-${new Date().toISOString().slice(0, 10).replace(/-/g, '')}`;
+  const persistedCodes = [...new Set(selectedClaims.map((claim) => String(claim.paymentVoucherCode || '').trim()).filter(Boolean))];
+  if (persistedCodes.length === 1) return persistedCodes[0];
+  if (persistedCodes.length > 1) return `Multiple Vouchers (${persistedCodes.length})`;
+
+  const prefix = 'Voucher Code Pending';
   const tokens = [...selectedClaims]
     .sort((a, b) => {
       const left = claimNumberSortValue(a);
@@ -66,11 +70,15 @@ function buildVoucherNo(selectedClaims: any[]) {
     })
     .map(claimNumberToken);
 
-  if (tokens.length === 0) return `${prefix}-CLAIM`;
-  if (tokens.length === 1) return `${prefix}-${tokens[0]}`;
-  if (tokens.length <= 3) return `${prefix}-${tokens.join('-')}`;
+  if (tokens.length === 0) return prefix;
+  if (tokens.length === 1) return `${prefix}: ${tokens[0]}`;
+  if (tokens.length <= 3) return `${prefix}: ${tokens.join(', ')}`;
 
-  return `${prefix}-${tokens[0]}-TO-${tokens[tokens.length - 1]}-N${String(tokens.length).padStart(2, '0')}`;
+  return `${prefix}: ${tokens[0]} to ${tokens[tokens.length - 1]} (${tokens.length})`;
+}
+
+function isVoucherCodeEligible(claim: any) {
+  return ['accounts processing', 'payment processing', 'paid'].includes(String(claim.status || '').toLowerCase());
 }
 
 type UserDirectoryEntry = {
@@ -266,7 +274,7 @@ export default function PaymentVoucherView() {
         getCompanySettings(),
         getAllUsers(),
       ]);
-      setClaims(all.filter(c => ['approved', 'closed', 'accounts verification', 'sent to accounts', 'accounts processing', 'paid'].includes(c.status.toLowerCase())));
+      setClaims(all.filter(c => ['approved', 'closed', 'accounts verification', 'sent to accounts', 'accounts verified', 'accounts processing', 'payment processing', 'paid'].includes(c.status.toLowerCase())));
       setCompanySettings(settings);
       setUsers(allUsers || []);
       setUserDirectory(buildUserDirectory(allUsers || []));
@@ -324,8 +332,32 @@ export default function PaymentVoucherView() {
 
   const openVoucher = async (claimsForVoucher: any[]) => {
     if (claimsForVoucher.length === 0) return;
+    let hydratedClaimsForVoucher = claimsForVoucher;
+    const claimsNeedingVoucherCodes = claimsForVoucher.filter((claim) => !claim.paymentVoucherCode && isVoucherCodeEligible(claim));
+    if (claimsNeedingVoucherCodes.length > 0) {
+      try {
+        const generatedEntries = await Promise.all(claimsNeedingVoucherCodes.map(async (claim) => ({
+          claimIdInternal: claim.claimIdInternal,
+          paymentVoucherCode: await ensurePaymentVoucherCode(claim.claimIdInternal),
+          paymentVoucherGeneratedAt: new Date().toISOString(),
+        })));
+        const generatedMap = new Map(generatedEntries.map((entry) => [entry.claimIdInternal, entry]));
+        hydratedClaimsForVoucher = claimsForVoucher.map((claim) => ({
+          ...claim,
+          ...generatedMap.get(claim.claimIdInternal),
+        }));
+        setClaims((current) => current.map((claim) => ({
+          ...claim,
+          ...generatedMap.get(claim.claimIdInternal),
+        })));
+      } catch (error: any) {
+        toast.error(error.message || 'Could not assign payment voucher code');
+        return;
+      }
+    }
+
     let voucherUserDirectory = userDirectory;
-    const emails = [...new Set(claimsForVoucher.map((claim) => String(claim.userEmail || '').trim().toLowerCase()).filter(Boolean))];
+    const emails = [...new Set(hydratedClaimsForVoucher.map((claim) => String(claim.userEmail || '').trim().toLowerCase()).filter(Boolean))];
 
     if (emails.length > 0) {
       const { data, error } = await supabase
@@ -343,24 +375,26 @@ export default function PaymentVoucherView() {
       }
     }
 
-    const userTotals = buildUserTotals(claimsForVoucher, voucherUserDirectory);
-    const projectCodeTotals = buildProjectCodeTotals(claimsForVoucher);
-    const approvals = await getClaimApprovalTrail(claimsForVoucher.map((claim) => claim.claimIdInternal));
+    const userTotals = buildUserTotals(hydratedClaimsForVoucher, voucherUserDirectory);
+    const projectCodeTotals = buildProjectCodeTotals(hydratedClaimsForVoucher);
+    const approvals = await getClaimApprovalTrail(hydratedClaimsForVoucher.map((claim) => claim.claimIdInternal));
+    const voucherCodes = [...new Set(hydratedClaimsForVoucher.map((claim) => claim.paymentVoucherCode).filter(Boolean))];
     setVoucher({
-      voucherNo: buildVoucherNo(claimsForVoucher),
-      date: new Date().toISOString(),
-      claims: claimsForVoucher,
-      claimIds: claimsForVoucher.map((claim) => claim.claimId),
+      voucherNo: buildVoucherNo(hydratedClaimsForVoucher),
+      voucherCodes,
+      date: hydratedClaimsForVoucher.map((claim) => claim.paymentVoucherGeneratedAt || claim.paidDate || claim.date).filter(Boolean).sort().at(-1) || new Date().toISOString(),
+      claims: hydratedClaimsForVoucher,
+      claimIds: hydratedClaimsForVoucher.map((claim) => claim.claimId),
       approvals,
       paidTo: userTotals.length === 1 ? `${userTotals[0].name}${userTotals[0].email ? ` (${userTotals[0].email})` : ''}` : 'Multiple Users',
-      periodFrom: claimsForVoucher.reduce((min, claim) => !min || claim.date < min ? claim.date : min, ''),
-      periodTo: claimsForVoucher.reduce((max, claim) => !max || claim.date > max ? claim.date : max, ''),
+      periodFrom: hydratedClaimsForVoucher.reduce((min, claim) => !min || claim.date < min ? claim.date : min, ''),
+      periodTo: hydratedClaimsForVoucher.reduce((max, claim) => !max || claim.date > max ? claim.date : max, ''),
       userTotals,
       projectCodeTotals,
-      totalWithBill: claimsForVoucher.reduce((sum, claim) => sum + (claim.totalWithBill || 0), 0),
-      totalWithoutBill: claimsForVoucher.reduce((sum, claim) => sum + (claim.totalWithoutBill || 0), 0),
-      submittedAmount: claimsForVoucher.reduce((sum, claim) => sum + (claim.submittedAmount || claim.amount || 0), 0),
-      amount: claimsForVoucher.reduce((sum, claim) => sum + (claim.amount || 0), 0),
+      totalWithBill: hydratedClaimsForVoucher.reduce((sum, claim) => sum + (claim.totalWithBill || 0), 0),
+      totalWithoutBill: hydratedClaimsForVoucher.reduce((sum, claim) => sum + (claim.totalWithoutBill || 0), 0),
+      submittedAmount: hydratedClaimsForVoucher.reduce((sum, claim) => sum + (claim.submittedAmount || claim.amount || 0), 0),
+      amount: hydratedClaimsForVoucher.reduce((sum, claim) => sum + (claim.amount || 0), 0),
     });
   };
 
@@ -620,6 +654,7 @@ export default function PaymentVoucherView() {
                   <Checkbox checked={allFilteredSelected} onCheckedChange={toggleSelectAll} />
                 </th>
                 <th className="p-3 text-left">Claim ID</th>
+                <th className="p-3 text-left">Voucher Code</th>
                 <th className="p-3 text-left">Date</th>
                 <th className="p-3 text-left">Site</th>
                 <th className="p-3 text-right">With Bill</th>
@@ -631,15 +666,16 @@ export default function PaymentVoucherView() {
             </thead>
             <tbody>
               {loading ? (
-                <tr><td colSpan={9} className="text-center p-8 text-muted-foreground">Loading...</td></tr>
+                <tr><td colSpan={10} className="text-center p-8 text-muted-foreground">Loading...</td></tr>
               ) : filteredClaims.length === 0 ? (
-                <tr><td colSpan={9} className="text-center p-8 text-muted-foreground">No approved claims</td></tr>
+                <tr><td colSpan={10} className="text-center p-8 text-muted-foreground">No approved claims</td></tr>
               ) : filteredClaims.map((claim) => (
                 <tr key={claim.claimIdInternal} className="border-b border-border hover:bg-muted/30">
                   <td className="p-3">
                     <Checkbox checked={selectedIds.has(claim.claimIdInternal)} onCheckedChange={() => toggleSelect(claim.claimIdInternal)} />
                   </td>
                   <td className="p-3 font-mono text-xs">{claim.claimId}</td>
+                  <td className="p-3 font-mono text-xs">{claim.paymentVoucherCode || (isVoucherCodeEligible(claim) ? 'Pending' : '-')}</td>
                   <td className="p-3">{formatDate(claim.date)}</td>
                   <td className="p-3">{claim.site}</td>
                   <td className="p-3 text-right">{money(claim.totalWithBill ?? 0)}</td>
@@ -702,7 +738,11 @@ export default function PaymentVoucherView() {
                 <div className="voucher-meta mb-4 grid grid-cols-1 gap-3 text-xs sm:grid-cols-2">
                   <div><strong>Voucher No:</strong> {voucher.voucherNo}</div>
                   <div><strong>Generated On:</strong> {formatDateTime(voucher.date)}</div>
+                  {voucher.voucherCodes?.length > 1 && (
+                    <div className="sm:col-span-2"><strong>Voucher Codes:</strong> {voucher.voucherCodes.join(', ')}</div>
+                  )}
                   <div><strong>Paid To:</strong> {voucher.paidTo}</div>
+                  <div><strong>Customer:</strong> {[...new Set(voucher.claims.map((claim: any) => claim.customerName).filter(Boolean))].join(', ') || '-'}</div>
                   <div><strong>Claim Count:</strong> {voucher.claims.length}</div>
                   <div><strong>Period:</strong> {formatDate(voucher.periodFrom)} to {formatDate(voucher.periodTo)}</div>
                   <div><strong>Claim IDs:</strong> {voucher.claimIds.join(', ')}</div>
@@ -769,6 +809,8 @@ export default function PaymentVoucherView() {
                   <thead>
                     <tr className="bg-muted">
                       <th className="p-2 text-left border">Claim ID</th>
+                      <th className="p-2 text-left border">Voucher Code</th>
+                      <th className="p-2 text-left border">Customer</th>
                       <th className="p-2 text-left border">Expense Date</th>
                       <th className="p-2 text-left border">Category</th>
                       <th className="p-2 text-left border">Description</th>
@@ -785,6 +827,8 @@ export default function PaymentVoucherView() {
                           {claim.expenses.map((expense: any, index: number) => (
                             <tr key={`${claim.claimIdInternal}-${index}`}>
                               <td className="p-2 border">{claim.claimId}</td>
+                              <td className="p-2 border">{claim.paymentVoucherCode || '-'}</td>
+                              <td className="p-2 border">{claim.customerName || expense.customerName || '-'}</td>
                               <td className="p-2 border">{formatDate(expense.claimDate || claim.date)}</td>
                               <td className="p-2 border">{expense.category}</td>
                               <td className="p-2 border">{expense.description}</td>
@@ -795,7 +839,7 @@ export default function PaymentVoucherView() {
                             </tr>
                           ))}
                           <tr key={`${claim.claimIdInternal}-subtotal`} className="bg-muted/30 font-semibold">
-                            <td colSpan={5} className="p-2 border text-right">Subtotal - {claim.claimId}</td>
+                            <td colSpan={7} className="p-2 border text-right">Subtotal - {claim.claimId}</td>
                             <td className="p-2 text-right border">{money(claim.totalWithBill ?? 0)}</td>
                             <td className="p-2 text-right border">{money(claim.totalWithoutBill ?? 0)}</td>
                             <td className="p-2 text-right border">{money(claim.amount ?? 0)}</td>
@@ -804,6 +848,8 @@ export default function PaymentVoucherView() {
                       ) : (
                         <tr key={claim.claimIdInternal}>
                           <td className="p-2 border">{claim.claimId}</td>
+                          <td className="p-2 border">{claim.paymentVoucherCode || '-'}</td>
+                          <td className="p-2 border">{claim.customerName || '-'}</td>
                           <td className="p-2 border">{formatDate(claim.date)}</td>
                           <td className="p-2 border">-</td>
                           <td className="p-2 border">-</td>
@@ -815,7 +861,7 @@ export default function PaymentVoucherView() {
                       )
                     ))}
                     <tr className="font-bold bg-muted/50">
-                      <td colSpan={5} className="p-2 border text-right">GRAND TOTAL</td>
+                      <td colSpan={7} className="p-2 border text-right">GRAND TOTAL</td>
                       <td className="p-2 text-right border">{money(voucher.totalWithBill ?? 0)}</td>
                       <td className="p-2 text-right border">{money(voucher.totalWithoutBill ?? 0)}</td>
                       <td className="p-2 text-right border">{money(voucher.amount ?? 0)}</td>

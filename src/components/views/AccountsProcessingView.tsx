@@ -22,7 +22,8 @@ function formatDate(date?: string) {
 
 function StatusBadge({ status }: { status: string }) {
   const normalized = status.toLowerCase();
-  if (normalized === 'accounts processing') return <Badge className="bg-blue-100 text-blue-800 hover:bg-blue-100">Accounts Processing</Badge>;
+  if (normalized === 'accounts verified') return <Badge className="bg-cyan-100 text-cyan-800 hover:bg-cyan-100">Accounts Verified</Badge>;
+  if (normalized === 'payment processing' || normalized === 'accounts processing') return <Badge className="bg-blue-100 text-blue-800 hover:bg-blue-100">Payment Processing</Badge>;
   return <Badge className="bg-amber-100 text-amber-800 hover:bg-amber-100">Accounts Verification</Badge>;
 }
 
@@ -179,7 +180,7 @@ export default function AccountsProcessingView() {
   }, []);
 
   const accountsVerification = useMemo(() => claims.filter((claim) => ['accounts verification', 'sent to accounts'].includes(String(claim.status || '').toLowerCase())), [claims]);
-  const processingClaims = useMemo(() => claims.filter((claim) => String(claim.status || '').toLowerCase() === 'accounts processing'), [claims]);
+  const processingClaims = useMemo(() => claims.filter((claim) => ['payment processing', 'accounts processing'].includes(String(claim.status || '').toLowerCase())), [claims]);
 
   const openVerify = async (claim: any) => {
     const fallbackClaim = { ...claim, status: claim.status || 'Accounts Verification' };
@@ -195,7 +196,7 @@ export default function AccountsProcessingView() {
   };
 
   const openPay = async (claim: any) => {
-    const fallbackClaim = { ...claim, status: claim.status || 'Accounts Processing' };
+    const fallbackClaim = { ...claim, status: claim.status || 'Payment Processing' };
     setPayClaim(fallbackClaim);
     setAmount(String((claim.verifiedAmount ?? claim.amount ?? 0).toFixed(2)));
     setReference('');
@@ -307,7 +308,7 @@ export default function AccountsProcessingView() {
       <div className="glass-card flex items-center justify-between p-4">
         <div>
           <h2 className="flex items-center gap-2 font-bold"><CreditCard className="h-5 w-5" /> Accounts Processing</h2>
-          <p className="text-sm text-muted-foreground">Verify final approved claims, then mark payments as paid.</p>
+          <p className="text-sm text-muted-foreground">Verify final approved claims, then mark SAP-exported claims as paid.</p>
         </div>
         <Button variant="outline" size="sm" onClick={loadClaims}><RefreshCw className="mr-2 h-4 w-4" /> Refresh</Button>
       </div>
