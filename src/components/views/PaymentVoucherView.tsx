@@ -39,46 +39,9 @@ function formatInputDate(d: string) {
   return date.toISOString().slice(0, 10);
 }
 
-function claimNumberToken(claim: any) {
-  const raw = String(claim?.claimId || claim?.claimIdInternal || '').trim();
-  const compact = raw.replace(/[^a-z0-9]+/gi, '').toUpperCase();
-  return compact || 'CLAIM';
-}
-
-function claimNumberSortValue(claim: any) {
-  const token = claimNumberToken(claim);
-  const match = token.match(/(\d+)$/);
-  return {
-    number: match ? Number(match[1]) : Number.MAX_SAFE_INTEGER,
-    token,
-  };
-}
-
 function buildVoucherNo(selectedClaims: any[]) {
-  const persistedCodes = [...new Set(selectedClaims.map((claim) => String(claim.paymentVoucherCode || '').trim()).filter(Boolean))];
-  if (persistedCodes.length === 1) return persistedCodes[0];
-  if (persistedCodes.length > 1) return `Multiple Vouchers (${persistedCodes.length})`;
-
-  const prefix = 'Voucher Code Pending';
-  const tokens = [...selectedClaims]
-    .sort((a, b) => {
-      const left = claimNumberSortValue(a);
-      const right = claimNumberSortValue(b);
-      return left.number === right.number
-        ? left.token.localeCompare(right.token)
-        : left.number - right.number;
-    })
-    .map(claimNumberToken);
-
-  if (tokens.length === 0) return prefix;
-  if (tokens.length === 1) return `${prefix}: ${tokens[0]}`;
-  if (tokens.length <= 3) return `${prefix}: ${tokens.join(', ')}`;
-
-  return `${prefix}: ${tokens[0]} to ${tokens[tokens.length - 1]} (${tokens.length})`;
-}
-
-function isVoucherCodeEligible(claim: any) {
-  return ['accounts processing', 'payment processing', 'paid'].includes(String(claim.status || '').toLowerCase());
+  const prefix = `PV-${new Date().toISOString().slice(0, 10).replace(/-/g, '')}`;
+  return `${prefix}-${String(selectedClaims.length).padStart(2, '0')}`;
 }
 
 type UserDirectoryEntry = {
