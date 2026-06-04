@@ -24,6 +24,7 @@ const TransactionsView = lazy(() => import("@/components/views/TransactionsView"
 const UserBalanceView = lazy(() => import("@/components/views/UserBalanceView"));
 const ApprovalView = lazy(() => import("@/components/views/ApprovalView"));
 const AccountsProcessingView = lazy(() => import("@/components/views/AccountsProcessingView"));
+const AccountsSapEntryView = lazy(() => import("@/components/views/AccountsSapEntryView"));
 const PaymentVoucherView = lazy(() => import("@/components/views/PaymentVoucherView"));
 const UserManagementView = lazy(() => import("@/components/views/UserManagementView"));
 const SettingsView = lazy(() => import("@/components/views/SettingsView"));
@@ -64,6 +65,7 @@ const App = () => (
               <Route path="admin-approval" element={withSuspense(<ApprovalView type="admin" />)} />
               <Route path="final-approval" element={withSuspense(<ApprovalView type="super-admin" />)} />
               <Route path="accounts-processing" element={withSuspense(<AccountsProcessingView />)} />
+              <Route path="accounts-sap-entry" element={withSuspense(<AccountsSapEntryView />)} />
               <Route path="voucher" element={withSuspense(<PaymentVoucherView />)} />
               <Route path="users" element={withSuspense(<UserManagementView />)} />
               <Route path="settings" element={withSuspense(<SettingsView />)} />

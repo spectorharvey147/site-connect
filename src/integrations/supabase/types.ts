@@ -19,6 +19,7 @@ export type Database = {
           active: boolean
           created_at: string
           allows_all_categories: boolean
+          customer_names: string[]
           expense_categories: string[]
           id: string
           project: string | null
@@ -30,6 +31,7 @@ export type Database = {
           active?: boolean
           created_at?: string
           allows_all_categories?: boolean
+          customer_names?: string[]
           expense_categories?: string[]
           id?: string
           project?: string | null
@@ -41,6 +43,7 @@ export type Database = {
           active?: boolean
           created_at?: string
           allows_all_categories?: boolean
+          customer_names?: string[]
           expense_categories?: string[]
           id?: string
           project?: string | null
@@ -91,6 +94,7 @@ export type Database = {
           claim_id: string
           claim_number: string | null
           created_at: string
+          customer_name: string | null
           drive_file_ids: string[] | null
           final_approval_date: string | null
           final_approval_email: string | null
@@ -105,6 +109,8 @@ export type Database = {
           paid_email: string | null
           payment_note: string | null
           payment_reference: string | null
+          payment_voucher_code: string | null
+          payment_voucher_generated_at: string | null
           rejection_reason: string | null
           site_name: string
           status: string
@@ -124,6 +130,7 @@ export type Database = {
           claim_id: string
           claim_number?: string | null
           created_at?: string
+          customer_name?: string | null
           drive_file_ids?: string[] | null
           final_approval_date?: string | null
           final_approval_email?: string | null
@@ -138,6 +145,8 @@ export type Database = {
           paid_email?: string | null
           payment_note?: string | null
           payment_reference?: string | null
+          payment_voucher_code?: string | null
+          payment_voucher_generated_at?: string | null
           rejection_reason?: string | null
           site_name: string
           status?: string
@@ -157,6 +166,7 @@ export type Database = {
           claim_id?: string
           claim_number?: string | null
           created_at?: string
+          customer_name?: string | null
           drive_file_ids?: string[] | null
           final_approval_date?: string | null
           final_approval_email?: string | null
@@ -171,6 +181,8 @@ export type Database = {
           paid_email?: string | null
           payment_note?: string | null
           payment_reference?: string | null
+          payment_voucher_code?: string | null
+          payment_voucher_generated_at?: string | null
           rejection_reason?: string | null
           site_name?: string
           status?: string
@@ -244,6 +256,7 @@ export type Database = {
           category: string
           claim_id: string
           created_at: string
+          customer_name: string | null
           description: string | null
           expense_date: string | null
           id: string
@@ -256,6 +269,7 @@ export type Database = {
           category: string
           claim_id: string
           created_at?: string
+          customer_name?: string | null
           description?: string | null
           expense_date?: string | null
           id?: string
@@ -268,6 +282,7 @@ export type Database = {
           category?: string
           claim_id?: string
           created_at?: string
+          customer_name?: string | null
           description?: string | null
           expense_date?: string | null
           id?: string
