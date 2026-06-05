@@ -468,21 +468,24 @@ export default function SubmitClaimView() {
                         <span className="text-lg font-bold text-primary">Rs. {subtotal.toFixed(2)}</span>
                       </div>
                       <div className="rounded-md border border-border bg-muted/20 p-3">
-                        <div className="mb-2 flex items-center justify-between gap-2">
-                          <Label className="text-xs">Bill Attachments</Label>
-                          {expense.attachmentIds.length > 0 && <span className="text-xs text-muted-foreground">{expense.attachmentIds.length} saved</span>}
+                        <div className="flex items-center justify-between gap-2">
+                          <div>
+                            <Label className="text-xs">Bill Attachments</Label>
+                            {expense.attachmentIds.length > 0 && <p className="text-xs text-muted-foreground">{expense.attachmentIds.length} saved</p>}
+                          </div>
+                          <FileUpload
+                            ref={(node) => { rowFileUploadRefs.current[expense.id] = node; }}
+                            claimId={`${tempClaimId}/expense-${idx + 1}`}
+                            maxFiles={5}
+                            maxSizeMB={5}
+                            compact
+                          />
                         </div>
                         {expense.attachmentIds.length > 0 && (
-                          <div className="mb-3 rounded-md border border-border bg-background p-2">
+                          <div className="mt-3 rounded-md border border-border bg-background p-2">
                             <AttachmentPreview fileIds={expense.attachmentIds} claimId={editingClaim?.claimId || tempClaimId} compact />
                           </div>
                         )}
-                        <FileUpload
-                          ref={(node) => { rowFileUploadRefs.current[expense.id] = node; }}
-                          claimId={`${tempClaimId}/expense-${idx + 1}`}
-                          maxFiles={5}
-                          maxSizeMB={5}
-                        />
                       </div>
                   </div>
                 </div>
@@ -520,7 +523,7 @@ export default function SubmitClaimView() {
                   <th className="p-2 text-left text-xs font-semibold">Description</th>
                   <th className="p-2 text-right text-xs font-semibold">With Bill (Rs.)</th>
                   <th className="p-2 text-right text-xs font-semibold">Without Bill (Rs.)</th>
-                  <th className="p-2 text-left text-xs font-semibold">Bill Attachments</th>
+                  <th className="p-2 text-center text-xs font-semibold">Bills</th>
                   <th className="p-2 text-right text-xs font-semibold">Total (Rs.)</th>
                   <th className="p-2 text-center text-xs font-semibold"></th>
                 </tr>
@@ -587,20 +590,23 @@ export default function SubmitClaimView() {
                           placeholder="0.00"
                         />
                       </td>
-                      <td className="min-w-[250px] p-2">
-                        <div className="space-y-2">
+                      <td className="w-16 p-2 text-center">
+                        <div className="flex justify-center">
+                          <FileUpload
+                            ref={(node) => { rowFileUploadRefs.current[expense.id] = node; }}
+                            claimId={`${tempClaimId}/expense-${idx + 1}`}
+                            maxFiles={5}
+                            maxSizeMB={5}
+                            compact
+                          />
+                        </div>
+                        <div className="mt-2">
                           {expense.attachmentIds.length > 0 && (
                             <div className="rounded-md border border-border bg-background p-2">
                               <p className="mb-1 text-[11px] font-medium text-muted-foreground">{expense.attachmentIds.length} saved file(s)</p>
                               <AttachmentPreview fileIds={expense.attachmentIds} claimId={editingClaim?.claimId || tempClaimId} compact />
                             </div>
                           )}
-                          <FileUpload
-                            ref={(node) => { rowFileUploadRefs.current[expense.id] = node; }}
-                            claimId={`${tempClaimId}/expense-${idx + 1}`}
-                            maxFiles={5}
-                            maxSizeMB={5}
-                          />
                         </div>
                       </td>
                       <td className="p-2 text-right text-xs font-medium">

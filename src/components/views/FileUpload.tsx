@@ -17,6 +17,7 @@ interface FileUploadProps {
   onFilesUploaded?: (fileIds: string[]) => void;
   maxFiles?: number;
   maxSizeMB?: number;
+  compact?: boolean;
 }
 
 export interface FileUploadHandle {
@@ -33,10 +34,11 @@ interface PendingFile {
 }
 
 const FileUpload = forwardRef<FileUploadHandle, FileUploadProps>(
-  ({ claimId, onFilesUploaded, maxFiles = 10, maxSizeMB = 5 }, ref) => {
+  ({ claimId, onFilesUploaded, maxFiles = 10, maxSizeMB = 5, compact = false }, ref) => {
     const [files, setFiles] = useState<PendingFile[]>([]);
     const [uploading, setUploading] = useState(false);
     const [processing, setProcessing] = useState(false);
+    const [pickerOpen, setPickerOpen] = useState(false);
     const fileInputRef = useRef<HTMLInputElement>(null);
     const cameraInputRef = useRef<HTMLInputElement>(null);
     const maxSizeBytes = maxSizeMB * 1024 * 1024;
@@ -245,14 +247,14 @@ const FileUpload = forwardRef<FileUploadHandle, FileUploadProps>(
       getFileCount: () => files.length,
     }));
 
-    return (
-      <div className="space-y-3">
-        <div className="flex items-center gap-2">
+    const controls = (
+      <>
+        <div className="flex flex-wrap items-center gap-2">
           <Button type="button" variant="outline" size="sm" onClick={() => fileInputRef.current?.click()} disabled={processing || uploading}>
-            <ImagePlus className="h-4 w-4 mr-1" /> Gallery
+            <ImagePlus className="mr-1 h-4 w-4" /> Gallery
           </Button>
           <Button type="button" variant="outline" size="sm" onClick={handleCameraCapture} disabled={processing || uploading}>
-            {processing ? <Loader2 className="h-4 w-4 mr-1 animate-spin" /> : <Camera className="h-4 w-4 mr-1" />}
+            {processing ? <Loader2 className="mr-1 h-4 w-4 animate-spin" /> : <Camera className="mr-1 h-4 w-4" />}
             Camera
           </Button>
           <span className="text-xs text-muted-foreground">PDF, JPEG - Max {maxSizeMB}MB each</span>
@@ -260,43 +262,84 @@ const FileUpload = forwardRef<FileUploadHandle, FileUploadProps>(
 
         <input ref={fileInputRef} type="file" accept={ACCEPTED_EXT} multiple className="hidden" onChange={e => { void handleFiles(e.target.files); e.target.value = ''; }} />
         <input ref={cameraInputRef} type="file" accept="image/jpeg" capture="environment" className="hidden" onChange={e => { void handleFiles(e.target.files); e.target.value = ''; }} />
+      </>
+    );
 
-        {files.length > 0 && (
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-            {files.map((f, idx) => (
-              <div key={idx} className="relative border border-border rounded-lg overflow-hidden bg-muted/30">
-                {f.preview ? (
-                  <img src={f.preview} alt="" className="w-full h-20 object-cover" />
-                ) : (
-                  <div className="w-full h-20 flex items-center justify-center">
-                    <FileText className="h-8 w-8 text-muted-foreground" />
-                  </div>
-                )}
-                <div className="p-1 text-xs truncate text-center">{f.file.name}</div>
-                {f.uploading && (
-                  <div className="absolute inset-0 bg-background/70 flex items-center justify-center">
-                    <Loader2 className="h-5 w-5 animate-spin text-primary" />
-                  </div>
-                )}
-                {f.uploaded && (
-                  <div className="absolute top-1 left-1 rounded-full bg-green-500 px-1 text-[10px] text-white">Done</div>
-                )}
-                {!f.uploading && (
-                  <button type="button" onClick={() => removeFile(idx)} className="absolute top-1 right-1 bg-destructive text-destructive-foreground rounded-full w-5 h-5 flex items-center justify-center">
-                    <X className="h-3 w-3" />
-                  </button>
-                )}
+    const fileGrid = files.length > 0 && (
+      <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+        {files.map((f, idx) => (
+          <div key={idx} className="relative overflow-hidden rounded-lg border border-border bg-muted/30">
+            {f.preview ? (
+              <img src={f.preview} alt="" className="h-20 w-full object-cover" />
+            ) : (
+              <div className="flex h-20 w-full items-center justify-center">
+                <FileText className="h-8 w-8 text-muted-foreground" />
               </div>
-            ))}
+            )}
+            <div className="truncate p-1 text-center text-xs">{f.file.name}</div>
+            {f.uploading && (
+              <div className="absolute inset-0 flex items-center justify-center bg-background/70">
+                <Loader2 className="h-5 w-5 animate-spin text-primary" />
+              </div>
+            )}
+            {f.uploaded && (
+              <div className="absolute left-1 top-1 rounded-full bg-green-500 px-1 text-[10px] text-white">Done</div>
+            )}
+            {!f.uploading && (
+              <button type="button" onClick={() => removeFile(idx)} className="absolute right-1 top-1 flex h-5 w-5 items-center justify-center rounded-full bg-destructive text-destructive-foreground">
+                <X className="h-3 w-3" />
+              </button>
+            )}
           </div>
-        )}
+        ))}
+      </div>
+    );
 
-        {files.length > 0 && !files.every(f => f.uploaded) && (
-          <Button type="button" variant="outline" size="sm" onClick={uploadAll} disabled={uploading || processing}>
-            {uploading ? <Loader2 className="h-4 w-4 mr-1 animate-spin" /> : null}
-            Upload {files.filter(f => !f.uploaded).length} file(s)
+    const uploadButton = files.length > 0 && !files.every(f => f.uploaded) && (
+      <Button type="button" variant="outline" size="sm" onClick={uploadAll} disabled={uploading || processing}>
+        {uploading ? <Loader2 className="mr-1 h-4 w-4 animate-spin" /> : null}
+        Upload {files.filter(f => !f.uploaded).length} file(s)
+      </Button>
+    );
+
+    if (compact) {
+      return (
+        <div className="relative inline-flex">
+          <Button
+            type="button"
+            variant={files.length > 0 ? 'default' : 'outline'}
+            size="icon"
+            className="relative h-10 w-10"
+            onClick={() => setPickerOpen((open) => !open)}
+            aria-label="Add bill attachment"
+            title="Add bill attachment"
+          >
+            {processing || uploading ? <Loader2 className="h-4 w-4 animate-spin" /> : <ImagePlus className="h-4 w-4" />}
+            {files.length > 0 && (
+              <span className="absolute -right-1 -top-1 flex h-5 min-w-5 items-center justify-center rounded-full bg-primary-foreground px-1 text-[10px] font-bold text-primary">
+                {files.length}
+              </span>
+            )}
           </Button>
-        )}
+
+          {pickerOpen && (
+            <div className="absolute right-0 top-12 z-30 w-[min(86vw,380px)] rounded-md border border-border bg-popover p-3 text-popover-foreground shadow-lg">
+              <div className="space-y-3">
+                {controls}
+                {fileGrid}
+                {uploadButton}
+              </div>
+            </div>
+          )}
+        </div>
+      );
+    }
+
+    return (
+      <div className="space-y-3">
+        {controls}
+        {fileGrid}
+        {uploadButton}
       </div>
     );
   }

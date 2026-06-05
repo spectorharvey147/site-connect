@@ -184,14 +184,14 @@ export default function AccountsSapEntryView() {
           </div>
 
           <div className="overflow-x-auto rounded-md border border-border bg-card">
-            <table className="min-w-[1320px] w-full text-sm">
+            <table className="min-w-[1540px] w-full text-sm">
               <thead className="bg-muted/50">
                 <tr>
                   <th className="w-12 p-3 text-center">
                     <Checkbox checked={allSelected} onCheckedChange={(checked) => setSelected(checked ? claims.map((claim) => claim.claimIdInternal) : [])} />
                   </th>
                   <th className="p-3 text-left">Claim ID</th>
-                  <th className="p-3 text-left">Project Code (JC NO)</th>
+                  <th className="p-3 text-left">Project Code</th>
                   <th className="p-3 text-left">Customer Name</th>
                   <th className="p-3 text-left">Employee Name</th>
                   <th className="p-3 text-left">Claim Submitted Date</th>
@@ -201,6 +201,7 @@ export default function AccountsSapEntryView() {
                   <th className="p-3 text-right">DA Amount</th>
                   <th className="p-3 text-right">Travel Amount</th>
                   <th className="p-3 text-right">Grand Total</th>
+                  <th className="p-3 text-left">Remarks</th>
                   <th className="p-3 text-center">Status</th>
                 </tr>
               </thead>
@@ -208,11 +209,11 @@ export default function AccountsSapEntryView() {
                 {loadingClaims ? (
                   Array.from({ length: 4 }).map((_, index) => (
                     <tr key={index} className="border-t border-border">
-                      {Array.from({ length: 13 }).map((__, cell) => <td key={cell} className="p-3"><Skeleton className="h-4 w-full" /></td>)}
+                      {Array.from({ length: 14 }).map((__, cell) => <td key={cell} className="p-3"><Skeleton className="h-4 w-full" /></td>)}
                     </tr>
                   ))
                 ) : claims.length === 0 ? (
-                  <tr><td colSpan={13} className="p-8 text-center text-muted-foreground">No fresh accounts-verified claims pending SAP export</td></tr>
+                  <tr><td colSpan={14} className="p-8 text-center text-muted-foreground">No fresh accounts-verified claims pending SAP export</td></tr>
                 ) : claims.map((claim) => (
                   <tr key={claim.claimIdInternal} className="border-t border-border hover:bg-muted/30">
                     <td className="p-3 text-center"><Checkbox checked={selectedSet.has(claim.claimIdInternal)} onCheckedChange={() => toggleClaim(claim.claimIdInternal)} /></td>
@@ -227,6 +228,7 @@ export default function AccountsSapEntryView() {
                     <td className="p-3 text-right">{formatCurrency(claim.daAmount)}</td>
                     <td className="p-3 text-right">{formatCurrency(claim.travelAmount)}</td>
                     <td className="p-3 text-right font-bold text-primary">{formatCurrency(claim.grandTotal)}</td>
+                    <td className="max-w-[260px] p-3">{claim.remarks || '-'}</td>
                     <td className="p-3 text-center"><Badge className="bg-cyan-100 text-cyan-800 hover:bg-cyan-100">{claim.status}</Badge></td>
                   </tr>
                 ))}
@@ -247,14 +249,14 @@ export default function AccountsSapEntryView() {
           </div>
 
           <div className="overflow-x-auto rounded-md border border-border bg-card">
-            <table className="min-w-[1320px] w-full text-sm">
+            <table className="min-w-[1540px] w-full text-sm">
               <thead className="bg-muted/50">
                 <tr>
                   <th className="w-12 p-3 text-center">
                     <Checkbox checked={allHistoricalSelected} onCheckedChange={(checked) => setSelectedHistorical(checked ? historicalClaims.map((claim) => claim.claimIdInternal) : [])} />
                   </th>
                   <th className="p-3 text-left">Claim ID</th>
-                  <th className="p-3 text-left">Project Code (JC NO)</th>
+                  <th className="p-3 text-left">Project Code</th>
                   <th className="p-3 text-left">Customer Name</th>
                   <th className="p-3 text-left">Employee Name</th>
                   <th className="p-3 text-left">Claim Submitted Date</th>
@@ -264,6 +266,7 @@ export default function AccountsSapEntryView() {
                   <th className="p-3 text-right">DA Amount</th>
                   <th className="p-3 text-right">Travel Amount</th>
                   <th className="p-3 text-right">Grand Total</th>
+                  <th className="p-3 text-left">Remarks</th>
                   <th className="p-3 text-center">Status</th>
                 </tr>
               </thead>
@@ -271,11 +274,11 @@ export default function AccountsSapEntryView() {
                 {loadingHistorical ? (
                   Array.from({ length: 4 }).map((_, index) => (
                     <tr key={index} className="border-t border-border">
-                      {Array.from({ length: 13 }).map((__, cell) => <td key={cell} className="p-3"><Skeleton className="h-4 w-full" /></td>)}
+                      {Array.from({ length: 14 }).map((__, cell) => <td key={cell} className="p-3"><Skeleton className="h-4 w-full" /></td>)}
                     </tr>
                   ))
                 ) : historicalClaims.length === 0 ? (
-                  <tr><td colSpan={13} className="p-8 text-center text-muted-foreground">No previous accounts verified or paid claims found</td></tr>
+                  <tr><td colSpan={14} className="p-8 text-center text-muted-foreground">No previous accounts verified or paid claims found</td></tr>
                 ) : historicalClaims.map((claim) => (
                   <tr key={claim.claimIdInternal} className="border-t border-border hover:bg-muted/30">
                     <td className="p-3 text-center"><Checkbox checked={selectedHistoricalSet.has(claim.claimIdInternal)} onCheckedChange={() => toggleHistoricalClaim(claim.claimIdInternal)} /></td>
@@ -290,6 +293,7 @@ export default function AccountsSapEntryView() {
                     <td className="p-3 text-right">{formatCurrency(claim.daAmount)}</td>
                     <td className="p-3 text-right">{formatCurrency(claim.travelAmount)}</td>
                     <td className="p-3 text-right font-bold text-primary">{formatCurrency(claim.grandTotal)}</td>
+                    <td className="max-w-[260px] p-3">{claim.remarks || '-'}</td>
                     <td className="p-3 text-center"><Badge className="bg-blue-100 text-blue-800 hover:bg-blue-100">{claim.status}</Badge></td>
                   </tr>
                 ))}
