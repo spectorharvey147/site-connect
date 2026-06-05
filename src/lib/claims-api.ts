@@ -1404,6 +1404,34 @@ function amountFromExpense(row: any) {
   return toNumber(row.amount_with_bill) + toNumber(row.amount_without_bill);
 }
 
+function sapDateRange(expenses: any[], fallbackDate?: string | null) {
+  const dates = expenses
+    .map((expense: any) => new Date(expense.expense_date))
+    .filter((date) => !Number.isNaN(date.getTime()))
+    .sort((a, b) => a.getTime() - b.getTime());
+
+  if (dates.length > 0) {
+    return {
+      from: dates[0].toISOString(),
+      to: dates[dates.length - 1].toISOString(),
+    };
+  }
+
+  return {
+    from: fallbackDate || '',
+    to: fallbackDate || '',
+  };
+}
+
+function sapRemarks(expenses: any[], fallbackDate: string | null | undefined, projectSite: string) {
+  const range = sapDateRange(expenses, fallbackDate);
+  const from = formatSapDate(range.from);
+  const to = formatSapDate(range.to);
+  const siteText = String(projectSite || '').trim();
+  const periodText = from && to ? `from the period ${from} to ${to}` : 'for the selected period';
+  return `Claims ${periodText} for the project / site${siteText ? ` ${siteText}` : ''}`;
+}
+
 function summarizeSapClaim(c: any) {
   const expenses = c.expense_items || [];
   const totals = expenses.reduce((acc: { boarding: number; travel: number; da: number; other: number }, expense: any) => {
@@ -1411,13 +1439,14 @@ function summarizeSapClaim(c: any) {
     return acc;
   }, { boarding: 0, travel: 0, da: 0, other: 0 });
   const firstExpense = expenses.find((expense: any) => expense.project_code) || expenses[0] || {};
+  const firstCustomerExpense = expenses.find((expense: any) => String(expense.customer_name || '').trim()) || {};
   const amount = c.verified_amount == null ? getClaimAmount(c) : toNumber(c.verified_amount);
 
   return {
     claimId: c.claim_number || c.claim_id,
     claimIdInternal: c.claim_id,
     projectCode: firstExpense.project_code || '',
-    customerName: c.customer_name || c.site_name || '',
+    customerName: firstCustomerExpense.customer_name || c.customer_name || '',
     employeeName: c.submitted_by || '',
     submittedDate: c.created_at,
     serviceType: c.service_type || 'Site Execution',
@@ -1426,16 +1455,17 @@ function summarizeSapClaim(c: any) {
     daAmount: totals.da,
     travelAmount: totals.travel,
     grandTotal: amount,
+    remarks: sapRemarks(expenses, c.created_at, c.site_name || firstExpense.project_code || ''),
     status: c.status,
     sapStatus: c.sap_exported ? 'Exported' : 'Pending',
   };
 }
 
 function sapExcelRows(claims: any[]) {
-  return claims.map((claim) => {
+  const rows = claims.map((claim) => {
     const summary = summarizeSapClaim(claim);
     return {
-      'JC NO': summary.projectCode,
+      'Project code': summary.projectCode,
       'Service Engineer': summary.employeeName,
       CustName: summary.customerName,
       PostingDate: formatSapDate(summary.submittedDate),
@@ -1447,8 +1477,36 @@ function sapExcelRows(claims: any[]) {
       'PERDIEM (DA)': summary.daAmount,
       'TRAVEL EXPENSE- BUS,TRAIN,BIKE': summary.travelAmount,
       'Grand Total': summary.grandTotal,
+      Remarks: summary.remarks,
     };
   });
+
+  const totals = rows.reduce((acc, row) => {
+    acc.boarding += toNumber(row['BOARDING(ROOM RENT)']);
+    acc.other += toNumber(row['OTHER EXPENSES']);
+    acc.da += toNumber(row['PERDIEM (DA)']);
+    acc.travel += toNumber(row['TRAVEL EXPENSE- BUS,TRAIN,BIKE']);
+    acc.grand += toNumber(row['Grand Total']);
+    return acc;
+  }, { boarding: 0, other: 0, da: 0, travel: 0, grand: 0 });
+
+  rows.push({
+    'Project code': 'Grand Total',
+    'Service Engineer': '',
+    CustName: '',
+    PostingDate: '',
+    'Visit Dt': '',
+    ID: '',
+    'Service Type': '',
+    'BOARDING(ROOM RENT)': totals.boarding,
+    'OTHER EXPENSES': totals.other,
+    'PERDIEM (DA)': totals.da,
+    'TRAVEL EXPENSE- BUS,TRAIN,BIKE': totals.travel,
+    'Grand Total': totals.grand,
+    Remarks: '',
+  });
+
+  return rows;
 }
 
 async function fetchSapClaimsByIds(claimIds: string[]) {
@@ -1511,7 +1569,7 @@ export async function getSapHistoricalClaims() {
     claimId: claim.claimId,
     claimIdInternal: claim.claimIdInternal,
     projectCode: claim.expenses?.[0]?.projectCode || '',
-    customerName: claim.customerName || claim.site,
+    customerName: claim.customerName || '',
     employeeName: claim.submittedBy,
     submittedDate: claim.date,
     serviceType: 'Site Execution',
@@ -1520,6 +1578,11 @@ export async function getSapHistoricalClaims() {
     daAmount: 0,
     travelAmount: 0,
     grandTotal: claim.amount,
+    remarks: sapRemarks(
+      (claim.expenses || []).map((expense: any) => ({ expense_date: expense.claimDate })),
+      claim.date,
+      claim.site || claim.expenses?.[0]?.projectCode || ''
+    ),
     status: claim.status,
     sapStatus: 'Preview',
   }));
@@ -1559,7 +1622,7 @@ export async function downloadSapPreviewExcel(claimIds: string[], generatedBy?: 
       created_at: claim.date,
       submitted_by: claim.submittedBy,
       site_name: claim.site,
-      customer_name: claim.customerName || claim.site,
+      customer_name: claim.customerName || '',
       status: claim.status,
       verified_amount: claim.verifiedAmount ?? claim.amount,
       grand_total: claim.amount,
