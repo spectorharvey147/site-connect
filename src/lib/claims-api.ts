@@ -708,7 +708,7 @@ export async function getCurrentBalance(email: string): Promise<number> {
 export async function submitClaim(claim: {
   site: string;
   customerName?: string;
-  expenses: Array<{ category: string; projectCode: string; claimDate: string; description: string; amountWithBill: number; amountWithoutBill: number; attachmentIds?: string[] }>;
+  expenses: Array<{ category: string; projectCode: string; customerName?: string; claimDate: string; description: string; amountWithBill: number; amountWithoutBill: number; attachmentIds?: string[] }>;
   fileIds?: string[];
 }, userEmail: string, userName: string) {
   if (isDemoEmail(userEmail)) {
@@ -741,7 +741,7 @@ export async function submitClaim(claim: {
       claim_id: claimID,
       category: e.category,
       project_code: e.projectCode || '',
-      customer_name: claim.customerName || null,
+      customer_name: e.customerName || claim.customerName || null,
       expense_date: e.claimDate || null,
       description: e.description,
       amount_with_bill: e.amountWithBill || 0,
@@ -1404,10 +1404,72 @@ function amountFromExpense(row: any) {
   return toNumber(row.amount_with_bill) + toNumber(row.amount_without_bill);
 }
 
+type SapCustomerResolver = (projectCode?: string | null, projectSite?: string | null) => string;
+
+function singleCustomerName(value: unknown) {
+  const names = normalizeCustomerList(value);
+  return names.length === 1 ? names[0] : '';
+}
+
+async function getSapCustomerResolver(): Promise<SapCustomerResolver> {
+  if (isDemoMode()) {
+    const options = demoDropdownOptions();
+    const projectCustomer = new Map(options.projects.map((project: any) => [project.name, singleCustomerName(project.customerNames)]));
+    const projectCodeCustomer = new Map(options.projectCodes.map((code: any) => [`${code.project}|${code.code}`, singleCustomerName(code.customerNames)]));
+
+    return (projectCode?: string | null, projectSite?: string | null) =>
+      projectCodeCustomer.get(`${projectSite || ''}|${projectCode || ''}`)
+      || projectCodeCustomer.get(`|${projectCode || ''}`)
+      || projectCustomer.get(projectSite || '')
+      || '';
+  }
+
+  const { data, error } = await supabase
+    .from('app_lists')
+    .select('type,value,project,project_code,customer_names')
+    .eq('active', true);
+  if (error) {
+    console.warn('Failed to load SAP customer mappings:', error);
+    return () => '';
+  }
+
+  const projectCustomer = new Map<string, string>();
+  const projectCodeCustomer = new Map<string, string>();
+
+  ((data || []) as any[]).forEach((row) => {
+    const type = String(row.type || '').toLowerCase();
+    const customer = singleCustomerName(row.customer_names);
+    if (!customer) return;
+
+    if (type === 'project') {
+      projectCustomer.set(String(row.value || '').trim(), customer);
+    }
+    if (type === 'projectcode') {
+      const project = String(row.project || '').trim();
+      const code = String(row.project_code || '').trim();
+      if (code) projectCodeCustomer.set(`${project}|${code}`, customer);
+      if (code && !projectCodeCustomer.has(`|${code}`)) projectCodeCustomer.set(`|${code}`, customer);
+    }
+  });
+
+  return (projectCode?: string | null, projectSite?: string | null) =>
+    projectCodeCustomer.get(`${String(projectSite || '').trim()}|${String(projectCode || '').trim()}`)
+    || projectCodeCustomer.get(`|${String(projectCode || '').trim()}`)
+    || projectCustomer.get(String(projectSite || '').trim())
+    || '';
+}
+
+function parseSapDateValue(value: unknown) {
+  const raw = String(value ?? '').trim();
+  if (!raw) return null;
+  const date = new Date(raw);
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
 function sapDateRange(expenses: any[], fallbackDate?: string | null) {
   const dates = expenses
-    .map((expense: any) => new Date(expense.expense_date))
-    .filter((date) => !Number.isNaN(date.getTime()))
+    .map((expense: any) => parseSapDateValue(expense.expense_date))
+    .filter((date): date is Date => !!date)
     .sort((a, b) => a.getTime() - b.getTime());
 
   if (dates.length > 0) {
@@ -1432,7 +1494,7 @@ function sapRemarks(expenses: any[], fallbackDate: string | null | undefined, pr
   return `Claims ${periodText} for the project / site${siteText ? ` ${siteText}` : ''}`;
 }
 
-function summarizeSapClaim(c: any) {
+function summarizeSapClaim(c: any, customerResolver?: SapCustomerResolver) {
   const expenses = c.expense_items || [];
   const totals = expenses.reduce((acc: { boarding: number; travel: number; da: number; other: number }, expense: any) => {
     acc[sapBucketForCategory(expense.category)] += amountFromExpense(expense);
@@ -1441,12 +1503,18 @@ function summarizeSapClaim(c: any) {
   const firstExpense = expenses.find((expense: any) => expense.project_code) || expenses[0] || {};
   const firstCustomerExpense = expenses.find((expense: any) => String(expense.customer_name || '').trim()) || {};
   const amount = c.verified_amount == null ? getClaimAmount(c) : toNumber(c.verified_amount);
+  const storedCustomerName = String(firstCustomerExpense.customer_name || c.customer_name || '').trim();
+  const projectSite = String(c.site_name || '').trim();
+  const resolvedCustomerName = customerResolver?.(firstExpense.project_code, projectSite) || '';
+  const customerName = storedCustomerName && storedCustomerName !== projectSite
+    ? storedCustomerName
+    : resolvedCustomerName || storedCustomerName;
 
   return {
     claimId: c.claim_number || c.claim_id,
     claimIdInternal: c.claim_id,
     projectCode: firstExpense.project_code || '',
-    customerName: firstCustomerExpense.customer_name || c.customer_name || '',
+    customerName,
     employeeName: c.submitted_by || '',
     submittedDate: c.created_at,
     serviceType: c.service_type || 'Site Execution',
@@ -1455,18 +1523,18 @@ function summarizeSapClaim(c: any) {
     daAmount: totals.da,
     travelAmount: totals.travel,
     grandTotal: amount,
-    remarks: sapRemarks(expenses, c.created_at, c.site_name || firstExpense.project_code || ''),
+    remarks: sapRemarks(expenses, c.created_at, projectSite || firstExpense.project_code || ''),
     status: c.status,
     sapStatus: c.sap_exported ? 'Exported' : 'Pending',
   };
 }
 
-function sapExcelRows(claims: any[]) {
+function sapExcelRows(claims: any[], customerResolver?: SapCustomerResolver) {
   const rows = claims.map((claim) => {
-    const summary = summarizeSapClaim(claim);
+    const summary = summarizeSapClaim(claim, customerResolver);
     return {
       'Project code': summary.projectCode,
-      'Service Engineer': summary.employeeName,
+      'Employee Name': summary.employeeName,
       CustName: summary.customerName,
       PostingDate: formatSapDate(summary.submittedDate),
       'Visit Dt': formatSapDate(summary.submittedDate),
@@ -1492,7 +1560,7 @@ function sapExcelRows(claims: any[]) {
 
   rows.push({
     'Project code': 'Grand Total',
-    'Service Engineer': '',
+    'Employee Name': '',
     CustName: '',
     PostingDate: '',
     'Visit Dt': '',
@@ -1545,6 +1613,7 @@ async function nextSapBatchId() {
 export async function getSapPendingClaims() {
   if (isDemoMode()) return [];
 
+  const customerResolver = await getSapCustomerResolver();
   const { data, error } = await supabase
     .from('claims')
     .select('*, expense_items(*)')
@@ -1553,7 +1622,7 @@ export async function getSapPendingClaims() {
     .order('created_at', { ascending: false });
   if (error) throw error;
 
-  return ((data || []) as any[]).map(summarizeSapClaim);
+  return ((data || []) as any[]).map((claim) => summarizeSapClaim(claim, customerResolver));
 }
 
 function isSapHistoricalStatus(status?: string | null) {
@@ -1565,27 +1634,31 @@ function isSapHistoricalStatus(status?: string | null) {
 }
 
 export async function getSapHistoricalClaims() {
-  if (isDemoMode()) return demoClaims.map((claim) => ({
-    claimId: claim.claimId,
-    claimIdInternal: claim.claimIdInternal,
-    projectCode: claim.expenses?.[0]?.projectCode || '',
-    customerName: claim.customerName || '',
-    employeeName: claim.submittedBy,
-    submittedDate: claim.date,
-    serviceType: 'Site Execution',
-    boardingAmount: 0,
-    otherAmount: claim.amount,
-    daAmount: 0,
-    travelAmount: 0,
-    grandTotal: claim.amount,
-    remarks: sapRemarks(
-      (claim.expenses || []).map((expense: any) => ({ expense_date: expense.claimDate })),
-      claim.date,
-      claim.site || claim.expenses?.[0]?.projectCode || ''
-    ),
-    status: claim.status,
-    sapStatus: 'Preview',
-  }));
+  const customerResolver = await getSapCustomerResolver();
+  if (isDemoMode()) return demoClaims.map((claim) => {
+    const projectCode = claim.expenses?.[0]?.projectCode || '';
+    return {
+      claimId: claim.claimId,
+      claimIdInternal: claim.claimIdInternal,
+      projectCode,
+      customerName: claim.customerName || customerResolver(projectCode, claim.site) || '',
+      employeeName: claim.submittedBy,
+      submittedDate: claim.date,
+      serviceType: 'Site Execution',
+      boardingAmount: 0,
+      otherAmount: claim.amount,
+      daAmount: 0,
+      travelAmount: 0,
+      grandTotal: claim.amount,
+      remarks: sapRemarks(
+        (claim.expenses || []).map((expense: any) => ({ expense_date: expense.claimDate })),
+        claim.date,
+        claim.site || projectCode || ''
+      ),
+      status: claim.status,
+      sapStatus: 'Preview',
+    };
+  });
 
   const { data, error } = await supabase
     .from('claims')
@@ -1596,7 +1669,7 @@ export async function getSapHistoricalClaims() {
   return ((data || []) as any[])
     .filter((claim) => isSapHistoricalStatus(claim.status) || claim.accounts_verified_email || claim.paid_date)
     .slice(0, 200)
-    .map(summarizeSapClaim);
+    .map((claim) => summarizeSapClaim(claim, customerResolver));
 }
 
 async function fetchSapPreviewClaimsByIds(claimIds: string[]) {
@@ -1640,7 +1713,8 @@ export async function downloadSapPreviewExcel(claimIds: string[], generatedBy?: 
   if (claims.length === 0) throw new Error('Select at least one claim.');
 
   const XLSX = await import('xlsx');
-  const worksheet = XLSX.utils.json_to_sheet(sapExcelRows(claims));
+  const customerResolver = await getSapCustomerResolver();
+  const worksheet = XLSX.utils.json_to_sheet(sapExcelRows(claims, customerResolver));
   const workbook = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(workbook, worksheet, 'SAP Preview');
   const workbookData = XLSX.write(workbook, { bookType: 'xlsx', type: 'array' });
@@ -1689,7 +1763,8 @@ export async function generateSapExcelExport(claimIds: string[], generatedBy: st
   const storagePath = `${generatedAt.getFullYear()}/${String(generatedAt.getMonth() + 1).padStart(2, '0')}/${fileName}`;
 
   const XLSX = await import('xlsx');
-  const worksheet = XLSX.utils.json_to_sheet(sapExcelRows(claims));
+  const customerResolver = await getSapCustomerResolver();
+  const worksheet = XLSX.utils.json_to_sheet(sapExcelRows(claims, customerResolver));
   const workbook = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(workbook, worksheet, 'SAP Export');
   const workbookData = XLSX.write(workbook, { bookType: 'xlsx', type: 'array' });
@@ -1771,7 +1846,8 @@ export async function getSapExportBatchClaims(batchId: string) {
     .select('*, expense_items(*)')
     .in('claim_id', claimIds);
   if (error) throw error;
-  return ((data || []) as any[]).map(summarizeSapClaim);
+  const customerResolver = await getSapCustomerResolver();
+  return ((data || []) as any[]).map((claim) => summarizeSapClaim(claim, customerResolver));
 }
 
 export async function logSapReportDownloaded(batchId: string, downloadedBy: string) {
@@ -1941,7 +2017,7 @@ export async function rejectClaim(claimId: string, reason: string, rejectorEmail
 export async function resubmitRejectedClaim(claimId: string, claim: {
   site: string;
   customerName?: string;
-  expenses: Array<{ category: string; projectCode: string; claimDate: string; description: string; amountWithBill: number; amountWithoutBill: number; attachmentIds?: string[] }>;
+  expenses: Array<{ category: string; projectCode: string; customerName?: string; claimDate: string; description: string; amountWithBill: number; amountWithoutBill: number; attachmentIds?: string[] }>;
   fileIds?: string[];
 }, userEmail: string, userName: string) {
   if (isDemoEmail(userEmail)) {

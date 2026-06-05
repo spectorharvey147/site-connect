@@ -122,10 +122,9 @@ export default function SubmitClaimView() {
 
   const selectedProject = dropdown.projects.find((project: any) => project.name === site);
   const projectCustomers = selectedProject?.customerNames || [];
-  const requiresCustomerSelection = projectCustomers.length > 0;
 
   const getFilteredProjectCodes = (category: string) => {
-    if (!site || !category || (requiresCustomerSelection && !customerName)) return [];
+    if (!site || !category) return [];
 
     const matchingCategory = category.trim().toLowerCase();
     const matchingCustomer = customerName.trim().toLowerCase();
@@ -145,6 +144,16 @@ export default function SubmitClaimView() {
     });
 
     return [...unique.values()];
+  };
+
+  const resolveExpenseCustomerName = (projectCode: string) => {
+    const matchingCode = (dropdown.projectCodes || []).find((code: ProjectCodeOption) =>
+      code.code === projectCode && (!code.project || code.project === site)
+    );
+    if (matchingCode?.customerNames?.length === 1) return matchingCode.customerNames[0];
+    if (customerName.trim()) return customerName.trim();
+    if (projectCustomers.length === 1) return projectCustomers[0];
+    return '';
   };
 
   const addRow = () => {
@@ -209,10 +218,6 @@ export default function SubmitClaimView() {
       toast.error('Please select a project site');
       return;
     }
-    if (requiresCustomerSelection && !customerName) {
-      toast.error('Please select a customer name');
-      return;
-    }
     if (expenses.some((expense) => !expense.category || !expense.projectCode || (expense.amountWithBill === 0 && expense.amountWithoutBill === 0))) {
       toast.error('Every row needs a category, a matching cost code, and an amount');
       return;
@@ -238,6 +243,7 @@ export default function SubmitClaimView() {
         return {
           category: expense.category,
           projectCode: expense.projectCode,
+          customerName: resolveExpenseCustomerName(expense.projectCode),
           claimDate: expense.claimDate,
           description: expense.description,
           amountWithBill: expense.amountWithBill || 0,
@@ -256,7 +262,7 @@ export default function SubmitClaimView() {
 
       const payload = {
         site,
-        customerName,
+        customerName: customerName || expensesWithAttachments.find((expense) => expense.customerName)?.customerName || '',
         expenses: expensesWithAttachments,
         fileIds: allFileIds,
       };
