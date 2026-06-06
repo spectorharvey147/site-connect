@@ -296,7 +296,9 @@ export default function PaymentVoucherView() {
   const openVoucher = async (claimsForVoucher: any[]) => {
     if (claimsForVoucher.length === 0) return;
     let hydratedClaimsForVoucher = claimsForVoucher;
-    const claimsNeedingVoucherCodes = claimsForVoucher.filter((claim) => !claim.paymentVoucherCode && isVoucherCodeEligible(claim));
+    const claimsNeedingVoucherCodes = claimsForVoucher.filter(
+  (claim) => !claim.paymentVoucherCode && claim.claimIdInternal
+);
     if (claimsNeedingVoucherCodes.length > 0) {
       try {
         const generatedEntries = await Promise.all(claimsNeedingVoucherCodes.map(async (claim) => ({
@@ -638,7 +640,9 @@ export default function PaymentVoucherView() {
                     <Checkbox checked={selectedIds.has(claim.claimIdInternal)} onCheckedChange={() => toggleSelect(claim.claimIdInternal)} />
                   </td>
                   <td className="p-3 font-mono text-xs">{claim.claimId}</td>
-                  <td className="p-3 font-mono text-xs">{claim.paymentVoucherCode || (isVoucherCodeEligible(claim) ? 'Pending' : '-')}</td>
+                  <td className="p-3 font-mono text-xs">
+  {claim.paymentVoucherCode || (claim.claimIdInternal ? 'Pending' : '-')}
+</td>
                   <td className="p-3">{formatDate(claim.date)}</td>
                   <td className="p-3">{claim.site}</td>
                   <td className="p-3 text-right">{money(claim.totalWithBill ?? 0)}</td>
