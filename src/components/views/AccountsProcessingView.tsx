@@ -115,6 +115,10 @@ function ClaimDetailsPanel({ claim }: { claim: any }) {
           <p className="mt-1 font-medium">{claim.site}</p>
         </div>
         <div className="rounded-lg border border-border bg-muted/20 p-3">
+          <p className="text-xs text-muted-foreground">Claim Date</p>
+          <p className="mt-1 font-medium">{formatDate(claim.date)}</p>
+        </div>
+        <div className="rounded-lg border border-border bg-muted/20 p-3">
           <p className="text-xs text-muted-foreground">Status</p>
           <div className="mt-2"><StatusBadge status={claim.status || ''} /></div>
         </div>
