@@ -31,6 +31,7 @@ function ClaimExpenseDetails({ claim }: { claim: any }) {
           <div key={i} className="space-y-1 rounded border border-border bg-card p-3 text-sm">
             <div className="flex justify-between gap-4"><span className="text-muted-foreground">Category</span><span className="font-medium text-right">{expense.category}</span></div>
             <div className="flex justify-between gap-4"><span className="text-muted-foreground">Code</span><span className="text-right">{expense.projectCode || '-'}</span></div>
+            <div className="flex justify-between gap-4"><span className="text-muted-foreground">Claim Date</span><span className="text-right">{formatDate(expense.claimDate || claim.date)}</span></div>
             {expense.description && <div className="flex justify-between gap-4"><span className="text-muted-foreground">Description</span><span className="max-w-[60%] break-words text-right">{expense.description}</span></div>}
             {expense.attachmentIds?.length > 0 && (
               <div className="mt-2 border-t border-border pt-2">
@@ -47,12 +48,13 @@ function ClaimExpenseDetails({ claim }: { claim: any }) {
       </div>
 
       <div className="hidden max-w-full overflow-x-auto sm:block">
-        <table className="min-w-[980px] w-full table-fixed border text-sm">
+        <table className="min-w-[1080px] w-full table-fixed border text-sm">
           <thead>
             <tr className="bg-muted">
-              <th className="w-[16%] border p-2 text-left">Category</th>
-              <th className="w-[20%] border p-2 text-left">Code</th>
-              <th className="w-[28%] border p-2 text-left">Description</th>
+              <th className="w-[14%] border p-2 text-left">Category</th>
+              <th className="w-[18%] border p-2 text-left">Code</th>
+              <th className="w-[12%] border p-2 text-left">Claim Date</th>
+              <th className="w-[24%] border p-2 text-left">Description</th>
               <th className="border p-2 text-right">With Bill (Rs.)</th>
               <th className="border p-2 text-right">Without Bill (Rs.)</th>
               <th className="w-[16%] border p-2 text-left">Bills</th>
@@ -64,6 +66,7 @@ function ClaimExpenseDetails({ claim }: { claim: any }) {
               <tr key={i} className="border-t">
                 <td className="break-words border p-2">{expense.category}</td>
                 <td className="break-words border p-2">{expense.projectCode}</td>
+                <td className="border p-2">{formatDate(expense.claimDate || claim.date)}</td>
                 <td className="break-words border p-2">{expense.description}</td>
                 <td className="border p-2 text-right">Rs. {(expense.amountWithBill ?? 0).toFixed(2)}</td>
                 <td className="border p-2 text-right">Rs. {(expense.amountWithoutBill ?? 0).toFixed(2)}</td>
@@ -78,7 +81,7 @@ function ClaimExpenseDetails({ claim }: { claim: any }) {
               </tr>
             ))}
             <tr className="bg-muted/50 font-bold">
-              <td colSpan={3} className="border p-2 text-right">TOTAL</td>
+              <td colSpan={4} className="border p-2 text-right">TOTAL</td>
               <td className="border p-2 text-right">Rs. {(claim.totalWithBill ?? 0).toFixed(2)}</td>
               <td className="border p-2 text-right">Rs. {(claim.totalWithoutBill ?? 0).toFixed(2)}</td>
               <td className="border p-2"></td>
@@ -336,6 +339,10 @@ export default function ApprovalView({ type }: ApprovalViewProps) {
                   <p className="mt-1 font-semibold text-sm">{approveDetails.site}</p>
                 </div>
                 <div>
+                  <p className="text-xs text-muted-foreground">Claim Date</p>
+                  <p className="mt-1 font-semibold text-sm">{formatDate(approveDetails.date)}</p>
+                </div>
+                <div>
                   <p className="text-xs text-muted-foreground">With Bill / Without Bill</p>
                   <p className="mt-1 font-semibold text-sm">Rs. {(approveDetails.totalWithBill ?? 0).toFixed(2)} / Rs. {(approveDetails.totalWithoutBill ?? 0).toFixed(2)}</p>
                 </div>
@@ -439,6 +446,10 @@ export default function ApprovalView({ type }: ApprovalViewProps) {
               <div className="rounded-lg border border-border bg-muted/20 p-3">
                 <p className="text-xs text-muted-foreground">Site</p>
                 <p className="mt-1 font-medium">{viewClaim.site}</p>
+              </div>
+              <div className="rounded-lg border border-border bg-muted/20 p-3">
+                <p className="text-xs text-muted-foreground">Claim Date</p>
+                <p className="mt-1 font-medium">{formatDate(viewClaim.date)}</p>
               </div>
               <div className="rounded-lg border border-border bg-muted/20 p-3">
                 <p className="text-xs text-muted-foreground">With Bill / Without Bill</p>

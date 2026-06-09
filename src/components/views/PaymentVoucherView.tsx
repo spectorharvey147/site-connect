@@ -39,9 +39,22 @@ function formatInputDate(d: string) {
   return date.toISOString().slice(0, 10);
 }
 
+function isVoucherCodeEligible(claim: any) {
+  return Boolean(claim?.claimIdInternal);
+}
+
 function buildVoucherNo(selectedClaims: any[]) {
-  const prefix = `PV-${new Date().toISOString().slice(0, 10).replace(/-/g, '')}`;
-  return `${prefix}-${String(selectedClaims.length).padStart(2, '0')}`;
+  const voucherCodes = [...new Set(selectedClaims.map((claim) => claim.paymentVoucherCode).filter(Boolean))];
+  if (voucherCodes.length > 0) return voucherCodes.join(', ');
+  return selectedClaims.map((claim) => claim.claimId).filter(Boolean).join(', ');
+}
+
+function buildVoucherFileName(selectedClaims: any[]) {
+  if (selectedClaims.length === 1 && selectedClaims[0].paymentVoucherCode) {
+    return selectedClaims[0].paymentVoucherCode;
+  }
+  const date = new Date().toISOString().slice(0, 10).replace(/-/g, '');
+  return `combined-${date}-${selectedClaims.length}`;
 }
 
 type UserDirectoryEntry = {
@@ -346,6 +359,7 @@ export default function PaymentVoucherView() {
     const voucherCodes = [...new Set(hydratedClaimsForVoucher.map((claim) => claim.paymentVoucherCode).filter(Boolean))];
     setVoucher({
       voucherNo: buildVoucherNo(hydratedClaimsForVoucher),
+      fileName: buildVoucherFileName(hydratedClaimsForVoucher),
       voucherCodes,
       date: hydratedClaimsForVoucher.map((claim) => claim.paymentVoucherGeneratedAt || claim.paidDate || claim.date).filter(Boolean).sort().at(-1) || new Date().toISOString(),
       claims: hydratedClaimsForVoucher,
@@ -432,7 +446,7 @@ export default function PaymentVoucherView() {
       const pdf = await buildVoucherPdf();
       if (!pdf) return;
 
-      pdf.save(`voucher-${voucher.voucherNo}.pdf`);
+      pdf.save(`voucher-${voucher.fileName}.pdf`);
       toast.success('Payment voucher PDF downloaded');
     } catch (error) {
       console.error(error);
@@ -540,7 +554,7 @@ export default function PaymentVoucherView() {
       }
 
       const bytes = await mergedPdf.save();
-      downloadBlob(new Blob([bytes], { type: 'application/pdf' }), `voucher-${voucher.voucherNo}-with-attachments.pdf`);
+      downloadBlob(new Blob([bytes], { type: 'application/pdf' }), `voucher-${voucher.fileName}-with-attachments.pdf`);
       toast.success('Combined voucher PDF downloaded');
     } catch (error) {
       console.error(error);
@@ -703,11 +717,8 @@ export default function PaymentVoucherView() {
                 </div>
 
                 <div className="voucher-meta mb-4 grid grid-cols-1 gap-3 text-xs sm:grid-cols-2">
-                  <div><strong>Voucher No:</strong> {voucher.voucherNo}</div>
+                  <div><strong>{voucher.voucherCodes?.length > 1 ? 'Voucher Nos:' : 'Voucher No:'}</strong> {voucher.voucherNo}</div>
                   <div><strong>Generated On:</strong> {formatDateTime(voucher.date)}</div>
-                  {voucher.voucherCodes?.length > 1 && (
-                    <div className="sm:col-span-2"><strong>Voucher Codes:</strong> {voucher.voucherCodes.join(', ')}</div>
-                  )}
                   <div><strong>Paid To:</strong> {voucher.paidTo}</div>
                   <div><strong>Customer:</strong> {[...new Set(voucher.claims.map((claim: any) => claim.customerName).filter(Boolean))].join(', ') || '-'}</div>
                   <div><strong>Claim Count:</strong> {voucher.claims.length}</div>
@@ -776,7 +787,6 @@ export default function PaymentVoucherView() {
                   <thead>
                     <tr className="bg-muted">
                       <th className="p-2 text-left border">Claim ID</th>
-                      <th className="p-2 text-left border">Voucher Code</th>
                       <th className="p-2 text-left border">Customer</th>
                       <th className="p-2 text-left border">Expense Date</th>
                       <th className="p-2 text-left border">Category</th>
@@ -794,7 +804,6 @@ export default function PaymentVoucherView() {
                           {claim.expenses.map((expense: any, index: number) => (
                             <tr key={`${claim.claimIdInternal}-${index}`}>
                               <td className="p-2 border">{claim.claimId}</td>
-                              <td className="p-2 border">{claim.paymentVoucherCode || '-'}</td>
                               <td className="p-2 border">{claim.customerName || expense.customerName || '-'}</td>
                               <td className="p-2 border">{formatDate(expense.claimDate || claim.date)}</td>
                               <td className="p-2 border">{expense.category}</td>
@@ -806,7 +815,7 @@ export default function PaymentVoucherView() {
                             </tr>
                           ))}
                           <tr key={`${claim.claimIdInternal}-subtotal`} className="bg-muted/30 font-semibold">
-                            <td colSpan={7} className="p-2 border text-right">Subtotal - {claim.claimId}</td>
+                            <td colSpan={6} className="p-2 border text-right">Subtotal - {claim.claimId}</td>
                             <td className="p-2 text-right border">{money(claim.totalWithBill ?? 0)}</td>
                             <td className="p-2 text-right border">{money(claim.totalWithoutBill ?? 0)}</td>
                             <td className="p-2 text-right border">{money(claim.amount ?? 0)}</td>
@@ -815,7 +824,6 @@ export default function PaymentVoucherView() {
                       ) : (
                         <tr key={claim.claimIdInternal}>
                           <td className="p-2 border">{claim.claimId}</td>
-                          <td className="p-2 border">{claim.paymentVoucherCode || '-'}</td>
                           <td className="p-2 border">{claim.customerName || '-'}</td>
                           <td className="p-2 border">{formatDate(claim.date)}</td>
                           <td className="p-2 border">-</td>
@@ -828,7 +836,7 @@ export default function PaymentVoucherView() {
                       )
                     ))}
                     <tr className="font-bold bg-muted/50">
-                      <td colSpan={7} className="p-2 border text-right">GRAND TOTAL</td>
+                      <td colSpan={6} className="p-2 border text-right">GRAND TOTAL</td>
                       <td className="p-2 text-right border">{money(voucher.totalWithBill ?? 0)}</td>
                       <td className="p-2 text-right border">{money(voucher.totalWithoutBill ?? 0)}</td>
                       <td className="p-2 text-right border">{money(voucher.amount ?? 0)}</td>
