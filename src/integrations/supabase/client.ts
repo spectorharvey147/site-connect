@@ -9,7 +9,7 @@ let supabase: any;
 
 if (!supabaseUrl || !supabaseKey) {
   // Development-friendly stub: warn and provide no-op client methods so UI can render.
-  // eslint-disable-next-line no-console
+   
   console.warn(
     "Supabase not configured: set VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY to enable backend features. UI will run with a stubbed client."
   );

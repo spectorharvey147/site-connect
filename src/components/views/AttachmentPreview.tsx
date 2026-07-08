@@ -9,6 +9,14 @@ interface AttachmentPreviewProps {
   fileIds: string[];
   claimId: string;
   compact?: boolean;
+  fileMap?: Record<string, { rowName?: string; uploadedBy?: string }>;
+}
+
+interface SupabaseFileMetadata {
+  metadata?: Record<string, string | undefined>;
+  size?: number;
+  updated_at?: string;
+  created_at?: string;
 }
 
 function getPublicUrl(fileId: string) {
@@ -29,10 +37,11 @@ function getFileName(fileId: string) {
   return parts[parts.length - 1] || fileId;
 }
 
-export default function AttachmentPreview({ fileIds, compact = false }: AttachmentPreviewProps) {
+export default function AttachmentPreview({ fileIds, compact = false, fileMap = {} }: AttachmentPreviewProps) {
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [previewFileId, setPreviewFileId] = useState<string | null>(null);
   const [previewType, setPreviewType] = useState<'image' | 'pdf' | 'other'>('other');
+  const [metadataMap, setMetadataMap] = useState<Record<string, SupabaseFileMetadata>>({});
 
   if (!fileIds || fileIds.length === 0) {
     return <p className="text-sm italic text-muted-foreground">No attachments</p>;
@@ -45,15 +54,40 @@ export default function AttachmentPreview({ fileIds, compact = false }: Attachme
     setPreviewUrl(url);
   };
 
+  // Load metadata (size, updated_at, created_at, custom metadata) for display
+  const loadMetadata = async (): Promise<void> => {
+    try {
+      const map: Record<string, SupabaseFileMetadata> = {};
+      await Promise.all(fileIds.map(async (fileId: string) => {
+        try {
+          const { data, error } = await supabase.storage.from('claim-attachments').getMetadata(fileId);
+          if (!error && data) {
+            map[fileId] = data as SupabaseFileMetadata;
+          }
+        } catch (e) {
+          // ignore per-file failures
+        }
+      }));
+      setMetadataMap(map);
+    } catch (e) {
+      // ignore overall failures
+    }
+  };
+
+  // Load metadata on mount or when fileIds change
+  if (fileIds && fileIds.length > 0 && Object.keys(metadataMap).length === 0) {
+    void loadMetadata();
+  }
+
   const closePreview = () => {
     setPreviewUrl(null);
     setPreviewFileId(null);
   };
 
-  const downloadFile = async (fileId: string) => {
+  const downloadFile = async (fileId: string): Promise<void> => {
     try {
       const { data, error } = await supabase.storage.from('claim-attachments').download(fileId);
-      if (error || !data) throw error || new Error('Download failed');
+      if (error || !data) throw new Error(error?.message || 'Download failed');
 
       const objectUrl = URL.createObjectURL(data);
       const link = document.createElement('a');
@@ -95,6 +129,11 @@ export default function AttachmentPreview({ fileIds, compact = false }: Attachme
           const url = getPublicUrl(fileId);
           const name = getFileName(fileId);
           const imageFile = isImage(fileId);
+          const meta = metadataMap[fileId] || null;
+          const sizeLabel = meta && meta.size ? `${Math.round(meta.size / 1024)} KB` : '';
+          const dateLabel = meta && (meta.updated_at || meta.created_at) ? new Date(meta.updated_at || meta.created_at).toLocaleString() : '';
+
+          const rowName = fileMap && fileMap[fileId]?.rowName;
 
           return (
             <div
@@ -113,20 +152,33 @@ export default function AttachmentPreview({ fileIds, compact = false }: Attachme
                   </div>
                 )}
               </div>
-              <div className="absolute bottom-0 left-0 right-0 flex justify-center gap-1 bg-gradient-to-t from-black/70 to-transparent p-1 opacity-0 transition-opacity group-hover:opacity-100">
-                <Button
-                  variant="secondary"
-                  size="icon"
-                  className="h-10 w-10 bg-white/90 hover:bg-white md:h-7 md:w-7"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    void downloadFile(fileId);
-                  }}
-                  title="Download"
-                >
-                  <Download className="h-3.5 w-3.5" />
-                </Button>
+              <div className="p-2 text-xs text-muted-foreground">
+                {rowName && <div className="font-semibold text-[12px] text-muted-foreground">{rowName}</div>}
+                {sizeLabel && <div>{sizeLabel}</div>}
+                {dateLabel && <div>{dateLabel}</div>}
               </div>
+              <div className="absolute bottom-0 left-0 right-0 flex justify-between items-center gap-1 bg-gradient-to-t from-black/70 to-transparent p-1 opacity-0 transition-opacity group-hover:opacity-100">
+                <div className="flex items-center gap-2 text-[11px] text-white/90">
+                  <span className="truncate">{meta?.metadata?.uploaded_by || fileMap[fileId]?.uploadedBy || ''}</span>
+                </div>
+                <div className="flex gap-1">
+                  <Button
+                    variant="secondary"
+                    size="icon"
+                    className="h-10 w-10 bg-white/90 hover:bg-white md:h-7 md:w-7"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      void downloadFile(fileId);
+                    }}
+                    title="Download"
+                  >
+                    <Download className="h-3.5 w-3.5" />
+                  </Button>
+                </div>
+              </div>
+              {/** Row/category tag */}
+              {/** If a fileMap prop is supplied, show row name below the tile */}
+              {/** Note: keep this minimal to avoid layout shifts */}
             </div>
           );
         })}
