@@ -227,7 +227,17 @@ export default function ClaimHistoryView() {
   const [claims, setClaims] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [selectedClaim, setSelectedClaim] = useState<any>(null);
-  const [filters, setFilters] = useState({ userEmail: '', startDate: '', endDate: '' });
+  const [filters, setFilters] = useState({
+    userEmail: '',
+    startDate: '',
+    endDate: '',
+    search: '',
+    status: '',
+    site: '',
+    category: '',
+    minAmount: '',
+    maxAmount: '',
+  });
   const [users, setUsers] = useState<any[]>([]);
   const [companySettings, setCompanySettings] = useState<any>(null);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
@@ -237,11 +247,51 @@ export default function ClaimHistoryView() {
     ? users.filter((u) => u.email === user.email || u.manager_email === user.email)
     : users;
 
+  const statusOptions = Array.from(new Set(claims.map((claim) => String(claim.status || '')).filter(Boolean)));
+  const siteOptions = Array.from(new Set(claims.map((claim) => String(claim.site || '')).filter(Boolean)));
+  const categoryOptions = Array.from(new Set(claims.flatMap((claim) => (claim.expenses || []).map((expense: any) => String(expense.category || ''))).filter(Boolean)));
+
+  const filteredClaims = claims.filter((claim) => {
+    const searchTerm = String(filters.search || '').trim().toLowerCase();
+    if (searchTerm) {
+      const haystack = [claim.claimId, claim.submittedBy, claim.userEmail, claim.site, claim.customerName]
+        .filter(Boolean)
+        .join(' ')
+        .toLowerCase();
+      if (!haystack.includes(searchTerm)) return false;
+    }
+    if (filters.status && String(claim.status || '') !== filters.status) return false;
+    if (filters.site && String(claim.site || '') !== filters.site) return false;
+    if (filters.category) {
+      const categoryMatch = (claim.expenses || []).some(
+        (expense: any) => String(expense.category || '').toLowerCase() === filters.category.toLowerCase()
+      );
+      if (!categoryMatch) return false;
+    }
+    if (filters.minAmount) {
+      const min = Number(filters.minAmount);
+      if (!Number.isNaN(min) && (claim.amount ?? 0) < min) return false;
+    }
+    if (filters.maxAmount) {
+      const max = Number(filters.maxAmount);
+      if (!Number.isNaN(max) && (claim.amount ?? 0) > max) return false;
+    }
+    return true;
+  });
+
+  const displayedClaims = filteredClaims;
+
   const loadHistory = async () => {
     if (!user) return;
     setLoading(true);
     try {
-      const data = await getClaimsHistory(user.email, user.role, filters.userEmail || filters.startDate || filters.endDate ? filters : undefined);
+      const data = await getClaimsHistory(
+        user.email,
+        user.role,
+        filters.userEmail || filters.startDate || filters.endDate
+          ? { userEmail: filters.userEmail, startDate: filters.startDate, endDate: filters.endDate }
+          : undefined
+      );
       setClaims(data);
       setSelectedIds(new Set());
     } catch (e) {
@@ -271,17 +321,17 @@ export default function ClaimHistoryView() {
   };
 
   const toggleSelectAll = () => {
-    if (selectedIds.size === claims.length) {
+    if (selectedIds.size === displayedClaims.length) {
       setSelectedIds(new Set());
     } else {
-      setSelectedIds(new Set(claims.map((claim) => claim.claimId)));
+      setSelectedIds(new Set(displayedClaims.map((claim) => claim.claimId)));
     }
   };
 
   const getSelectedClaims = () => claims.filter((claim) => selectedIds.has(claim.claimId));
 
   const openReportPreview = (claimsForPdf?: any[], title = 'Claims Report') => {
-    const target = claimsForPdf || claims;
+    const target = claimsForPdf || displayedClaims;
     if (target.length === 0) return;
     const html = generateClaimPDFHtml(target, companySettings, users);
     const blob = new Blob([html], { type: 'text/html;charset=utf-8;' });
@@ -326,7 +376,15 @@ export default function ClaimHistoryView() {
     <div className="animate-in fade-in slide-in-from-bottom-4 space-y-4 duration-500">
       <div className="glass-card p-4">
         <h3 className="mb-3 flex items-center gap-2 font-semibold"><Filter className="h-4 w-4" /> Filters</h3>
-        <div className="grid grid-cols-1 gap-3 md:grid-cols-4">
+        <div className="grid grid-cols-1 gap-3 xl:grid-cols-6">
+          <div className="xl:col-span-2">
+            <Label className="text-xs">Search</Label>
+            <Input
+              placeholder="Claim, user, site..."
+              value={filters.search}
+              onChange={(e) => setFilters({ ...filters, search: e.target.value })}
+            />
+          </div>
           {canViewUserColumn && (
             <div>
               <Label className="text-xs">User</Label>
@@ -344,17 +402,77 @@ export default function ClaimHistoryView() {
             </div>
           )}
           <div>
-            <Label className="text-xs">From Date</Label>
-            <Input type="date" value={filters.startDate} onChange={e => setFilters({ ...filters, startDate: e.target.value })} />
+            <Label className="text-xs">Project / Site</Label>
+            <Select value={filters.site} onValueChange={(value) => setFilters({ ...filters, site: value })}>
+              <SelectTrigger><SelectValue placeholder="All sites" /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="">All sites</SelectItem>
+                {siteOptions.map((site) => (
+                  <SelectItem key={site} value={site}>{site}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           </div>
           <div>
-            <Label className="text-xs">To Date</Label>
-            <Input type="date" value={filters.endDate} onChange={e => setFilters({ ...filters, endDate: e.target.value })} />
+            <Label className="text-xs">Status</Label>
+            <Select value={filters.status} onValueChange={(value) => setFilters({ ...filters, status: value })}>
+              <SelectTrigger><SelectValue placeholder="All statuses" /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="">All statuses</SelectItem>
+                {statusOptions.map((status) => (
+                  <SelectItem key={status} value={status}>{status}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           </div>
-          <div className="flex items-end gap-2">
-            <Button size="sm" onClick={loadHistory}><Filter className="mr-1 h-4 w-4" /> Apply</Button>
-            <Button size="sm" variant="outline" onClick={() => { setFilters({ userEmail: '', startDate: '', endDate: '' }); loadHistory(); }}>Reset</Button>
+          <div>
+            <Label className="text-xs">Category</Label>
+            <Select value={filters.category} onValueChange={(value) => setFilters({ ...filters, category: value })}>
+              <SelectTrigger><SelectValue placeholder="All categories" /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="">All categories</SelectItem>
+                {categoryOptions.map((category) => (
+                  <SelectItem key={category} value={category}>{category}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           </div>
+          <div className="grid grid-cols-2 gap-2">
+            <div>
+              <Label className="text-xs">Min Amount</Label>
+              <Input type="number" min="0" value={filters.minAmount} onChange={(e) => setFilters({ ...filters, minAmount: e.target.value })} placeholder="Min" />
+            </div>
+            <div>
+              <Label className="text-xs">Max Amount</Label>
+              <Input type="number" min="0" value={filters.maxAmount} onChange={(e) => setFilters({ ...filters, maxAmount: e.target.value })} placeholder="Max" />
+            </div>
+          </div>
+        </div>
+        <div className="mt-3 text-sm text-muted-foreground">
+          Showing <strong>{displayedClaims.length}</strong> of <strong>{claims.length}</strong> claims
+        </div>
+        <div className="mt-4 flex items-end gap-2">
+          <Button size="sm" onClick={loadHistory}><Filter className="mr-1 h-4 w-4" /> Apply</Button>
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => {
+              setFilters({
+                userEmail: '',
+                startDate: '',
+                endDate: '',
+                search: '',
+                status: '',
+                site: '',
+                category: '',
+                minAmount: '',
+                maxAmount: '',
+              });
+              loadHistory();
+            }}
+          >
+            Reset
+          </Button>
         </div>
       </div>
 
@@ -377,11 +495,11 @@ export default function ClaimHistoryView() {
         <div className="flex flex-col justify-between gap-3 border-b border-border p-3 sm:flex-row sm:items-center sm:p-4">
           <h2 className="flex items-center gap-2 font-bold"><History className="h-5 w-5" /> Claim History</h2>
           <div className="flex flex-wrap gap-2">
-            <Button variant="outline" size="sm" onClick={() => openReportPreview()} disabled={claims.length === 0} className="flex-1 sm:flex-none">
+            <Button variant="outline" size="sm" onClick={() => openReportPreview()} disabled={displayedClaims.length === 0} className="flex-1 sm:flex-none">
               <FileText className="h-4 w-4 sm:mr-1" />
               <span className="hidden sm:inline">PDF Report</span>
             </Button>
-            <Button variant="outline" size="sm" onClick={() => exportClaimsCSV(claims)} disabled={claims.length === 0} className="flex-1 sm:flex-none">
+            <Button variant="outline" size="sm" onClick={() => exportClaimsCSV(displayedClaims)} disabled={displayedClaims.length === 0} className="flex-1 sm:flex-none">
               <Download className="h-4 w-4 sm:mr-1" />
               <span className="hidden sm:inline">Export CSV</span>
             </Button>
@@ -401,9 +519,9 @@ export default function ClaimHistoryView() {
                 <Skeleton className="h-8 w-full" />
               </div>
             ))
-          ) : claims.length === 0 ? (
+          ) : displayedClaims.length === 0 ? (
             <div className="p-8 text-center text-muted-foreground">No claims found</div>
-          ) : claims.map((claim) => (
+          ) : displayedClaims.map((claim) => (
             <div key={claim.claimId} className={`space-y-3 rounded-lg border border-border bg-card p-4 ${selectedIds.has(claim.claimId) ? 'ring-2 ring-primary' : ''}`}>
               <div className="flex items-start justify-between gap-2">
                 <div className="min-w-0 flex-1">
@@ -451,7 +569,7 @@ export default function ClaimHistoryView() {
               <tr className="bg-muted/50">
                 <th className="w-10 p-3">
                   <Checkbox
-                    checked={claims.length > 0 && selectedIds.size === claims.length}
+                    checked={displayedClaims.length > 0 && selectedIds.size === displayedClaims.length}
                     onCheckedChange={toggleSelectAll}
                   />
                 </th>
@@ -475,9 +593,9 @@ export default function ClaimHistoryView() {
                     ))}
                   </tr>
                 ))
-              ) : claims.length === 0 ? (
+              ) : displayedClaims.length === 0 ? (
                 <tr><td colSpan={canViewUserColumn ? 10 : 9} className="p-8 text-center text-muted-foreground">No claims found</td></tr>
-              ) : claims.map((claim) => (
+              ) : displayedClaims.map((claim) => (
                 <tr key={claim.claimId} className={`border-b border-border transition-colors hover:bg-muted/30 ${selectedIds.has(claim.claimId) ? 'bg-primary/5' : ''}`}>
                   <td className="p-3">
                     <Checkbox
