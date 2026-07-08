@@ -10,16 +10,66 @@ import { getClaimApprovalTrail } from '@/lib/claims-api';
 import AttachmentPreview from '@/components/views/AttachmentPreview';
 import { ResponsiveOverlay } from '@/components/ui/responsive-overlay';
 
+interface ExpenseItem {
+  category?: string;
+  projectCode?: string;
+  description?: string;
+  amountWithBill?: number;
+  amountWithoutBill?: number;
+  amount?: number;
+  attachmentIds?: string[];
+}
+
+interface Claim {
+  claimId?: string;
+  claimIdInternal?: string;
+  date?: string;
+  submittedBy?: string;
+  userEmail?: string;
+  site?: string;
+  amount?: number;
+  submittedAmount?: number;
+  verifiedAmount?: number | null;
+  totalWithBill?: number;
+  totalWithoutBill?: number;
+  status?: string;
+  managerEmail?: string;
+  managerApprovalStatus?: string;
+  managerApprovalDate?: string;
+  adminEmail?: string;
+  adminApprovalDate?: string;
+  rejectionReason?: string;
+  paymentVoucherCode?: string;
+  paymentVoucherGeneratedAt?: string;
+  expenses?: ExpenseItem[];
+  fileIds?: string[];
+}
+
+interface ApprovalStamp {
+  name?: string;
+  email?: string;
+  date?: string;
+  signatureUrl?: string;
+}
+
+interface ApprovalTrail {
+  admin?: ApprovalStamp;
+  manager?: ApprovalStamp;
+  final?: ApprovalStamp;
+  accounts?: ApprovalStamp;
+  paid?: ApprovalStamp;
+}
+
 export default function ClaimAction() {
   const [searchParams] = useSearchParams();
-  const [claim, setClaim] = useState<any>(null);
+  const [claim, setClaim] = useState<Claim | null>(null);
   const [loading, setLoading] = useState(true);
   const [processing, setProcessing] = useState(false);
   const [message, setMessage] = useState('');
   const [rejectReason, setRejectReason] = useState('');
   const [verifiedAmount, setVerifiedAmount] = useState('');
   const [autoProcessed, setAutoProcessed] = useState(false);
-  const [approvalTrail, setApprovalTrail] = useState<any>(null);
+  const [approvalTrail, setApprovalTrail] = useState<ApprovalTrail | null>(null);
   const [rowAttachmentsOpen, setRowAttachmentsOpen] = useState(false);
   const [selectedRowFileIds, setSelectedRowFileIds] = useState<string[]>([]);
 
@@ -66,16 +116,19 @@ export default function ClaimAction() {
     void loadTrail();
   }, [claim]);
 
-  const combinedFileIds = claim ? Array.from(new Set([
-    ...(claim.fileIds || []),
-    ...((claim.expenses || []).flatMap((e: any) => e.attachmentIds || [])),
-  ].map((f: any) => String(f || '').trim()).filter(Boolean))) : [];
+  interface ExpenseItem { category?: string; description?: string; attachmentIds?: string[] }
+  interface ClaimRecord { fileIds?: string[]; expenses?: ExpenseItem[] }
+  const typedClaim = claim as unknown as ClaimRecord | undefined;
+  const combinedFileIds = typedClaim ? Array.from(new Set([
+    ...(typedClaim.fileIds || []),
+    ...((typedClaim.expenses || []).flatMap((e: ExpenseItem) => e.attachmentIds || [])),
+  ].map((f: string | unknown) => String(f || '').trim()).filter(Boolean))) : [];
   const fileMap: Record<string, { rowName?: string; uploadedBy?: string }> = {};
-  if (claim) {
+  if (typedClaim) {
     // Mark claim-level files
-    (claim.fileIds || []).forEach((f: string) => { if (f) fileMap[String(f).trim()] = { rowName: 'Claim Attachment' }; });
+    (typedClaim.fileIds || []).forEach((f: string) => { if (f) fileMap[String(f).trim()] = { rowName: 'Claim Attachment' }; });
     // Map expense attachments to their category or description
-    (claim.expenses || []).forEach((e: any) => {
+    (typedClaim.expenses || []).forEach((e: ExpenseItem) => {
       const rowName = e.category || e.description || 'Expense';
       (e.attachmentIds || []).forEach((f: string) => { if (f) fileMap[String(f).trim()] = { rowName }; });
     });
@@ -109,8 +162,9 @@ export default function ClaimAction() {
       } else {
         throw new Error('Invalid approval role');
       }
-    } catch (error: any) {
-      setMessage(error.message || 'Failed to approve claim.');
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      setMessage(message || 'Failed to approve claim.');
     }
     setProcessing(false);
   };
@@ -121,8 +175,9 @@ export default function ClaimAction() {
     try {
       await rejectClaim(claimId, rejectReason.trim(), approverEmail, mode.isManager ? 'Manager' : mode.isSuperAdmin ? 'Super Admin' : 'Admin');
       setMessage('Claim rejected successfully.');
-    } catch (error: any) {
-      setMessage(error.message || 'Failed to reject claim.');
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      setMessage(message || 'Failed to reject claim.');
     }
     setProcessing(false);
   };

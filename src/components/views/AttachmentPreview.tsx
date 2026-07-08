@@ -12,6 +12,13 @@ interface AttachmentPreviewProps {
   fileMap?: Record<string, { rowName?: string; uploadedBy?: string }>;
 }
 
+interface SupabaseFileMetadata {
+  metadata?: Record<string, string | undefined>;
+  size?: number;
+  updated_at?: string;
+  created_at?: string;
+}
+
 function getPublicUrl(fileId: string) {
   const { data } = supabase.storage.from('claim-attachments').getPublicUrl(fileId);
   return data?.publicUrl || '';
@@ -34,7 +41,7 @@ export default function AttachmentPreview({ fileIds, compact = false, fileMap = 
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [previewFileId, setPreviewFileId] = useState<string | null>(null);
   const [previewType, setPreviewType] = useState<'image' | 'pdf' | 'other'>('other');
-  const [metadataMap, setMetadataMap] = useState<Record<string, any>>({});
+  const [metadataMap, setMetadataMap] = useState<Record<string, SupabaseFileMetadata>>({});
 
   if (!fileIds || fileIds.length === 0) {
     return <p className="text-sm italic text-muted-foreground">No attachments</p>;
@@ -48,14 +55,14 @@ export default function AttachmentPreview({ fileIds, compact = false, fileMap = 
   };
 
   // Load metadata (size, updated_at, created_at, custom metadata) for display
-  const loadMetadata = async () => {
+  const loadMetadata = async (): Promise<void> => {
     try {
-      const map: Record<string, any> = {};
-      await Promise.all(fileIds.map(async (fileId) => {
+      const map: Record<string, SupabaseFileMetadata> = {};
+      await Promise.all(fileIds.map(async (fileId: string) => {
         try {
-          const { data, error } = await supabase.storage.from('claim-attachments').getMetadata(fileId as string);
+          const { data, error } = await supabase.storage.from('claim-attachments').getMetadata(fileId);
           if (!error && data) {
-            map[fileId] = data;
+            map[fileId] = data as SupabaseFileMetadata;
           }
         } catch (e) {
           // ignore per-file failures
@@ -77,10 +84,10 @@ export default function AttachmentPreview({ fileIds, compact = false, fileMap = 
     setPreviewFileId(null);
   };
 
-  const downloadFile = async (fileId: string) => {
+  const downloadFile = async (fileId: string): Promise<void> => {
     try {
       const { data, error } = await supabase.storage.from('claim-attachments').download(fileId);
-      if (error || !data) throw error || new Error('Download failed');
+      if (error || !data) throw new Error(error?.message || 'Download failed');
 
       const objectUrl = URL.createObjectURL(data);
       const link = document.createElement('a');

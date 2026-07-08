@@ -2343,7 +2343,7 @@ export async function getTransactions(userEmail: string, userRole: string, filte
   const rows = result.data || [];
   // Resolve user names for display
   const emails = [...new Set((rows as any[]).map(r => String(r.user_email || '').toLowerCase()).filter(Boolean))];
-  let usersMap: Record<string, string> = {};
+  const usersMap: Record<string, string> = {};
   if (emails.length > 0) {
     const { data: users } = await supabase.from('users').select('email, name').in('email', emails);
     (users || []).forEach((u: any) => { usersMap[String(u.email || '').toLowerCase()] = u.name || u.email; });
@@ -2351,7 +2351,7 @@ export async function getTransactions(userEmail: string, userRole: string, filte
 
   // Resolve claim_number for reference ids so ledger shows CLM-0001 style
   const refs = [...new Set((rows as any[]).map(r => String(r.reference_id || '').trim()).filter(Boolean))];
-  let claimMap: Record<string, string> = {};
+  const claimMap: Record<string, string> = {};
   if (refs.length > 0) {
     const { data: claims } = await supabase.from('claims').select('claim_id, claim_number').in('claim_id', refs);
     (claims || []).forEach((c: any) => { claimMap[String(c.claim_id || '')] = String(c.claim_number || c.claim_id || ''); });
@@ -2806,14 +2806,14 @@ export async function getAuditLogs() {
 
   // Resolve performer names (performed_by stored as email) and claim numbers for claim targets
   const performerEmails = [...new Set(rows.map(r => String(r.performed_by || '').toLowerCase()).filter(Boolean))];
-  let usersMap: Record<string, string> = {};
+  const usersMap: Record<string, string> = {};
   if (performerEmails.length > 0) {
     const { data: users } = await supabase.from('users').select('email, name').in('email', performerEmails);
     (users || []).forEach((u: any) => { usersMap[String(u.email || '').toLowerCase()] = u.name || u.email; });
   }
 
   const claimIds = [...new Set(rows.filter(r => String(r.target_type || '').toLowerCase() === 'claim').map(r => String(r.target_id || '').trim()).filter(Boolean))];
-  let claimMap: Record<string, string> = {};
+  const claimMap: Record<string, string> = {};
   if (claimIds.length > 0) {
     const { data: claims } = await supabase.from('claims').select('claim_id, claim_number').in('claim_id', claimIds);
     (claims || []).forEach((c: any) => { claimMap[String(c.claim_id || '')] = String(c.claim_number || c.claim_id || ''); });
