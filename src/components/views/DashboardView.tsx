@@ -324,6 +324,32 @@ export default function DashboardView() {
   const isUserRole = data?.role === 'User';
   const isAccountsRole = user?.role === 'Accounts';
 
+  function QueuesSection({ data }: { data: DashboardSummary | null }) {
+    return (
+      <div className="glass-card p-4 mb-4">
+        <h3 className="text-lg font-bold mb-3">Claims Queues</h3>
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+          <a href="/admin-approval" className="queue-card p-3 rounded border border-border bg-card hover:shadow">
+            <div className="text-sm text-muted-foreground">Admin Verification</div>
+            <div className="text-xl font-bold text-warning">{data?.pendingAdminClaims ?? 0}</div>
+          </a>
+          <a href="/manager-approval" className="queue-card p-3 rounded border border-border bg-card hover:shadow">
+            <div className="text-sm text-muted-foreground">Manager Approval</div>
+            <div className="text-xl font-bold text-warning">{data?.pendingManagerClaims ?? 0}</div>
+          </a>
+          <a href="/final-approval" className="queue-card p-3 rounded border border-border bg-card hover:shadow">
+            <div className="text-sm text-muted-foreground">Super Admin</div>
+            <div className="text-xl font-bold text-warning">{data?.pendingFinalClaims ?? 0}</div>
+          </a>
+          <a href="/accounts-processing" className="queue-card p-3 rounded border border-border bg-card hover:shadow">
+            <div className="text-sm text-muted-foreground">Accounts</div>
+            <div className="text-xl font-bold text-warning">{data?.pendingAccountsClaims ?? 0}</div>
+          </a>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="animate-in fade-in slide-in-from-bottom-4 duration-500">
       <DashboardHeader onRefresh={() => void loadDashboard()} />
@@ -333,7 +359,10 @@ export default function DashboardView() {
       ) : isAccountsRole ? (
         <AccountsDashboard data={data} />
       ) : (
-        <AdminDashboard data={data} isManager={user?.role === 'Manager'} managerUsers={managerUsers} />
+        <>
+          <QueuesSection data={data} />
+          <AdminDashboard data={data} isManager={user?.role === 'Manager'} managerUsers={managerUsers} />
+        </>
       )}
 
       {chartData ? <ChartsSection chartData={chartData} /> : null}
