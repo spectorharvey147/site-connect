@@ -5,6 +5,7 @@ import { getDashboardChartData, getDashboardSummary, getManagerAssignedUsersWith
 import { CheckCircle2, CreditCard, FileText, Users, Clock, UserCheck, ShieldCheck, RefreshCw } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import StatusBadge from '@/components/ui/status-badge';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, Legend } from 'recharts';
 import RupeeIcon from '@/components/icons/RupeeIcon';
 
@@ -59,17 +60,21 @@ interface StatCardProps {
   value: string | number;
   subtitle: string;
   color?: string;
+  badge?: string | null;
 }
 
 function formatCurrency(num: number) {
   return `Rs. ${num.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 }
 
-function StatCard({ icon: Icon, label, value, subtitle, color = 'text-primary' }: StatCardProps) {
+function StatCard({ icon: Icon, label, value, subtitle, color = 'text-primary', badge }: StatCardProps) {
   return (
     <div className="stat-card">
       <div className="text-muted-foreground mb-3"><Icon className={`h-8 w-8 mx-auto ${color}`} /></div>
-      <div className="text-sm text-muted-foreground mb-2">{label}</div>
+      <div className="flex items-center justify-center gap-2">
+        <div className="text-sm text-muted-foreground mb-2">{label}</div>
+        {badge ? <div className="mb-2"><StatusBadge status={badge} /></div> : null}
+      </div>
       <div className={`text-3xl font-bold ${color}`}>{value}</div>
       <div className="text-xs text-muted-foreground mt-2">{subtitle}</div>
     </div>

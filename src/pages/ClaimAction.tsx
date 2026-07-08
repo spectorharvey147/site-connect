@@ -5,8 +5,10 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Loader2, Paperclip } from 'lucide-react';
+import { Loader2, Paperclip, Clock, Shield, UserCheck, Badge, Wallet, CheckCircle, X } from 'lucide-react';
+import { getClaimApprovalTrail } from '@/lib/claims-api';
 import AttachmentPreview from '@/components/views/AttachmentPreview';
+import { ResponsiveOverlay } from '@/components/ui/responsive-overlay';
 
 export default function ClaimAction() {
   const [searchParams] = useSearchParams();
@@ -17,6 +19,9 @@ export default function ClaimAction() {
   const [rejectReason, setRejectReason] = useState('');
   const [verifiedAmount, setVerifiedAmount] = useState('');
   const [autoProcessed, setAutoProcessed] = useState(false);
+  const [approvalTrail, setApprovalTrail] = useState<any>(null);
+  const [rowAttachmentsOpen, setRowAttachmentsOpen] = useState(false);
+  const [selectedRowFileIds, setSelectedRowFileIds] = useState<string[]>([]);
 
   const claimId = searchParams.get('claimId') || '';
   const role = (searchParams.get('role') || '').toLowerCase();
@@ -46,6 +51,35 @@ export default function ClaimAction() {
 
     void loadClaim();
   }, [claimId]);
+
+  useEffect(() => {
+    async function loadTrail() {
+      if (!claim) return;
+      try {
+        const ids = [claim.claimIdInternal || claim.claimId].filter(Boolean) as string[];
+        const trails = await getClaimApprovalTrail(ids);
+        setApprovalTrail(trails[ids[0]] || null);
+      } catch (e) {
+        // ignore
+      }
+    }
+    void loadTrail();
+  }, [claim]);
+
+  const combinedFileIds = claim ? Array.from(new Set([
+    ...(claim.fileIds || []),
+    ...((claim.expenses || []).flatMap((e: any) => e.attachmentIds || [])),
+  ].map((f: any) => String(f || '').trim()).filter(Boolean))) : [];
+  const fileMap: Record<string, { rowName?: string; uploadedBy?: string }> = {};
+  if (claim) {
+    // Mark claim-level files
+    (claim.fileIds || []).forEach((f: string) => { if (f) fileMap[String(f).trim()] = { rowName: 'Claim Attachment' }; });
+    // Map expense attachments to their category or description
+    (claim.expenses || []).forEach((e: any) => {
+      const rowName = e.category || e.description || 'Expense';
+      (e.attachmentIds || []).forEach((f: string) => { if (f) fileMap[String(f).trim()] = { rowName }; });
+    });
+  }
 
   useEffect(() => {
     if (loading || autoProcessed || message || !mode.isApprove || mode.isAdmin || !claimId || !approverEmail) return;
@@ -175,7 +209,22 @@ export default function ClaimAction() {
                           <tr key={i} className="border-t">
                             <td className="py-2 px-3 break-words">{expense.category}</td>
                             <td className="py-2 px-3 break-words">{expense.projectCode}</td>
-                            <td className="py-2 px-3 break-words">{expense.description}</td>
+                            <td className="py-2 px-3 break-words">
+                              <div>{expense.description}</div>
+                              {expense.attachmentIds && expense.attachmentIds.length > 0 && (
+                                <div className="mt-1">
+                                  <button
+                                    className="text-sm text-primary hover:underline"
+                                    onClick={() => {
+                                      setSelectedRowFileIds((expense.attachmentIds || []).map((f: any) => String(f || '').trim()).filter(Boolean));
+                                      setRowAttachmentsOpen(true);
+                                    }}
+                                  >
+                                    View {expense.attachmentIds.length} attachment{expense.attachmentIds.length > 1 ? 's' : ''}
+                                  </button>
+                                </div>
+                              )}
+                            </td>
                             <td className="py-2 px-3 text-right">Rs. {(expense.amountWithBill ?? 0).toFixed(2)}</td>
                             <td className="py-2 px-3 text-right">Rs. {(expense.amountWithoutBill ?? 0).toFixed(2)}</td>
                             <td className="py-2 px-3 text-right font-medium">Rs. {(expense.amount ?? 0).toFixed(2)}</td>
@@ -184,12 +233,77 @@ export default function ClaimAction() {
                       </tbody>
                     </table>
                   </div>
-                  {claim.fileIds && claim.fileIds.length > 0 && (
+                  {combinedFileIds && combinedFileIds.length > 0 && (
                     <div className="mt-2">
-                      <h4 className="mb-2 flex items-center gap-2 text-sm font-semibold"><Paperclip className="h-4 w-4" /> Attachments ({claim.fileIds.length})</h4>
-                      <AttachmentPreview fileIds={claim.fileIds} claimId={claim.claimId} />
+                      <h4 className="mb-2 flex items-center gap-2 text-sm font-semibold"><Paperclip className="h-4 w-4" /> Attachments ({combinedFileIds.length})</h4>
+                      <AttachmentPreview fileIds={combinedFileIds} claimId={claim.claimId} fileMap={fileMap} />
                     </div>
                   )}
+
+                  <ResponsiveOverlay open={rowAttachmentsOpen} onOpenChange={(open) => setRowAttachmentsOpen(open)} title="Expense Attachments" desktopClassName="max-w-2xl" bodyClassName="p-4">
+                    <AttachmentPreview fileIds={selectedRowFileIds} claimId={claim.claimId} fileMap={fileMap} compact />
+                  </ResponsiveOverlay>
+
+                  {/* Approval Timeline */}
+                  <div className="mt-4">
+                    <h4 className="mb-2 text-sm font-semibold">Approval Timeline</h4>
+                    <div className="timeline">
+                      <div>
+                        <strong>Claim Submitted</strong>
+                        <span className="text-xs">{claim?.date ? new Date(claim.date).toLocaleString() : ''} • {claim?.submittedBy}</span>
+                      </div>
+
+                      <div>
+                        <div className="flex items-center gap-2">
+                          <span className="inline-flex items-center justify-center rounded-full bg-orange-400 p-1 text-white"><Clock className="h-4 w-4" /></span>
+                          <div>
+                            <strong>Admin Verification</strong>
+                            <div className="text-xs text-muted-foreground">{approvalTrail?.admin ? `${approvalTrail.admin.name} • ${new Date(approvalTrail.admin.date).toLocaleString()}` : 'Pending'}</div>
+                          </div>
+                        </div>
+                      </div>
+
+                      <div>
+                        <div className="flex items-center gap-2">
+                          <span className="inline-flex items-center justify-center rounded-full bg-blue-500 p-1 text-white"><Shield className="h-4 w-4" /></span>
+                          <div>
+                            <strong>Manager Approval</strong>
+                            <div className="text-xs text-muted-foreground">{approvalTrail?.manager ? `${approvalTrail.manager.name} • ${new Date(approvalTrail.manager.date).toLocaleString()}` : 'Pending'}</div>
+                          </div>
+                        </div>
+                      </div>
+
+                      <div>
+                        <div className="flex items-center gap-2">
+                          <span className="inline-flex items-center justify-center rounded-full bg-indigo-600 p-1 text-white"><UserCheck className="h-4 w-4" /></span>
+                          <div>
+                            <strong>Super Admin Approval</strong>
+                            <div className="text-xs text-muted-foreground">{approvalTrail?.final ? `${approvalTrail.final.name} • ${new Date(approvalTrail.final.date).toLocaleString()}` : 'Pending'}</div>
+                          </div>
+                        </div>
+                      </div>
+
+                      <div>
+                        <div className="flex items-center gap-2">
+                          <span className="inline-flex items-center justify-center rounded-full bg-purple-600 p-1 text-white"><Badge className="h-4 w-4" /></span>
+                          <div>
+                            <strong>Accounts Verification</strong>
+                            <div className="text-xs text-muted-foreground">{approvalTrail?.accounts ? `${approvalTrail.accounts.name} • ${new Date(approvalTrail.accounts.date).toLocaleString()}` : 'Pending'}</div>
+                          </div>
+                        </div>
+                      </div>
+
+                      <div>
+                        <div className="flex items-center gap-2">
+                          <span className="inline-flex items-center justify-center rounded-full bg-green-600 p-1 text-white"><Wallet className="h-4 w-4" /></span>
+                          <div>
+                            <strong>Payment Completed</strong>
+                            <div className="text-xs text-muted-foreground">{approvalTrail?.paid ? `${approvalTrail.paid.name} • ${new Date(approvalTrail.paid.date).toLocaleString()}` : 'Pending'}</div>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
                 </div>
               )}
 
