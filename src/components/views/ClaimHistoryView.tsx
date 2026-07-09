@@ -67,6 +67,11 @@ function renderAttachmentLinks(fileIds?: string[]) {
   }).join('<br>');
 }
 
+function collectAllAttachmentIdsForClaim(claim: any) {
+  const top = Array.isArray(claim?.fileIds) ? claim.fileIds : [];
+  const rows = Array.isArray(claim?.expenses) ? claim.expenses.flatMap((e: any) => Array.isArray(e?.attachmentIds) ? e.attachmentIds : []) : [];
+  return [...new Set([...top, ...rows].map((id) => String(id || '').trim()).filter(Boolean))];
+}
 function generateClaimPDFHtml(claims: any[], companySettings: any, users: any[] = []) {
   const logoUrl = resolveReportAssetUrl(companySettings?.logo_url);
   const logo = `<div class="logo-frame"><img src="${escapeHtml(logoUrl)}" class="logo" onerror="this.style.display='none';this.parentElement.classList.add('logo-placeholder');this.parentElement.textContent='Logo';" /></div>`;
@@ -435,9 +440,9 @@ export default function ClaimHistoryView() {
                 <Button variant="outline" size="sm" className="flex-1" onClick={() => viewClaim(claim.claimIdInternal)}>
                   <Eye className="mr-1 h-4 w-4" /> Details
                 </Button>
-                {claim.fileIds && claim.fileIds.length > 0 && (
+                {collectAllAttachmentIdsForClaim(claim).length > 0 && (
                   <Button variant="outline" size="sm" className="flex-1" onClick={() => viewClaim(claim.claimIdInternal)}>
-                    <Paperclip className="mr-1 h-4 w-4 text-primary" /> Attachments ({claim.fileIds.length})
+                    <Paperclip className="mr-1 h-4 w-4 text-primary" /> Attachments ({collectAllAttachmentIdsForClaim(claim).length})
                   </Button>
                 )}
               </div>
@@ -552,11 +557,14 @@ export default function ClaimHistoryView() {
 
             <div className="rounded-lg border border-border bg-muted/20 p-3">
               <h4 className="mb-3 flex items-center gap-2 text-sm font-semibold">
-                <Paperclip className="h-4 w-4" /> Attachments ({selectedClaim.fileIds?.length || 0})
+                <Paperclip className="h-4 w-4" /> Attachments ({collectAllAttachmentIdsForClaim(selectedClaim).length})
               </h4>
+              {/* Show top-level attachments (final) if present */}
               {selectedClaim.fileIds && selectedClaim.fileIds.length > 0 ? (
                 <AttachmentPreview fileIds={selectedClaim.fileIds} claimId={selectedClaim.claimId} />
-              ) : (
+              ) : null}
+              {/* Expense-row attachments are shown grouped below in the Expenses section */}
+              {(!selectedClaim.fileIds || selectedClaim.fileIds.length === 0) && collectAllAttachmentIdsForClaim(selectedClaim).length === 0 && (
                 <p className="text-sm italic text-muted-foreground">No attachments for this claim</p>
               )}
             </div>
