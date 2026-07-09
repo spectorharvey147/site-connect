@@ -184,6 +184,15 @@ export default function ClaimAction() {
                       </tbody>
                     </table>
                   </div>
+                      {/* Show attachments grouped by expense row */}
+                      {claim.expenses?.map((expense: any, idx: number) => (
+                        expense.attachmentIds && expense.attachmentIds.length > 0 ? (
+                          <div key={`expense-attachments-${idx}`} className="mt-3">
+                            <h5 className="mb-2 text-sm font-semibold">{expense.category}</h5>
+                            <AttachmentPreview fileIds={Array.from(new Set(expense.attachmentIds))} claimId={claim.claimId} compact />
+                          </div>
+                        ) : null
+                      ))}
                   {claim.fileIds && claim.fileIds.length > 0 && (
                     <div className="mt-2">
                       <h4 className="mb-2 flex items-center gap-2 text-sm font-semibold"><Paperclip className="h-4 w-4" /> Attachments ({claim.fileIds.length})</h4>
