@@ -43,13 +43,41 @@ function parseAmountInput(value: string) {
 }
 
 export default function SubmitClaimView() {
+  interface RowUploadHandles {
+    mobile?: FileUploadHandle | null;
+    desktop?: FileUploadHandle | null;
+  }
+
   const { user } = useAuth();
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
   const fileUploadRef = useRef<FileUploadHandle>(null);
-  const rowFileUploadRefs = useRef<Record<string, FileUploadHandle | null>>({});
+  const rowFileUploadRefs = useRef<Record<string, RowUploadHandles>>({});
   const expenseCardRefs = useRef<Record<string, HTMLDivElement | null>>({});
   const pendingExpenseFocusRef = useRef<string | null>(null);
+
+  const attachRowFileUploadRef = (expenseId: string, mode: 'mobile' | 'desktop') => (node: FileUploadHandle | null) => {
+    rowFileUploadRefs.current[expenseId] = {
+      ...(rowFileUploadRefs.current[expenseId] || {}),
+      [mode]: node,
+    };
+  };
+
+  const getRowUploadHandles = (expenseId: string) => rowFileUploadRefs.current[expenseId] || {};
+
+  const getRowFileCount = (expenseId: string) => {
+    const handles = getRowUploadHandles(expenseId);
+    return (handles.mobile?.getFileCount() || 0) + (handles.desktop?.getFileCount() || 0);
+  };
+
+  const uploadRowFiles = async (expenseId: string) => {
+    const handles = getRowUploadHandles(expenseId);
+    const results = await Promise.all([
+      handles.mobile?.uploadAll() ?? Promise.resolve([]),
+      handles.desktop?.uploadAll() ?? Promise.resolve([]),
+    ]);
+    return uniqueFileIds(results.flat());
+  };
   const [site, setSite] = useState('');
   const [customerName, setCustomerName] = useState('');
   const [expenses, setExpenses] = useState<ExpenseRow[]>([emptyExpenseRow()]);
@@ -224,7 +252,7 @@ export default function SubmitClaimView() {
     }
     const hasClaimLevelAttachments = ((fileUploadRef.current?.getFileCount() || 0) + existingFileIds.length) > 0;
     const firstMissingBillRow = expenses.findIndex((expense) => {
-      const rowCount = (expense.attachmentIds?.length || 0) + (rowFileUploadRefs.current[expense.id]?.getFileCount() || 0);
+      const rowCount = (expense.attachmentIds?.length || 0) + getRowFileCount(expense.id);
       return expense.amountWithBill > 0 && rowCount === 0 && !hasClaimLevelAttachments;
     });
     if (firstMissingBillRow >= 0) {
@@ -239,7 +267,7 @@ export default function SubmitClaimView() {
         uploadedPaths = await fileUploadRef.current.uploadAll();
       }
       const expensesWithAttachments = await Promise.all(expenses.map(async (expense) => {
-        const uploadedRowPaths = await (rowFileUploadRefs.current[expense.id]?.uploadAll() || Promise.resolve([]));
+        const uploadedRowPaths = await uploadRowFiles(expense.id);
         return {
           category: expense.category,
           projectCode: expense.projectCode,
@@ -480,7 +508,7 @@ export default function SubmitClaimView() {
                             {expense.attachmentIds.length > 0 && <p className="text-xs text-muted-foreground">{expense.attachmentIds.length} saved</p>}
                           </div>
                           <FileUpload
-                            ref={(node) => { rowFileUploadRefs.current[expense.id] = node; }}
+                            ref={attachRowFileUploadRef(expense.id, 'mobile')}
                             claimId={`${tempClaimId}/expense-${idx + 1}`}
                             maxFiles={5}
                             maxSizeMB={5}
@@ -599,7 +627,7 @@ export default function SubmitClaimView() {
                       <td className="w-16 p-2 text-center">
                         <div className="flex justify-center">
                           <FileUpload
-                            ref={(node) => { rowFileUploadRefs.current[expense.id] = node; }}
+                            ref={attachRowFileUploadRef(expense.id, 'desktop')}
                             claimId={`${tempClaimId}/expense-${idx + 1}`}
                             maxFiles={5}
                             maxSizeMB={5}
