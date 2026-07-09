@@ -20,6 +20,13 @@ function formatDate(date?: string) {
   return date ? new Date(date).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) : '-';
 }
 
+function collectAllAttachmentIdsForClaim(claim: any) {
+  const top = Array.isArray(claim?.fileIds) ? claim.fileIds : [];
+  const rows = Array.isArray(claim?.expenses) ? claim.expenses.flatMap((expense: any) => Array.isArray(expense?.attachmentIds) ? expense.attachmentIds : []) : [];
+  const storage = Array.isArray(claim?.storageFileIds) ? claim.storageFileIds : [];
+  return Array.from(new Set([...top, ...rows, ...storage].map((id) => String(id || '').trim()).filter(Boolean)));
+}
+
 function StatusBadge({ status }: { status: string }) {
   const normalized = status.toLowerCase();
   if (normalized === 'accounts verified') return <Badge className="bg-cyan-100 text-cyan-800 hover:bg-cyan-100">Accounts Verified</Badge>;
@@ -139,12 +146,12 @@ function ClaimDetailsPanel({ claim }: { claim: any }) {
         </div>
       </div>
 
-      {claim.fileIds?.length > 0 && (
+      {collectAllAttachmentIdsForClaim(claim).length > 0 && (
         <div className="rounded-lg border border-border bg-muted/20 p-3">
           <h4 className="mb-3 flex items-center gap-2 text-sm font-semibold">
-            <Paperclip className="h-4 w-4" /> Attachments ({claim.fileIds.length})
+            <Paperclip className="h-4 w-4" /> Attachments ({collectAllAttachmentIdsForClaim(claim).length})
           </h4>
-          <AttachmentPreview fileIds={claim.fileIds} claimId={claim.claimId} />
+          <AttachmentPreview fileIds={collectAllAttachmentIdsForClaim(claim)} claimId={claim.claimId} />
         </div>
       )}
 

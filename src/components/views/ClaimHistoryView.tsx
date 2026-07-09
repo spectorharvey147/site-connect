@@ -70,7 +70,8 @@ function renderAttachmentLinks(fileIds?: string[]) {
 function collectAllAttachmentIdsForClaim(claim: any) {
   const top = Array.isArray(claim?.fileIds) ? claim.fileIds : [];
   const rows = Array.isArray(claim?.expenses) ? claim.expenses.flatMap((e: any) => Array.isArray(e?.attachmentIds) ? e.attachmentIds : []) : [];
-  return [...new Set([...top, ...rows].map((id) => String(id || '').trim()).filter(Boolean))];
+    const storage = Array.isArray(claim?.storageFileIds) ? claim.storageFileIds : [];
+    return Array.from(new Set([...top, ...rows, ...storage].map((id) => String(id || '').trim()).filter(Boolean)));
 }
 function generateClaimPDFHtml(claims: any[], companySettings: any, users: any[] = []) {
   const logoUrl = resolveReportAssetUrl(companySettings?.logo_url);
@@ -559,12 +560,9 @@ export default function ClaimHistoryView() {
               <h4 className="mb-3 flex items-center gap-2 text-sm font-semibold">
                 <Paperclip className="h-4 w-4" /> Attachments ({collectAllAttachmentIdsForClaim(selectedClaim).length})
               </h4>
-              {/* Show top-level attachments (final) if present */}
-              {selectedClaim.fileIds && selectedClaim.fileIds.length > 0 ? (
-                <AttachmentPreview fileIds={selectedClaim.fileIds} claimId={selectedClaim.claimId} />
-              ) : null}
-              {/* Expense-row attachments are shown grouped below in the Expenses section */}
-              {(!selectedClaim.fileIds || selectedClaim.fileIds.length === 0) && collectAllAttachmentIdsForClaim(selectedClaim).length === 0 && (
+              {collectAllAttachmentIdsForClaim(selectedClaim).length > 0 ? (
+                <AttachmentPreview fileIds={collectAllAttachmentIdsForClaim(selectedClaim)} claimId={selectedClaim.claimId} />
+              ) : (
                 <p className="text-sm italic text-muted-foreground">No attachments for this claim</p>
               )}
             </div>

@@ -2113,6 +2113,37 @@ export async function getClaimById(claimId: string) {
   if (!c) return null;
   // load expense items
   const { data: items } = await supabase.from('expense_items').select('*').eq('claim_id', c.claim_id);
+  // recursively list objects in storage under the claim folder to include files nested under expense directories
+  async function listStorageFilesRecursively(path: string) {
+    const results: string[] = [];
+    const queue = [path.replace(/\/$/, '')];
+
+    while (queue.length > 0) {
+      const currentPath = queue.shift()!;
+      const { data: storageList, error: storageErr } = await supabase.storage.from('claim-attachments').list(currentPath, { limit: 1000 });
+      if (storageErr || !Array.isArray(storageList)) continue;
+
+      for (const entry of storageList) {
+        if (!entry || !entry.name) continue;
+        const entryPath = `${currentPath}/${entry.name}`;
+        const isFolder = (entry as any).type === 'folder' || (entry.id == null && entry.metadata == null);
+        if (isFolder) {
+          queue.push(entryPath);
+        } else {
+          results.push(entryPath);
+        }
+      }
+    }
+
+    return results;
+  }
+
+  let storageFileIds: string[] = [];
+  try {
+    storageFileIds = await listStorageFilesRecursively(c.claim_id);
+  } catch (e) {
+    // ignore storage listing failures — best-effort only
+  }
   return {
     claimId: c.claim_number || c.claim_id,
     claimIdInternal: c.claim_id,
@@ -2147,6 +2178,7 @@ export async function getClaimById(claimId: string) {
       attachmentIds: e.attachment_ids || [],
     })),
     fileIds: c.drive_file_ids || [],
+    storageFileIds,
   };
 }
 

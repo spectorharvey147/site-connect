@@ -3,7 +3,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { cn } from '@/lib/utils';
 import {
   BarChart3, FileUp, History, ArrowLeftRight, Scale, UserCheck, ShieldCheck,
-  Receipt, Users, Settings, Menu, LogOut, ChevronLeft, Shield, UserCircle, FileSpreadsheet
+  Receipt, Users, Settings, Menu, LogOut, ChevronLeft, Shield, UserCircle, FileSpreadsheet, Crown
 } from 'lucide-react';
 
 interface SidebarProps {
@@ -19,7 +19,7 @@ const navItems = [
   { id: 'balances', icon: Scale, label: 'User Balances', roles: ['all'] },
   { id: 'manager-approval', icon: UserCheck, label: 'Manager Approval', roles: ['Manager', 'Super Admin'] },
   { id: 'admin-approval', icon: ShieldCheck, label: 'Admin Verification', roles: ['Admin', 'Super Admin'] },
-  { id: 'final-approval', icon: ShieldCheck, label: 'Final Approval', roles: ['Super Admin'] },
+  { id: 'final-approval', icon: Crown, label: 'Final Approval', roles: ['Super Admin'] },
   { id: 'accounts-processing', icon: Receipt, label: 'Accounts Processing', roles: ['Accounts', 'Super Admin'] },
   { id: 'accounts-sap-entry', icon: FileSpreadsheet, label: 'Accounts SAP Entry', roles: ['Accounts', 'Super Admin'] },
   { id: 'voucher', icon: Receipt, label: 'Payment Voucher', roles: ['Accounts', 'Admin', 'Super Admin'] },
