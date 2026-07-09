@@ -6,7 +6,7 @@ import { ResponsiveOverlay } from '@/components/ui/responsive-overlay';
 import { Textarea } from '@/components/ui/textarea';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Check, X, Eye, RefreshCw, UserCheck, ShieldCheck, Loader2, Paperclip } from 'lucide-react';
+import { Check, X, Eye, RefreshCw, UserCheck, ShieldCheck, Crown, Loader2, Paperclip } from 'lucide-react';
 import { toast } from 'sonner';
 import AttachmentPreview from '@/components/views/AttachmentPreview';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -189,7 +189,7 @@ export default function ApprovalView({ type }: ApprovalViewProps) {
     })();
   };
 
-  const Icon = type === 'manager' ? UserCheck : ShieldCheck;
+  const Icon = type === 'manager' ? UserCheck : type === 'admin' ? ShieldCheck : Crown;
   const title = type === 'manager' ? 'Manager Approval' : type === 'admin' ? 'Admin Verification' : 'Final Approval';
   const approveLabel = type === 'admin' ? 'Verify & Forward' : type === 'super-admin' ? 'Final Approve' : 'Approve';
   const statusBadge = <Badge className="bg-yellow-100 text-yellow-800 hover:bg-yellow-100">{type === 'admin' ? 'Pending Verification' : 'Pending'}</Badge>;
