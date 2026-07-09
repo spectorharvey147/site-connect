@@ -6,7 +6,7 @@ import { ResponsiveOverlay } from '@/components/ui/responsive-overlay';
 import { Textarea } from '@/components/ui/textarea';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Check, X, Eye, RefreshCw, UserCheck, ShieldCheck, Loader2, Paperclip } from 'lucide-react';
+import { Check, X, Eye, RefreshCw, UserCheck, ShieldCheck, Loader2, Paperclip, Crown } from 'lucide-react';
 import { toast } from 'sonner';
 import AttachmentPreview from '@/components/views/AttachmentPreview';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -15,6 +15,13 @@ import { Badge } from '@/components/ui/badge';
 function formatDate(date: string) {
   if (!date) return '';
   return new Date(date).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
+}
+
+function collectAllAttachmentIdsForClaim(claim: any) {
+  const top = Array.isArray(claim?.fileIds) ? claim.fileIds : [];
+  const rows = Array.isArray(claim?.expenses) ? claim.expenses.flatMap((expense: any) => Array.isArray(expense?.attachmentIds) ? expense.attachmentIds : []) : [];
+  const storage = Array.isArray(claim?.storageFileIds) ? claim.storageFileIds : [];
+  return Array.from(new Set([...top, ...rows, ...storage].map((id) => String(id || '').trim()).filter(Boolean)));
 }
 
 interface ApprovalViewProps {
@@ -189,9 +196,14 @@ export default function ApprovalView({ type }: ApprovalViewProps) {
     })();
   };
 
-  const Icon = type === 'manager' ? UserCheck : ShieldCheck;
-  const title = type === 'manager' ? 'Manager Approval' : type === 'admin' ? 'Admin Verification' : 'Final Approval';
+  const Icon = type === 'manager' ? UserCheck : type === 'admin' ? ShieldCheck : Crown;
+  const title = type === 'manager' ? 'Manager Approval' : type === 'admin' ? 'Admin Verification' : 'Super Admin Final Approval';
   const approveLabel = type === 'admin' ? 'Verify & Forward' : type === 'super-admin' ? 'Final Approve' : 'Approve';
+  
+  if (type === 'super-admin') {
+    console.log('SuperAdmin View - Icon should be Crown, Title should be "Super Admin Final Approval"');
+    console.log('Icon component:', Icon.name, 'Title:', title);
+  }
   const statusBadge = <Badge className="bg-yellow-100 text-yellow-800 hover:bg-yellow-100">{type === 'admin' ? 'Pending Verification' : 'Pending'}</Badge>;
 
   return (
@@ -355,10 +367,10 @@ export default function ApprovalView({ type }: ApprovalViewProps) {
                 </div>
               </div>
 
-              {approveDetails.fileIds && approveDetails.fileIds.length > 0 && (
+              {collectAllAttachmentIdsForClaim(approveDetails).length > 0 && (
                 <div className="mt-3">
-                  <h4 className="mb-2 flex items-center gap-2 text-sm font-semibold"><Paperclip className="h-4 w-4" /> Attachments ({approveDetails.fileIds.length})</h4>
-                  <AttachmentPreview fileIds={approveDetails.fileIds} claimId={approveDetails.claimId} />
+                  <h4 className="mb-2 flex items-center gap-2 text-sm font-semibold"><Paperclip className="h-4 w-4" /> Attachments ({collectAllAttachmentIdsForClaim(approveDetails).length})</h4>
+                  <AttachmentPreview fileIds={collectAllAttachmentIdsForClaim(approveDetails)} claimId={approveDetails.claimId} />
                 </div>
               )}
             </div>
@@ -464,12 +476,12 @@ export default function ApprovalView({ type }: ApprovalViewProps) {
               </div>
             </div>
 
-            {viewClaim.fileIds && viewClaim.fileIds.length > 0 && (
+            {collectAllAttachmentIdsForClaim(viewClaim).length > 0 && (
               <div className="rounded-lg border border-border bg-muted/20 p-3">
                 <h4 className="mb-3 flex items-center gap-2 text-sm font-semibold">
-                  <Paperclip className="h-4 w-4" /> Attachments ({viewClaim.fileIds.length})
+                  <Paperclip className="h-4 w-4" /> Attachments ({collectAllAttachmentIdsForClaim(viewClaim).length})
                 </h4>
-                <AttachmentPreview fileIds={viewClaim.fileIds} claimId={viewClaim.claimId} />
+                <AttachmentPreview fileIds={collectAllAttachmentIdsForClaim(viewClaim)} claimId={viewClaim.claimId} />
               </div>
             )}
 
