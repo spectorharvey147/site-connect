@@ -1277,63 +1277,6 @@ export async function approveClaimAsSuperAdmin(claimId: string, approverEmail: s
       status: STATUS_ACCOUNTS_VERIFICATION,
       items: emailSummary.items,
   });
-  return;
-  {
-
-  // Create settlement/credit transaction for the final approval using a clear reversal+adjustment so ledger shows waived amount as a separate line.
-  const approvedAmount = amount; // getClaimAmount(c)
-  const currentBalance = await getCurrentBalance(c.user_email);
-
-  // Simpler: credit the approved amount (settlement). To also show a waived line in ledger
-  // we create a separate waive-off debit when approved < submitted by reversing the difference.
-  // Current balance is the balance after submission (so adding amount yields final desired balance)
-  const afterCredit = currentBalance + amount;
-  await supabase.from('transactions').insert({
-    user_email: c.user_email,
-    admin_email: approverEmail,
-    type: 'claim_approved',
-    reference_id: claimId,
-    credit: amount,
-    debit: 0,
-    balance_after: afterCredit,
-    description: `Claim ${c.claim_number || claimId} approved - settlement for Rs. ${amount.toLocaleString('en-IN')}`,
-  });
-
-  // If approved is less than submitted, add a waived (deduction) transaction for clarity.
-  if (submittedAmount > amount) {
-    const diff = submittedAmount - amount;
-    const afterDeduction = afterCredit - diff;
-    // Record actual deduction so ledger shows claim deduction and user balance reflects it
-    await supabase.from('transactions').insert({
-      user_email: c.user_email,
-      admin_email: approverEmail,
-      type: 'claim_waived',
-      reference_id: claimId,
-      credit: 0,
-      debit: diff,
-      balance_after: afterDeduction,
-        description: `Claim ${c.claim_number || claimId} deduction - waived amount of Rs. ${diff.toLocaleString('en-IN')}`,
-    });
-    await logAudit('claim_waived_recorded', approverEmail, 'claim', claimId, `Waived: ₹${diff.toLocaleString('en-IN')}`);
-  }
-
-  await logAudit('claim_admin_approved', approverEmail, 'claim', claimId, description ? `Amount: ₹${approvedAmount} | ${description}` : `Amount: ₹${approvedAmount}`);
-  await createNotification(c.user_email, 'Claim Fully Approved', `Your claim ${claimId} has been approved by admin. ₹${approvedAmount.toLocaleString('en-IN')} settled.`, 'success', claimId);
-  const emailSummary = await getClaimEmailSummary(claimId, c);
-  await sendEmailNotification('claim_approved', c.user_email, { 
-    claim_no: c.claim_number || claimId, 
-    total: approvedAmount,
-    total_with_bill: emailSummary.totalWithBill,
-    total_without_bill: emailSummary.totalWithoutBill,
-    submitted_amount: submittedAmount,
-    verified_amount: approvedAmount,
-    approved_by: approverEmail,
-    employee_name: c.user_name || c.submitted_by || 'there',
-    currency: '₹',
-    status: STATUS_CLOSED,
-    items: emailSummary.items,
-  });
-  }
 }
 
 function mapClaimQueueRow(c: any) {
