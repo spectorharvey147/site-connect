@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import type { ComponentType, SVGProps } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { getDashboardChartData, getDashboardSummary, getManagerAssignedUsersWithBalances } from '@/lib/claims-api';
-import { CheckCircle2, CreditCard, FileText, Users, Clock, UserCheck, ShieldCheck, RefreshCw } from 'lucide-react';
+import { CheckCircle2, CreditCard, FileText, Users, Clock, UserCheck, ShieldCheck, Crown, RefreshCw } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import StatusBadge from '@/components/ui/status-badge';
@@ -149,7 +149,7 @@ function AdminDashboard({ data, isManager, managerUsers }: { data: DashboardSumm
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
         <StatCard icon={UserCheck} label="Pending Manager" value={data?.pendingManagerClaims ?? 0} subtitle="Awaiting manager approval" color="text-warning" />
         <StatCard icon={ShieldCheck} label="Pending Admin" value={data?.pendingAdminClaims ?? 0} subtitle="Awaiting admin verification" color="text-destructive" />
-        <StatCard icon={ShieldCheck} label="Pending Final" value={data?.pendingFinalClaims ?? 0} subtitle="Awaiting super admin" color="text-info" />
+        <StatCard icon={Crown} label="Pending Final" value={data?.pendingFinalClaims ?? 0} subtitle="Awaiting super admin" color="text-info" />
       </div>
       {isManager ? <ManagerAssignedUsersTable managerUsers={managerUsers} /> : null}
     </>
