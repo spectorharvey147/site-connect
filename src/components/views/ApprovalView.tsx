@@ -3,6 +3,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { getPendingManagerClaims, getPendingAdminClaims, getPendingSuperAdminClaims, approveClaimAsManager, approveClaimAsAdmin, approveClaimAsSuperAdmin, rejectClaim, getClaimById } from '@/lib/claims-api';
 import { Button } from '@/components/ui/button';
 import { ResponsiveOverlay } from '@/components/ui/responsive-overlay';
+import { normalizeAttachmentIds } from '@/lib/utils';
 import { Textarea } from '@/components/ui/textarea';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -18,10 +19,11 @@ function formatDate(date: string) {
 }
 
 function collectAllAttachmentIdsForClaim(claim: any) {
-  const top = Array.isArray(claim?.fileIds) ? claim.fileIds : [];
-  const rows = Array.isArray(claim?.expenses) ? claim.expenses.flatMap((expense: any) => Array.isArray(expense?.attachmentIds) ? expense.attachmentIds : []) : [];
-  const storage = Array.isArray(claim?.storageFileIds) ? claim.storageFileIds : [];
-  return Array.from(new Set([...top, ...rows, ...storage].map((id) => String(id || '').trim()).filter(Boolean)));
+  return Array.from(new Set([
+    ...normalizeAttachmentIds(claim?.fileIds),
+    ...normalizeAttachmentIds(claim?.expenses?.flatMap((expense: any) => expense?.attachmentIds)),
+    ...normalizeAttachmentIds(claim?.storageFileIds),
+  ]));
 }
 
 interface ApprovalViewProps {

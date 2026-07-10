@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
+import { normalizeAttachmentIds } from '@/lib/utils';
 import { approveClaimAsAdmin, approveClaimAsManager, approveClaimAsSuperAdmin, getClaimById, rejectClaim } from '@/lib/claims-api';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -9,10 +10,11 @@ import { Loader2, Paperclip } from 'lucide-react';
 import AttachmentPreview from '@/components/views/AttachmentPreview';
 
 function collectAllAttachmentIdsForClaim(claim: any) {
-  const top = Array.isArray(claim?.fileIds) ? claim.fileIds : [];
-  const rows = Array.isArray(claim?.expenses) ? claim.expenses.flatMap((expense: any) => Array.isArray(expense?.attachmentIds) ? expense.attachmentIds : []) : [];
-  const storage = Array.isArray(claim?.storageFileIds) ? claim.storageFileIds : [];
-  return Array.from(new Set([...top, ...rows, ...storage].map((id) => String(id || '').trim()).filter(Boolean)));
+  return Array.from(new Set([
+    ...normalizeAttachmentIds(claim?.fileIds),
+    ...normalizeAttachmentIds(claim?.expenses?.flatMap((expense: any) => expense?.attachmentIds)),
+    ...normalizeAttachmentIds(claim?.storageFileIds),
+  ]));
 }
 
 export default function ClaimAction() {

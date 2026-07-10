@@ -1,3 +1,4 @@
+import { normalizeAttachmentIds } from '@/lib/utils';
 import { supabase } from '@/integrations/supabase/client';
 import { hashPassword, isDemoEmail } from '@/lib/auth';
 
@@ -60,6 +61,104 @@ function normalizeCustomerList(value: unknown): string[] {
       .map((entry) => String(entry || '').trim())
       .filter(Boolean)
   )].sort((a, b) => a.localeCompare(b));
+}
+
+function normalizeStringArray(value: unknown): string[] {
+  return normalizeAttachmentIds(value);
+}
+
+type ClaimAttachmentRecord = {
+  fileId: string;
+  fileName: string;
+  storagePath: string;
+  previewUrl: string;
+  size?: number;
+  updatedAt?: string;
+  uploadedBy?: string;
+  category: string;
+  expenseIndex?: number;
+  expenseCategory?: string;
+  isClaimAttachment: boolean;
+};
+
+async function fetchAttachmentMetadata(fileId: string) {
+  const { data } = supabase.storage.from('claim-attachments').getPublicUrl(fileId);
+  const metadataResult = {
+    previewUrl: data?.publicUrl || '',
+    fileName: fileId.split('/').pop() || fileId,
+    storagePath: fileId,
+    size: undefined as number | undefined,
+    updatedAt: undefined as string | undefined,
+    uploadedBy: undefined as string | undefined,
+  };
+
+  try {
+    const { data: metadata, error } = await supabase.storage.from('claim-attachments').getMetadata(fileId);
+    if (!error && metadata) {
+      metadataResult.size = Number(metadata.size || 0) || undefined;
+      metadataResult.updatedAt = String(metadata.updated_at || metadata.updatedAt || '').trim() || undefined;
+      metadataResult.uploadedBy = String((metadata.metadata as any)?.uploadedBy || '').trim() || undefined;
+    }
+  } catch {
+    // Best-effort metadata only
+  }
+
+  return metadataResult;
+}
+
+export async function getClaimAttachments(claimId: string) {
+  const claim = await fetchClaimRowByAnyId(claimId) as any;
+  if (!claim) return [] as ClaimAttachmentRecord[];
+
+  const { data: items } = await supabase.from('expense_items').select('*').eq('claim_id', claim.claim_id);
+  const expenses = (items || []) as any[];
+  const attachmentMap = new Map<string, ClaimAttachmentRecord>();
+  const rowAttachmentIds = new Set<string>();
+
+  expenses.forEach((expense, expenseIndex) => {
+    const attachmentIds = normalizeStringArray(expense.attachment_ids);
+    attachmentIds.forEach((fileId) => {
+      rowAttachmentIds.add(fileId);
+      if (!attachmentMap.has(fileId)) {
+        attachmentMap.set(fileId, {
+          fileId,
+          fileName: fileId.split('/').pop() || fileId,
+          storagePath: fileId,
+          previewUrl: '',
+          category: String(expense.category || 'Expense Attachment'),
+          expenseIndex,
+          expenseCategory: String(expense.category || 'Expense Attachment'),
+          isClaimAttachment: false,
+        });
+      }
+    });
+  });
+
+  normalizeStringArray(claim.drive_file_ids).forEach((fileId) => {
+    if (rowAttachmentIds.has(fileId)) return;
+    if (!attachmentMap.has(fileId)) {
+      attachmentMap.set(fileId, {
+        fileId,
+        fileName: fileId.split('/').pop() || fileId,
+        storagePath: fileId,
+        previewUrl: '',
+        category: 'General Claim Attachment',
+        expenseCategory: 'General Claim Attachment',
+        isClaimAttachment: true,
+      });
+    }
+  });
+
+  const attachmentEntries = Array.from(attachmentMap.values());
+  const metadataResults = await Promise.all(attachmentEntries.map((entry) => fetchAttachmentMetadata(entry.fileId)));
+
+  return attachmentEntries.map((entry, index) => ({
+    ...entry,
+    previewUrl: metadataResults[index]?.previewUrl || entry.previewUrl,
+    size: metadataResults[index]?.size,
+    updatedAt: metadataResults[index]?.updatedAt,
+    uploadedBy: metadataResults[index]?.uploadedBy || String(claim.user_email || claim.submitted_by || ''),
+  }));
 }
 
 function isPendingAdminVerificationStatus(status?: string | null) {
@@ -2072,36 +2171,45 @@ export async function getClaimsHistory(userEmail: string, userRole: string, filt
 
   query = query.order('created_at', { ascending: false });
   const result = await query;
-  return (result.data || []).map((c: any) => ({
-    claimId: c.claim_number || c.claim_id,
-    claimIdInternal: c.claim_id,
-    date: c.created_at,
-    submittedBy: c.submitted_by,
-    userEmail: c.user_email,
-    site: c.site_name,
-    customerName: c.customer_name,
-    amount: getClaimAmount(c),
-    submittedAmount: getSubmittedAmount(c),
-    verifiedAmount: c.verified_amount == null ? null : parseFloat(c.verified_amount),
-    totalWithBill: parseFloat(c.total_with_bill || 0),
-    totalWithoutBill: parseFloat(c.total_without_bill || 0),
-    status: c.status,
-    rejectionReason: c.rejection_reason,
-    paymentVoucherCode: c.payment_voucher_code,
-    paymentVoucherGeneratedAt: c.payment_voucher_generated_at,
-    fileIds: c.drive_file_ids || [],
-    expenses: (c.expense_items || []).map((e: any) => ({
-      category: e.category,
-      projectCode: e.project_code,
-      customerName: e.customer_name || c.customer_name || '',
-      claimDate: e.expense_date,
-      description: e.description,
-      amountWithBill: parseFloat(e.amount_with_bill || 0),
-      amountWithoutBill: parseFloat(e.amount_without_bill || 0),
-      amount: parseFloat(e.amount_with_bill || 0) + parseFloat(e.amount_without_bill || 0),
-      attachmentIds: e.attachment_ids || [],
-    })),
-  }));
+  const rows = (result.data || []) as any[];
+
+  return rows.map((c) => {
+    const top = normalizeStringArray(c.drive_file_ids);
+    const rowsAttachments = (c.expense_items || []).flatMap((e: any) => normalizeStringArray(e.attachment_ids));
+    const attachmentsCount = new Set([...top, ...rowsAttachments].map((id) => String(id || '').trim()).filter(Boolean)).size;
+
+    return {
+      claimId: c.claim_number || c.claim_id,
+      claimIdInternal: c.claim_id,
+      date: c.created_at,
+      submittedBy: c.submitted_by,
+      userEmail: c.user_email,
+      site: c.site_name,
+      customerName: c.customer_name,
+      amount: getClaimAmount(c),
+      submittedAmount: getSubmittedAmount(c),
+      verifiedAmount: c.verified_amount == null ? null : parseFloat(c.verified_amount),
+      totalWithBill: parseFloat(c.total_with_bill || 0),
+      totalWithoutBill: parseFloat(c.total_without_bill || 0),
+      status: c.status,
+      rejectionReason: c.rejection_reason,
+      paymentVoucherCode: c.payment_voucher_code,
+      paymentVoucherGeneratedAt: c.payment_voucher_generated_at,
+      fileIds: top,
+      attachmentsCount,
+      expenses: (c.expense_items || []).map((e: any) => ({
+        category: e.category,
+        projectCode: e.project_code,
+        customerName: e.customer_name || c.customer_name || '',
+        claimDate: e.expense_date,
+        description: e.description,
+        amountWithBill: parseFloat(e.amount_with_bill || 0),
+        amountWithoutBill: parseFloat(e.amount_without_bill || 0),
+        amount: parseFloat(e.amount_with_bill || 0) + parseFloat(e.amount_without_bill || 0),
+        attachmentIds: normalizeStringArray(e.attachment_ids),
+      })),
+    };
+  });
 }
 
 export async function getClaimById(claimId: string) {
@@ -2113,37 +2221,21 @@ export async function getClaimById(claimId: string) {
   if (!c) return null;
   // load expense items
   const { data: items } = await supabase.from('expense_items').select('*').eq('claim_id', c.claim_id);
-  // recursively list objects in storage under the claim folder to include files nested under expense directories
-  async function listStorageFilesRecursively(path: string) {
-    const results: string[] = [];
-    const queue = [path.replace(/\/$/, '')];
 
-    while (queue.length > 0) {
-      const currentPath = queue.shift()!;
-      const { data: storageList, error: storageErr } = await supabase.storage.from('claim-attachments').list(currentPath, { limit: 1000 });
-      if (storageErr || !Array.isArray(storageList)) continue;
+  const expenses = (items || []).map((e: any) => ({
+    category: e.category,
+    projectCode: e.project_code,
+    customerName: e.customer_name || c.customer_name || '',
+    claimDate: e.expense_date,
+    description: e.description,
+    amountWithBill: parseFloat(e.amount_with_bill || 0),
+    amountWithoutBill: parseFloat(e.amount_without_bill || 0),
+    amount: parseFloat(e.amount_with_bill || 0) + parseFloat(e.amount_without_bill || 0),
+    attachmentIds: normalizeStringArray(e.attachment_ids),
+  }));
 
-      for (const entry of storageList) {
-        if (!entry || !entry.name) continue;
-        const entryPath = `${currentPath}/${entry.name}`;
-        const isFolder = (entry as any).type === 'folder' || (entry.id == null && entry.metadata == null);
-        if (isFolder) {
-          queue.push(entryPath);
-        } else {
-          results.push(entryPath);
-        }
-      }
-    }
+  const attachments = await getClaimAttachments(claimId);
 
-    return results;
-  }
-
-  let storageFileIds: string[] = [];
-  try {
-    storageFileIds = await listStorageFilesRecursively(c.claim_id);
-  } catch (e) {
-    // ignore storage listing failures — best-effort only
-  }
   return {
     claimId: c.claim_number || c.claim_id,
     claimIdInternal: c.claim_id,
@@ -2166,19 +2258,10 @@ export async function getClaimById(claimId: string) {
     rejectionReason: c.rejection_reason,
     paymentVoucherCode: c.payment_voucher_code,
     paymentVoucherGeneratedAt: c.payment_voucher_generated_at,
-    expenses: (items || []).map((e: any) => ({
-      category: e.category,
-      projectCode: e.project_code,
-      customerName: e.customer_name || c.customer_name || '',
-      claimDate: e.expense_date,
-      description: e.description,
-      amountWithBill: parseFloat(e.amount_with_bill || 0),
-      amountWithoutBill: parseFloat(e.amount_without_bill || 0),
-      amount: parseFloat(e.amount_with_bill || 0) + parseFloat(e.amount_without_bill || 0),
-      attachmentIds: e.attachment_ids || [],
-    })),
-    fileIds: c.drive_file_ids || [],
-    storageFileIds,
+    expenses,
+    fileIds: normalizeStringArray(c.drive_file_ids),
+    attachments,
+    attachmentsCount: attachments.length,
   };
 }
 

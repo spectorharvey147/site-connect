@@ -5,6 +5,7 @@ import { getClaimsHistory, getClaimById, getUsersDirectory, getCompanySettings }
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { normalizeAttachmentIds } from '@/lib/utils';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { ResponsiveOverlay } from '@/components/ui/responsive-overlay';
@@ -68,10 +69,12 @@ function renderAttachmentLinks(fileIds?: string[]) {
 }
 
 function collectAllAttachmentIdsForClaim(claim: any) {
-  const top = Array.isArray(claim?.fileIds) ? claim.fileIds : [];
-  const rows = Array.isArray(claim?.expenses) ? claim.expenses.flatMap((e: any) => Array.isArray(e?.attachmentIds) ? e.attachmentIds : []) : [];
-    const storage = Array.isArray(claim?.storageFileIds) ? claim.storageFileIds : [];
-    return Array.from(new Set([...top, ...rows, ...storage].map((id) => String(id || '').trim()).filter(Boolean)));
+  const top = normalizeAttachmentIds(claim?.fileIds);
+  const rows = normalizeAttachmentIds(claim?.expenses?.flatMap((e: any) => e?.attachmentIds));
+  const storage = normalizeAttachmentIds(claim?.storageFileIds);
+  const combined = Array.from(new Set([...top, ...rows, ...storage]));
+  console.log(`[collectAllAttachmentIdsForClaim] Claim ${claim.claimId}: top=${top.length}, rows=${rows.length}, storage=${storage.length}, total=${combined.length}`, { top, rows, storage });
+  return combined;
 }
 function generateClaimPDFHtml(claims: any[], companySettings: any, users: any[] = []) {
   const logoUrl = resolveReportAssetUrl(companySettings?.logo_url);
@@ -441,10 +444,11 @@ export default function ClaimHistoryView() {
                 <Button variant="outline" size="sm" className="flex-1" onClick={() => viewClaim(claim.claimIdInternal)}>
                   <Eye className="mr-1 h-4 w-4" /> Details
                 </Button>
-                {collectAllAttachmentIdsForClaim(claim).length > 0 && (
-                  <Button variant="outline" size="sm" className="flex-1" onClick={() => viewClaim(claim.claimIdInternal)}>
-                    <Paperclip className="mr-1 h-4 w-4 text-primary" /> Attachments ({collectAllAttachmentIdsForClaim(claim).length})
-                  </Button>
+                {((claim.attachmentsCount ?? collectAllAttachmentIdsForClaim(claim).length) > 0) && (
+                  <div className="flex items-center gap-2 rounded-lg border border-border px-3 py-2 text-sm text-muted-foreground">
+                    <Paperclip className="h-4 w-4 text-primary" />
+                    Attachments ({claim.attachmentsCount ?? collectAllAttachmentIdsForClaim(claim).length})
+                  </div>
                 )}
               </div>
             </div>
@@ -468,6 +472,7 @@ export default function ClaimHistoryView() {
                 <th className="p-3 text-right font-semibold">With Bill</th>
                 <th className="p-3 text-right font-semibold">Without Bill</th>
                 <th className="p-3 text-right font-semibold">Total</th>
+                <th className="p-3 text-center font-semibold">Attachments</th>
                 <th className="p-3 text-center font-semibold">Status</th>
                 <th className="p-3 text-center font-semibold">Actions</th>
               </tr>
@@ -476,13 +481,13 @@ export default function ClaimHistoryView() {
               {loading ? (
                 Array.from({ length: 4 }).map((_, i) => (
                   <tr key={i} className="border-b border-border">
-                    {Array.from({ length: canViewUserColumn ? 10 : 9 }).map((__, j) => (
+                    {Array.from({ length: canViewUserColumn ? 11 : 10 }).map((__, j) => (
                       <td key={j} className="p-3"><Skeleton className="h-4 w-full" /></td>
                     ))}
                   </tr>
                 ))
               ) : claims.length === 0 ? (
-                <tr><td colSpan={canViewUserColumn ? 10 : 9} className="p-8 text-center text-muted-foreground">No claims found</td></tr>
+                <tr><td colSpan={canViewUserColumn ? 11 : 10} className="p-8 text-center text-muted-foreground">No claims found</td></tr>
               ) : claims.map((claim) => (
                 <tr key={claim.claimId} className={`border-b border-border transition-colors hover:bg-muted/30 ${selectedIds.has(claim.claimId) ? 'bg-primary/5' : ''}`}>
                   <td className="p-3">
@@ -498,8 +503,17 @@ export default function ClaimHistoryView() {
                   <td className="p-3 text-right">Rs. {(claim.totalWithBill ?? 0).toFixed(2)}</td>
                   <td className="p-3 text-right">Rs. {(claim.totalWithoutBill ?? 0).toFixed(2)}</td>
                   <td className="p-3 text-right text-base font-bold">Rs. {claim.amount.toFixed(2)}</td>
+                  <td className="p-3 text-center text-sm text-muted-foreground">
+                    {claim.attachmentsCount ?? collectAllAttachmentIdsForClaim(claim).length}
+                  </td>
                   <td className="p-3 text-center">{statusBadge(claim.status)}</td>
                   <td className="space-x-1 p-3 text-center">
+                    {(claim.attachmentsCount ?? collectAllAttachmentIdsForClaim(claim).length) > 0 && (
+                      <div className="inline-flex items-center gap-1 rounded-full bg-muted px-2 py-1 text-xs text-muted-foreground">
+                        <Paperclip className="h-3.5 w-3.5" />
+                        {claim.attachmentsCount ?? collectAllAttachmentIdsForClaim(claim).length}
+                      </div>
+                    )}
                     <Button variant="ghost" size="sm" onClick={() => viewClaim(claim.claimIdInternal)} title="View Details">
                       <Eye className="h-4 w-4" />
                     </Button>

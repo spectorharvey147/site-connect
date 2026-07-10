@@ -4,9 +4,10 @@ import { ResponsiveOverlay } from '@/components/ui/responsive-overlay';
 import { Image, FileText, Download, ExternalLink } from 'lucide-react';
 import { supabase } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
+import { normalizeAttachmentIds } from '@/lib/utils';
 
 interface AttachmentPreviewProps {
-  fileIds: string[];
+  fileIds: string[] | string | unknown[];
   claimId: string;
   compact?: boolean;
 }
@@ -34,7 +35,8 @@ export default function AttachmentPreview({ fileIds, compact = false }: Attachme
   const [previewFileId, setPreviewFileId] = useState<string | null>(null);
   const [previewType, setPreviewType] = useState<'image' | 'pdf' | 'other'>('other');
 
-  if (!fileIds || fileIds.length === 0) {
+  const attachmentIds = normalizeAttachmentIds(fileIds);
+  if (attachmentIds.length === 0) {
     return <p className="text-sm italic text-muted-foreground">No attachments</p>;
   }
 
@@ -87,11 +89,11 @@ export default function AttachmentPreview({ fileIds, compact = false }: Attachme
     <div>
       {!compact && (
         <h4 className="mb-2 flex items-center gap-1 text-sm font-semibold">
-          <Image className="h-4 w-4" /> Attachments ({fileIds.length})
+          <Image className="h-4 w-4" /> Attachments ({attachmentIds.length})
         </h4>
       )}
       <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 md:grid-cols-4">
-        {fileIds.map((fileId, idx) => {
+        {attachmentIds.map((fileId, idx) => {
           const url = getPublicUrl(fileId);
           const name = getFileName(fileId);
           const imageFile = isImage(fileId);

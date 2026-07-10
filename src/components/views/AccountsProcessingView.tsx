@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { CheckCircle2, CreditCard, Eye, Loader2, Paperclip, RefreshCw } from 'lucide-react';
 import { toast } from 'sonner';
 import { useAuth } from '@/contexts/AuthContext';
+import { normalizeAttachmentIds } from '@/lib/utils';
 import { approveClaimAsAccounts, getAccountsClaims, getClaimById, markClaimPaid } from '@/lib/claims-api';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -21,10 +22,11 @@ function formatDate(date?: string) {
 }
 
 function collectAllAttachmentIdsForClaim(claim: any) {
-  const top = Array.isArray(claim?.fileIds) ? claim.fileIds : [];
-  const rows = Array.isArray(claim?.expenses) ? claim.expenses.flatMap((expense: any) => Array.isArray(expense?.attachmentIds) ? expense.attachmentIds : []) : [];
-  const storage = Array.isArray(claim?.storageFileIds) ? claim.storageFileIds : [];
-  return Array.from(new Set([...top, ...rows, ...storage].map((id) => String(id || '').trim()).filter(Boolean)));
+  return Array.from(new Set([
+    ...normalizeAttachmentIds(claim?.fileIds),
+    ...normalizeAttachmentIds(claim?.expenses?.flatMap((expense: any) => expense?.attachmentIds)),
+    ...normalizeAttachmentIds(claim?.storageFileIds),
+  ]));
 }
 
 function StatusBadge({ status }: { status: string }) {
