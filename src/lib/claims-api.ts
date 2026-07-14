@@ -2161,6 +2161,30 @@ export async function getClaimsHistory(userEmail: string, userRole: string, filt
   });
 }
 
+async function listClaimStorageFileIds(claimId: string) {
+  const results: string[] = [];
+  const queue = [String(claimId || '').replace(/\/$/, '')];
+
+  while (queue.length > 0) {
+    const currentPath = queue.shift();
+    if (!currentPath) continue;
+    const { data, error } = await supabase.storage
+      .from('claim-attachments')
+      .list(currentPath, { limit: 1000 });
+    if (error || !Array.isArray(data)) continue;
+
+    data.forEach((entry) => {
+      if (!entry?.name) return;
+      const entryPath = `${currentPath}/${entry.name}`;
+      const isFolder = entry.id == null && entry.metadata == null;
+      if (isFolder) queue.push(entryPath);
+      else results.push(entryPath);
+    });
+  }
+
+  return results;
+}
+
 export async function getClaimById(claimId: string) {
   if (isDemoMode()) {
     return demoClaims.find((claim) => claim.claimId === claimId || claim.claimIdInternal === claimId) ?? null;
@@ -2182,6 +2206,16 @@ export async function getClaimById(claimId: string) {
     attachmentIds: e.attachment_ids || [],
   }));
   const approvalTrail = (await getClaimApprovalTrail([c.claim_id]))[c.claim_id] || {};
+  let storageFileIds: string[] = [];
+  try {
+    storageFileIds = await listClaimStorageFileIds(c.claim_id);
+  } catch (error) {
+    console.warn('Unable to list claim storage attachments:', error);
+  }
+  const attachments = resolveClaimAttachments(
+    [...(c.drive_file_ids || []), ...storageFileIds],
+    expenses,
+  );
 
   return {
     claimId: c.claim_number || c.claim_id,
@@ -2207,7 +2241,8 @@ export async function getClaimById(claimId: string) {
     paymentVoucherGeneratedAt: c.payment_voucher_generated_at,
     expenses,
     approvalTrail,
-    ...resolveClaimAttachments(c.drive_file_ids, expenses),
+    storageFileIds,
+    ...attachments,
   };
 }
 

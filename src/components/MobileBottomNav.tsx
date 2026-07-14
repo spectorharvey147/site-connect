@@ -1,7 +1,7 @@
 import { useAuth } from '@/contexts/AuthContext';
 import { cn } from '@/lib/utils';
 import {
-  BarChart3, History, UserCheck, ShieldCheck, Users, Menu, UserCircle, Plus, ArrowLeftRight, Scale, Receipt, Settings, Shield, LogOut, FileUp, FileSpreadsheet, BadgeCheck, Banknote,
+  BarChart3, History, UserCheck, ShieldCheck, Users, Menu, UserCircle, Plus, ArrowLeftRight, Scale, Receipt, Settings, Shield, LogOut, FileUp, FileSpreadsheet, Crown, Banknote,
 } from 'lucide-react';
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from '@/components/ui/sheet';
 import { useState } from 'react';
@@ -26,7 +26,7 @@ const allNavItems = [
   { id: 'balances', icon: Scale, label: 'User Balances', roles: ['all'] },
   { id: 'manager-approval', icon: UserCheck, iconClassName: 'text-indigo-600 dark:text-indigo-400', label: 'Manager Approval', roles: ['Manager', 'Super Admin'] },
   { id: 'admin-approval', icon: ShieldCheck, iconClassName: 'text-sky-600 dark:text-sky-400', label: 'Admin Verification', roles: ['Admin', 'Super Admin'] },
-  { id: 'final-approval', icon: BadgeCheck, iconClassName: 'text-violet-600 dark:text-violet-400', label: 'Final Approval', roles: ['Super Admin'] },
+  { id: 'final-approval', icon: Crown, iconClassName: 'text-violet-600 dark:text-violet-400', label: 'Final Approval', roles: ['Super Admin'] },
   { id: 'accounts-processing', icon: Receipt, iconClassName: 'text-emerald-600 dark:text-emerald-400', label: 'Accounts Processing', roles: ['Accounts', 'Super Admin'] },
   { id: 'accounts-sap-entry', icon: FileSpreadsheet, label: 'Accounts SAP Entry', roles: ['Accounts', 'Super Admin'] },
   { id: 'voucher', icon: Banknote, label: 'Payment Voucher', roles: ['Accounts', 'Admin', 'Super Admin'] },

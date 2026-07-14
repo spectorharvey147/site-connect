@@ -8,6 +8,13 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Loader2, Paperclip } from 'lucide-react';
 import AttachmentPreview from '@/components/views/AttachmentPreview';
 
+function collectAllAttachmentIdsForClaim(claim: any) {
+  const top = Array.isArray(claim?.fileIds) ? claim.fileIds : [];
+  const rows = Array.isArray(claim?.expenses) ? claim.expenses.flatMap((expense: any) => Array.isArray(expense?.attachmentIds) ? expense.attachmentIds : []) : [];
+  const storage = Array.isArray(claim?.storageFileIds) ? claim.storageFileIds : [];
+  return Array.from(new Set([...top, ...rows, ...storage].map((id) => String(id || '').trim()).filter(Boolean)));
+}
+
 export default function ClaimAction() {
   const [searchParams] = useSearchParams();
   const [claim, setClaim] = useState<any>(null);
@@ -184,10 +191,19 @@ export default function ClaimAction() {
                       </tbody>
                     </table>
                   </div>
-                  {claim.fileIds && claim.fileIds.length > 0 && (
+                      {/* Show attachments grouped by expense row */}
+                      {claim.expenses?.map((expense: any, idx: number) => (
+                        expense.attachmentIds && expense.attachmentIds.length > 0 ? (
+                          <div key={`expense-attachments-${idx}`} className="mt-3">
+                            <h5 className="mb-2 text-sm font-semibold">{expense.category}</h5>
+                            <AttachmentPreview fileIds={Array.from(new Set(expense.attachmentIds))} claimId={claim.claimId} compact />
+                          </div>
+                        ) : null
+                      ))}
+                  {collectAllAttachmentIdsForClaim(claim).length > 0 && (
                     <div className="mt-2">
-                      <h4 className="mb-2 flex items-center gap-2 text-sm font-semibold"><Paperclip className="h-4 w-4" /> Attachments ({claim.fileIds.length})</h4>
-                      <AttachmentPreview fileIds={claim.fileIds} claimId={claim.claimId} />
+                      <h4 className="mb-2 flex items-center gap-2 text-sm font-semibold"><Paperclip className="h-4 w-4" /> Attachments ({collectAllAttachmentIdsForClaim(claim).length})</h4>
+                      <AttachmentPreview fileIds={collectAllAttachmentIdsForClaim(claim)} claimId={claim.claimId} />
                     </div>
                   )}
                 </div>

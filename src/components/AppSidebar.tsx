@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { cn } from '@/lib/utils';
 import {
-  ArrowLeftRight, BadgeCheck, Banknote, BarChart3, ChevronLeft, FileSpreadsheet,
+  ArrowLeftRight, Banknote, BarChart3, ChevronLeft, Crown, FileSpreadsheet,
   FileUp, History, LogOut, Menu, Receipt, Scale, Settings, Shield, ShieldCheck,
   UserCheck, UserCircle, Users,
 } from 'lucide-react';
@@ -23,7 +23,7 @@ const navGroups = [
   { label: 'Approvals', items: [
     { id: 'manager-approval', icon: UserCheck, iconClassName: 'text-indigo-200', label: 'Manager Approval', roles: ['Manager', 'Super Admin'] },
     { id: 'admin-approval', icon: ShieldCheck, iconClassName: 'text-sky-200', label: 'Admin Verification', roles: ['Admin', 'Super Admin'] },
-    { id: 'final-approval', icon: BadgeCheck, iconClassName: 'text-violet-200', label: 'Final Approval', roles: ['Super Admin'] },
+    { id: 'final-approval', icon: Crown, iconClassName: 'text-violet-200', label: 'Final Approval', roles: ['Super Admin'] },
   ] },
   { label: 'Accounts', items: [
     { id: 'accounts-processing', icon: Receipt, iconClassName: 'text-emerald-200', label: 'Accounts Processing', roles: ['Accounts', 'Super Admin'] },
