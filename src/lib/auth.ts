@@ -1,6 +1,7 @@
 import SHA256 from 'crypto-js/sha256';
 import { supabase } from '@/integrations/supabase/client';
 import { sendEmail } from '@/lib/send-email';
+import { validatePassword } from '@/lib/password-validation';
 
 export type UserRole = 'User' | 'Manager' | 'Admin' | 'Super Admin' | 'Accounts';
 
@@ -183,9 +184,8 @@ export async function resetPassword(email: string, resetToken: string, newPasswo
     return { ok: false, message: 'Email, reset token, and password are required.' };
   }
 
-  if (newPassword.length < 6) {
-    return { ok: false, message: 'Password must be at least 6 characters long.' };
-  }
+  const passwordError = validatePassword(newPassword);
+  if (passwordError) return { ok: false, message: passwordError };
 
   try {
     const { data: resetRequest, error: selectError } = await supabase

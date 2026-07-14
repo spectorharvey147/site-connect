@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { getAllUsers, createUser, updateUser, deleteUser, addUserAdvance } from '@/lib/claims-api';
 import { Button } from '@/components/ui/button';
@@ -7,13 +7,14 @@ import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { Switch } from '@/components/ui/switch';
-import { Users, RefreshCw, Plus, Edit, Trash2, Loader2 } from 'lucide-react';
+import { Users, RefreshCw, Plus, Edit, Trash2, Loader2, Search, UserCheck, UserX, ShieldCheck, X } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { toast } from 'sonner';
 import { Skeleton } from '@/components/ui/skeleton';
 import { supabase } from '@/integrations/supabase/client';
 import RupeeIcon from '@/components/icons/RupeeIcon';
 import ImageUpload from '@/components/ImageUpload';
+import { PASSWORD_REQUIREMENTS, validatePassword } from '@/lib/password-validation';
 
 function canUseSignature(role?: string) {
   return Boolean(String(role || '').trim());
@@ -30,6 +31,9 @@ export default function UserManagementView() {
   const [allUsers, setAllUsers] = useState<any[]>([]);
   const [processing, setProcessing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [search, setSearch] = useState('');
+  const [roleFilter, setRoleFilter] = useState('all');
+  const [statusFilter, setStatusFilter] = useState('all');
 
   const [form, setForm] = useState({ name: '', email: '', password: '', role: 'User', advance: '0', manager: '', signatureUrl: '' });
 
@@ -49,8 +53,37 @@ export default function UserManagementView() {
 
   useEffect(() => { loadUsers(); }, []);
 
+  const roles = useMemo(() => [...new Set(users.map((entry) => entry.role).filter(Boolean))].sort(), [users]);
+  const filteredUsers = useMemo(() => {
+    const query = search.trim().toLowerCase();
+    return users.filter((entry) => {
+      const matchesSearch = !query || String(entry.name || '').toLowerCase().includes(query) || String(entry.email || '').toLowerCase().includes(query);
+      const matchesRole = roleFilter === 'all' || entry.role === roleFilter;
+      const isActive = entry.active !== false;
+      const matchesStatus = statusFilter === 'all' || (statusFilter === 'active' ? isActive : !isActive);
+      return matchesSearch && matchesRole && matchesStatus;
+    });
+  }, [roleFilter, search, statusFilter, users]);
+  const userSummary = useMemo(() => users.reduce((summary, entry) => ({
+    active: summary.active + (entry.active !== false ? 1 : 0),
+    inactive: summary.inactive + (entry.active === false ? 1 : 0),
+    approvers: summary.approvers + (['Manager', 'Admin', 'Super Admin'].includes(entry.role) ? 1 : 0),
+    balance: summary.balance + Number(entry.balance || 0),
+  }), { active: 0, inactive: 0, approvers: 0, balance: 0 }), [users]);
+
+  const resetFilters = () => {
+    setSearch('');
+    setRoleFilter('all');
+    setStatusFilter('all');
+  };
+
   const handleCreate = async (e: React.FormEvent) => {
     e.preventDefault();
+    const passwordError = validatePassword(form.password);
+    if (passwordError) {
+      toast.error(passwordError);
+      return;
+    }
     setProcessing(true);
     try {
       await createUser({ ...form, advance: parseFloat(form.advance) || 0 });
@@ -63,6 +96,13 @@ export default function UserManagementView() {
   };
 
   const handleUpdate = async () => {
+    if (editUser?.password) {
+      const passwordError = validatePassword(editUser.password);
+      if (passwordError) {
+        toast.error(passwordError);
+        return;
+      }
+    }
     setProcessing(true);
     try {
       await updateUser({
@@ -123,7 +163,7 @@ export default function UserManagementView() {
     setProcessing(true);
     try {
       await addUserAdvance(advanceModal.email, parseFloat(advanceAmount), user!.email);
-      toast.success(`₹${advanceAmount} added to ${advanceModal.name}`);
+      toast.success(`Rs. ${advanceAmount} added to ${advanceModal.name}`);
       setAdvanceModal(null);
       setAdvanceAmount('');
       loadUsers();
@@ -140,10 +180,13 @@ export default function UserManagementView() {
       )}
       <div className="glass-card">
         <div className="p-3 sm:p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-border">
-          <h2 className="font-bold flex items-center gap-2"><Users className="h-5 w-5" /> User Management</h2>
+          <div>
+            <h2 className="font-bold flex items-center gap-2"><Users className="h-5 w-5 text-primary" /> User Management</h2>
+            <p className="mt-1 text-sm text-muted-foreground">Manage access, roles, managers, signatures and employee advances.</p>
+          </div>
           <div className="flex gap-2">
-            <Button variant="outline" size="sm" onClick={loadUsers} className="flex-1 sm:flex-none h-10 sm:h-9">
-              <RefreshCw className="h-4 w-4 sm:mr-1" />
+            <Button variant="outline" size="sm" onClick={loadUsers} disabled={loading} className="flex-1 sm:flex-none h-10 sm:h-9">
+              <RefreshCw className={`h-4 w-4 sm:mr-1 ${loading ? 'animate-spin' : ''}`} />
               <span className="hidden sm:inline">Refresh</span>
             </Button>
             <Button size="sm" onClick={() => setShowCreate(true)} className="flex-1 sm:flex-none h-10 sm:h-9">
@@ -151,6 +194,33 @@ export default function UserManagementView() {
               <span className="hidden sm:inline">Add User</span>
             </Button>
           </div>
+        </div>
+
+        <div className="border-b border-border bg-muted/20 p-3 sm:p-4">
+          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+            <div className="rounded-lg border border-border bg-card p-3"><p className="text-xs text-muted-foreground">Active Users</p><p className="mt-1 flex items-center gap-2 text-xl font-bold text-success"><UserCheck className="h-4 w-4" />{userSummary.active}</p></div>
+            <div className="rounded-lg border border-border bg-card p-3"><p className="text-xs text-muted-foreground">Inactive Users</p><p className="mt-1 flex items-center gap-2 text-xl font-bold text-destructive"><UserX className="h-4 w-4" />{userSummary.inactive}</p></div>
+            <div className="rounded-lg border border-border bg-card p-3"><p className="text-xs text-muted-foreground">Approval Roles</p><p className="mt-1 flex items-center gap-2 text-xl font-bold text-info"><ShieldCheck className="h-4 w-4" />{userSummary.approvers}</p></div>
+            <div className="rounded-lg border border-border bg-card p-3"><p className="text-xs text-muted-foreground">Combined Balance</p><p className="mt-1 text-xl font-bold text-primary">Rs. {userSummary.balance.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p></div>
+          </div>
+          <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+            <div className="relative xl:col-span-2">
+              <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+              <Input className="pl-10" placeholder="Search name or email" value={search} onChange={(event) => setSearch(event.target.value)} />
+            </div>
+            <Select value={roleFilter} onValueChange={setRoleFilter}>
+              <SelectTrigger><SelectValue placeholder="All roles" /></SelectTrigger>
+              <SelectContent><SelectItem value="all">All roles</SelectItem>{roles.map((role) => <SelectItem key={role} value={role}>{role}</SelectItem>)}</SelectContent>
+            </Select>
+            <div className="flex gap-2">
+              <Select value={statusFilter} onValueChange={setStatusFilter}>
+                <SelectTrigger className="flex-1"><SelectValue /></SelectTrigger>
+                <SelectContent><SelectItem value="all">All statuses</SelectItem><SelectItem value="active">Active only</SelectItem><SelectItem value="inactive">Inactive only</SelectItem></SelectContent>
+              </Select>
+              <Button variant="ghost" size="icon" onClick={resetFilters} title="Reset filters"><X className="h-4 w-4" /></Button>
+            </div>
+          </div>
+          <p className="mt-3 text-xs text-muted-foreground">Showing {filteredUsers.length} of {users.length} users</p>
         </div>
         
         {/* Mobile Card View */}
@@ -163,7 +233,9 @@ export default function UserManagementView() {
                 <Skeleton className="h-8 w-full" />
               </div>
             ))
-          ) : users.map(u => (
+          ) : filteredUsers.length === 0 ? (
+            <div className="rounded-lg border border-dashed border-border p-8 text-center text-sm text-muted-foreground">No users match these filters</div>
+          ) : filteredUsers.map(u => (
             <div key={u.email} className="border border-border rounded-lg p-4 space-y-3 bg-card hover:bg-muted/30 transition-colors">
               <div className="flex items-start justify-between gap-2">
                 <div className="min-w-0 flex-1">
@@ -192,7 +264,7 @@ export default function UserManagementView() {
                 />
               </div>
               <div className="flex items-center justify-between pt-2 border-t border-border">
-                <p className="text-lg font-bold text-primary">₹{u.balance.toFixed(2)}</p>
+                <p className="text-lg font-bold text-primary">Rs. {u.balance.toFixed(2)}</p>
                 <div className="flex items-center gap-1">
                   <Switch
                     checked={u.active !== false}
@@ -214,9 +286,9 @@ export default function UserManagementView() {
         </div>
 
         {/* Desktop Table View */}
-        <div className="hidden md:block overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead><tr className="bg-muted/50"><th className="p-3 text-left">Name</th><th className="p-3 text-left">Email</th><th className="p-3 text-left">Role</th><th className="p-3 text-center">Actions</th><th className="p-3 text-center">Sign</th><th className="p-3 text-left">Manager</th><th className="p-3 text-center">Status</th><th className="p-3 text-right">Balance</th></tr></thead>
+        <div className="hidden max-h-[720px] overflow-auto md:block">
+          <table className="w-full min-w-[1080px] text-sm">
+            <thead className="sticky top-0 z-10 bg-card shadow-sm"><tr className="bg-muted/50"><th className="p-3 text-left">Name</th><th className="p-3 text-left">Email</th><th className="p-3 text-left">Role</th><th className="p-3 text-center">Actions</th><th className="p-3 text-center">Sign</th><th className="p-3 text-left">Manager</th><th className="p-3 text-center">Status</th><th className="p-3 text-right">Balance</th></tr></thead>
             <tbody>
               {loading ? (
                 Array.from({ length: 3 }).map((_, i) => (
@@ -226,7 +298,9 @@ export default function UserManagementView() {
                     ))}
                   </tr>
                 ))
-              ) : users.map(u => (
+              ) : filteredUsers.length === 0 ? (
+                <tr><td colSpan={8} className="p-10 text-center text-muted-foreground">No users match these filters</td></tr>
+              ) : filteredUsers.map(u => (
                 <tr key={u.email} className="border-b border-border hover:bg-muted/30 transition-colors">
                   <td className="p-3 font-medium">{u.name}</td>
                   <td className="p-3 text-sm">{u.email}</td>
@@ -260,7 +334,7 @@ export default function UserManagementView() {
                       </Badge>
                     </div>
                   </td>
-                  <td className="p-3 text-right font-bold">₹{u.balance.toFixed(2)}</td>
+                  <td className="p-3 text-right font-bold">Rs. {u.balance.toFixed(2)}</td>
                 </tr>
               ))}
             </tbody>
@@ -284,6 +358,7 @@ export default function UserManagementView() {
             <div className="space-y-2">
               <Label>Password</Label>
               <Input className="h-11 sm:h-10" type="password" value={form.password} onChange={e => setForm({ ...form, password: e.target.value })} required placeholder="Create password" />
+              <p className="text-xs text-muted-foreground">{PASSWORD_REQUIREMENTS}</p>
             </div>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div className="space-y-2">
@@ -300,7 +375,7 @@ export default function UserManagementView() {
                 </Select>
               </div>
               <div className="space-y-2">
-                <Label>Initial Advance (₹)</Label>
+                <Label>Initial Advance (Rs.)</Label>
                 <Input className="h-11 sm:h-10" type="number" min="0" value={form.advance} onChange={e => setForm({ ...form, advance: e.target.value })} placeholder="0" />
               </div>
             </div>
@@ -367,6 +442,7 @@ export default function UserManagementView() {
               <div className="space-y-2">
                 <Label>Password (leave blank to keep current)</Label>
                 <Input className="h-11 sm:h-10" type="password" value={editUser.password} onChange={e => setEditUser({ ...editUser, password: e.target.value })} placeholder="Enter new password" />
+                <p className="text-xs text-muted-foreground">If changed, {PASSWORD_REQUIREMENTS.toLowerCase()}</p>
               </div>
               <div className="space-y-2">
                 <Label>Manager</Label>
@@ -405,7 +481,7 @@ export default function UserManagementView() {
         <DialogContent className="max-w-[95vw] sm:max-w-md">
           <DialogHeader><DialogTitle>Add Advance - {advanceModal?.name}</DialogTitle></DialogHeader>
           <div className="space-y-2">
-            <Label>Amount (₹)</Label>
+            <Label>Amount (Rs.)</Label>
             <Input className="h-11 sm:h-10" type="number" min="1" value={advanceAmount} onChange={e => setAdvanceAmount(e.target.value)} placeholder="Enter amount" />
           </div>
           <DialogFooter className="flex-col sm:flex-row gap-2 sm:gap-0">

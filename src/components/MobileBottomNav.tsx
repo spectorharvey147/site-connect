@@ -1,7 +1,7 @@
 import { useAuth } from '@/contexts/AuthContext';
 import { cn } from '@/lib/utils';
 import {
-  BarChart3, History, UserCheck, ShieldCheck, Users, Menu, UserCircle, Plus, ArrowLeftRight, Scale, Receipt, Settings, Shield, LogOut, FileUp, FileSpreadsheet,
+  BarChart3, History, UserCheck, ShieldCheck, Users, Menu, UserCircle, Plus, ArrowLeftRight, Scale, Receipt, Settings, Shield, LogOut, FileUp, FileSpreadsheet, BadgeCheck, Banknote,
 } from 'lucide-react';
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from '@/components/ui/sheet';
 import { useState } from 'react';
@@ -24,12 +24,12 @@ const allNavItems = [
   { id: 'history', icon: History, label: 'Claim History', roles: ['all'] },
   { id: 'ledger', icon: ArrowLeftRight, label: 'Ledger Statement', roles: ['all'] },
   { id: 'balances', icon: Scale, label: 'User Balances', roles: ['all'] },
-  { id: 'manager-approval', icon: UserCheck, label: 'Manager Approval', roles: ['Manager', 'Super Admin'] },
-  { id: 'admin-approval', icon: ShieldCheck, label: 'Admin Verification', roles: ['Admin', 'Super Admin'] },
-  { id: 'final-approval', icon: ShieldCheck, label: 'Final Approval', roles: ['Super Admin'] },
-  { id: 'accounts-processing', icon: Receipt, label: 'Accounts Processing', roles: ['Accounts', 'Super Admin'] },
+  { id: 'manager-approval', icon: UserCheck, iconClassName: 'text-indigo-600 dark:text-indigo-400', label: 'Manager Approval', roles: ['Manager', 'Super Admin'] },
+  { id: 'admin-approval', icon: ShieldCheck, iconClassName: 'text-sky-600 dark:text-sky-400', label: 'Admin Verification', roles: ['Admin', 'Super Admin'] },
+  { id: 'final-approval', icon: BadgeCheck, iconClassName: 'text-violet-600 dark:text-violet-400', label: 'Final Approval', roles: ['Super Admin'] },
+  { id: 'accounts-processing', icon: Receipt, iconClassName: 'text-emerald-600 dark:text-emerald-400', label: 'Accounts Processing', roles: ['Accounts', 'Super Admin'] },
   { id: 'accounts-sap-entry', icon: FileSpreadsheet, label: 'Accounts SAP Entry', roles: ['Accounts', 'Super Admin'] },
-  { id: 'voucher', icon: Receipt, label: 'Payment Voucher', roles: ['Accounts', 'Admin', 'Super Admin'] },
+  { id: 'voucher', icon: Banknote, label: 'Payment Voucher', roles: ['Accounts', 'Admin', 'Super Admin'] },
   { id: 'users', icon: Users, label: 'User Management', roles: ['Admin', 'Super Admin'] },
   { id: 'audit', icon: Shield, label: 'Audit Trail', roles: ['Admin', 'Super Admin'] },
   { id: 'settings', icon: Settings, label: 'Settings', roles: ['Admin', 'Super Admin'] },
@@ -43,6 +43,7 @@ export default function MobileBottomNav({ activeView, onNavigate }: MobileBottom
     ? { id: 'accounts-processing', icon: Receipt, label: 'Accounts Processing' }
     : { id: 'submit', icon: Plus, label: 'Submit Claim' };
   const PrimaryIcon = primaryAction.icon;
+  const isMoreActive = !['dashboard', 'history', 'profile', primaryAction.id].includes(activeView);
 
   const filteredAllItems = allNavItems.filter((item) => {
     if (item.roles.includes('all')) return true;
@@ -105,7 +106,14 @@ export default function MobileBottomNav({ activeView, onNavigate }: MobileBottom
 
         <Sheet open={sheetOpen} onOpenChange={setSheetOpen}>
           <SheetTrigger asChild>
-            <button className="flex h-14 flex-1 flex-col items-center justify-center py-1 text-muted-foreground transition-colors hover:text-foreground">
+            <button
+              aria-label="More navigation"
+              aria-current={isMoreActive ? 'page' : undefined}
+              className={cn(
+                'flex h-14 flex-1 flex-col items-center justify-center py-1 transition-colors',
+                isMoreActive ? 'text-primary' : 'text-muted-foreground hover:text-foreground',
+              )}
+            >
               <Menu className="h-5 w-5" />
               <span className="mt-1 text-[10px] font-medium">More</span>
             </button>
@@ -130,7 +138,7 @@ export default function MobileBottomNav({ activeView, onNavigate }: MobileBottom
                           : 'bg-muted/50 text-muted-foreground hover:bg-muted hover:text-foreground',
                       )}
                     >
-                      <Icon className="mb-2 h-6 w-6" />
+                      <Icon className={cn('mb-2 h-6 w-6', 'iconClassName' in item && item.iconClassName)} />
                       <span className="text-center text-xs font-medium leading-tight">{item.label}</span>
                     </button>
                   );
@@ -141,7 +149,7 @@ export default function MobileBottomNav({ activeView, onNavigate }: MobileBottom
               <Button
                 variant="destructive"
                 className="w-full"
-                onClick={() => { logout(); setSheetOpen(false); }}
+                onClick={() => { void logout(); setSheetOpen(false); }}
               >
                 <LogOut className="mr-2 h-4 w-4" />
                 Sign Out

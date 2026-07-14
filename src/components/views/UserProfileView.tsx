@@ -12,6 +12,7 @@ import { toast } from 'sonner';
 import { Badge } from '@/components/ui/badge';
 import ImageUpload from '@/components/ImageUpload';
 import RupeeIcon from '@/components/icons/RupeeIcon';
+import { PASSWORD_REQUIREMENTS, validatePassword } from '@/lib/password-validation';
 
 export default function UserProfileView() {
   const { user } = useAuth();
@@ -44,7 +45,7 @@ export default function UserProfileView() {
         setTxCount(txs.length);
       } catch (e) { 
         console.error('Error loading profile:', e);
-        setError((e as any).message || 'Failed to load profile');
+        setError(e instanceof Error ? e.message : 'Failed to load profile');
       }
       setLoading(false);
     };
@@ -53,15 +54,17 @@ export default function UserProfileView() {
 
   const handleChangePassword = async () => {
     if (!currentPassword) { toast.error('Enter current password'); return; }
-    if (newPassword.length < 4) { toast.error('New password must be at least 4 characters'); return; }
+    const passwordError = validatePassword(newPassword);
+    if (passwordError) { toast.error(passwordError); return; }
     if (newPassword !== confirmPassword) { toast.error('Passwords do not match'); return; }
+    if (newPassword === currentPassword) { toast.error('New password must be different from the current password'); return; }
 
     setChanging(true);
     try {
       // Verify current password
       const currentHash = hashPassword(currentPassword);
       const { data: userData } = await supabase.from('users').select('password_hash').eq('email', user!.email).single();
-      if (!userData || (userData as any).password_hash !== currentHash) {
+      if (!userData || userData.password_hash !== currentHash) {
         toast.error('Current password is incorrect');
         setChanging(false);
         return;
@@ -76,8 +79,8 @@ export default function UserProfileView() {
       setCurrentPassword('');
       setNewPassword('');
       setConfirmPassword('');
-    } catch (e: any) {
-      toast.error(e.message || 'Failed to change password');
+    } catch (e: unknown) {
+      toast.error(e instanceof Error ? e.message : 'Failed to change password');
     }
     setChanging(false);
   };
@@ -106,7 +109,7 @@ export default function UserProfileView() {
                 toast.success('Profile picture updated');
                 // Reload to refresh auth context
                 window.location.reload();
-              } catch (e: any) {
+              } catch {
                 toast.error('Failed to update picture');
               }
             }}
@@ -143,8 +146,8 @@ export default function UserProfileView() {
                 if (error) throw error;
                 toast.success(url ? 'Signature updated' : 'Signature removed');
                 window.location.reload();
-              } catch (e: any) {
-                toast.error(e.message || 'Failed to update signature');
+              } catch (e: unknown) {
+                toast.error(e instanceof Error ? e.message : 'Failed to update signature');
               }
             }}
             folder={`signatures/${user.email}`}
@@ -163,8 +166,8 @@ export default function UserProfileView() {
             </CardTitle>
           </CardHeader>
           <CardContent>
-            <p className="text-2xl font-bold text-primary">
-              {loading ? '...' : `₹${balance.toLocaleString('en-IN', { minimumFractionDigits: 2 })}`}
+            <p className="flex items-center text-2xl font-bold text-primary">
+              {loading ? '...' : <><RupeeIcon className="mr-1 h-5 w-5" />{balance.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</>}
             </p>
           </CardContent>
         </Card>
@@ -204,6 +207,7 @@ export default function UserProfileView() {
                 value={currentPassword}
                 onChange={e => setCurrentPassword(e.target.value)}
                 placeholder="Enter current password"
+                autoComplete="current-password"
               />
             </div>
           </div>
@@ -214,7 +218,9 @@ export default function UserProfileView() {
               value={newPassword}
               onChange={e => setNewPassword(e.target.value)}
               placeholder="Enter new password"
+              autoComplete="new-password"
             />
+            <p className="mt-1 text-xs text-muted-foreground">{PASSWORD_REQUIREMENTS}</p>
           </div>
           <div>
             <Label>Confirm New Password</Label>
@@ -223,6 +229,7 @@ export default function UserProfileView() {
               value={confirmPassword}
               onChange={e => setConfirmPassword(e.target.value)}
               placeholder="Confirm new password"
+              autoComplete="new-password"
             />
           </div>
           <div className="flex items-center gap-2">

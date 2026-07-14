@@ -12,6 +12,7 @@ import { amountToWords } from '@/lib/amount-to-words';
 import AttachmentPreview from '@/components/views/AttachmentPreview';
 import { toast } from 'sonner';
 import { supabase } from '@/integrations/supabase/client';
+import { collectVoucherFileIds, detectEmbeddableAttachmentFormat } from '@/lib/claim-attachments';
 
 function formatDate(d: string) {
   if (!d) return '';
@@ -467,16 +468,22 @@ export default function PaymentVoucherView() {
 
   const fetchAttachment = async (fileId: string) => {
     const { data } = supabase.storage.from('claim-attachments').getPublicUrl(fileId);
-    const response = await fetch(data.publicUrl);
-    if (!response.ok) throw new Error(`Unable to fetch attachment ${fileId}`);
-    const contentType = response.headers.get('content-type') || '';
-    const bytes = await response.arrayBuffer();
-    return {
-      bytes,
-      contentType,
-      name: fileId.split('/').pop() || fileId,
-      url: data.publicUrl,
-    };
+    const controller = new AbortController();
+    const timeout = window.setTimeout(() => controller.abort(), 60_000);
+    try {
+      const response = await fetch(data.publicUrl, { signal: controller.signal });
+      if (!response.ok) throw new Error(`Unable to fetch attachment ${fileId}`);
+      const contentType = response.headers.get('content-type') || '';
+      const bytes = await response.arrayBuffer();
+      if (bytes.byteLength === 0) throw new Error(`Attachment ${fileId} is empty`);
+      return {
+        bytes,
+        contentType,
+        name: fileId.split('/').pop() || fileId,
+      };
+    } finally {
+      window.clearTimeout(timeout);
+    }
   };
 
   const downloadCombinedVoucherPDF = async () => {
@@ -492,13 +499,17 @@ export default function PaymentVoucherView() {
       const font = await mergedPdf.embedFont(StandardFonts.Helvetica);
       const pageSize: [number, number] = [595.28, 841.89];
       const margin = 36;
+      let embeddedCount = 0;
+      let skippedCount = 0;
+
+      const printableText = (value: string) => value.replace(/[^\x20-\x7e]/g, '?').slice(0, 110);
 
       const addTextPage = (title: string, lines: string[]) => {
         const page = mergedPdf.addPage(pageSize);
         const { width, height } = page.getSize();
-        page.drawText(title, { x: margin, y: height - margin, size: 16, font, color: rgb(0.02, 0.23, 0.35) });
+        page.drawText(printableText(title), { x: margin, y: height - margin, size: 16, font, color: rgb(0.02, 0.23, 0.35) });
         lines.slice(0, 28).forEach((line, index) => {
-          page.drawText(line, { x: margin, y: height - margin - 32 - (index * 18), size: 10, font, color: rgb(0.17, 0.24, 0.31) });
+          page.drawText(printableText(line), { x: margin, y: height - margin - 32 - (index * 18), size: 10, font, color: rgb(0.17, 0.24, 0.31) });
         });
         page.drawText('Open the original attachment from ClaimFlow if this page could not be embedded.', {
           x: margin,
@@ -512,19 +523,19 @@ export default function PaymentVoucherView() {
       for (const fileId of voucherFileIds) {
         try {
           const attachment = await fetchAttachment(fileId);
-          const isPdf = attachment.contentType.includes('pdf') || /\.pdf$/i.test(attachment.name);
-          const isPng = attachment.contentType.includes('png') || /\.png$/i.test(attachment.name);
-          const isJpeg = attachment.contentType.includes('jpeg') || attachment.contentType.includes('jpg') || /\.jpe?g$/i.test(attachment.name);
+          const format = detectEmbeddableAttachmentFormat(attachment.bytes);
 
-          if (isPdf) {
+          if (format === 'pdf') {
             const sourcePdf = await PDFDocument.load(attachment.bytes);
+            if (sourcePdf.getPageCount() === 0) throw new Error('PDF contains no pages');
             const copiedPages = await mergedPdf.copyPages(sourcePdf, sourcePdf.getPageIndices());
             copiedPages.forEach((page) => mergedPdf.addPage(page));
+            embeddedCount += 1;
             continue;
           }
 
-          if (isPng || isJpeg) {
-            const image = isPng
+          if (format === 'png' || format === 'jpeg') {
+            const image = format === 'png'
               ? await mergedPdf.embedPng(attachment.bytes)
               : await mergedPdf.embedJpg(attachment.bytes);
             const page = mergedPdf.addPage(pageSize);
@@ -541,19 +552,34 @@ export default function PaymentVoucherView() {
               width: drawWidth,
               height: drawHeight,
             });
+            embeddedCount += 1;
             continue;
           }
 
-          addTextPage(`Attachment: ${attachment.name}`, [`Unsupported attachment type: ${attachment.contentType || 'unknown'}`, attachment.url]);
+          skippedCount += 1;
+          addTextPage(`Attachment: ${attachment.name}`, [
+            `This file is not a supported PDF, PNG, or JPEG (${attachment.contentType || 'unknown type'}).`,
+            'The original stored attachment has not been modified.',
+          ]);
         } catch (error) {
           console.warn('Could not append attachment to combined voucher PDF:', error);
-          addTextPage(`Attachment: ${fileId}`, ['This attachment could not be embedded in the combined PDF.']);
+          skippedCount += 1;
+          const message = String(error instanceof Error ? error.message : error);
+          const reason = message.toLowerCase().includes('encrypted')
+            ? 'This source PDF is encrypted and cannot be merged. Open the original attachment separately.'
+            : 'This attachment could not be safely embedded. Open the original attachment separately.';
+          addTextPage(`Attachment: ${fileId}`, [reason, 'The original stored attachment has not been modified.']);
         }
       }
 
       const bytes = await mergedPdf.save();
+      await PDFDocument.load(bytes);
       downloadBlob(new Blob([bytes], { type: 'application/pdf' }), `voucher-${voucher.fileName}-with-attachments.pdf`);
-      toast.success('Combined voucher PDF downloaded');
+      if (skippedCount > 0) {
+        toast.warning(`Combined voucher downloaded: ${embeddedCount} attachments included, ${skippedCount} listed as separate originals.`);
+      } else {
+        toast.success(`Combined voucher PDF downloaded with ${embeddedCount} attachments`);
+      }
     } catch (error) {
       console.error(error);
       toast.error('Could not generate combined PDF. Please try the regular PDF or print option.');
@@ -564,7 +590,7 @@ export default function PaymentVoucherView() {
 
   const allFilteredSelected = filteredClaims.length > 0 && filteredClaims.every((claim) => selectedIds.has(claim.claimIdInternal));
   const voucherFileIds = voucher
-    ? [...new Set(voucher.claims.flatMap((claim: any) => claim.fileIds || []))]
+    ? collectVoucherFileIds(voucher.claims)
     : [];
   const adminApproval = voucher ? summarizeApproval(voucher, 'admin') : null;
   const managerApproval = voucher ? summarizeApproval(voucher, 'manager') : null;
@@ -690,16 +716,14 @@ export default function PaymentVoucherView() {
               <div className="border-2 border-border rounded-lg p-4 sm:p-6">
                 <div className="voucher-header mb-4 grid grid-cols-[56px_1fr_56px] items-start gap-3 sm:grid-cols-[64px_1fr_64px]">
                   <div className="flex justify-start">
-                    {(companySettings?.logo_url || '/ipi-logo.jpg') && (
-                      <img
-                        src={companySettings?.logo_url || '/ipi-logo.jpg'}
-                        alt="Logo"
-                        width="52"
-                        height="52"
-                        className="voucher-logo block object-contain"
-                        style={{ width: '52px', height: '52px', maxWidth: '52px', maxHeight: '52px', objectFit: 'contain' }}
-                      />
-                    )}
+                    <img
+                      src={companySettings?.logo_url || '/ipi-logo.jpg'}
+                      alt="Logo"
+                      width="52"
+                      height="52"
+                      className="voucher-logo block object-contain"
+                      style={{ width: '52px', height: '52px', maxWidth: '52px', maxHeight: '52px', objectFit: 'contain' }}
+                    />
                   </div>
                   <div className="voucher-title-block text-center">
                     <h2 className="text-lg font-bold text-primary sm:text-xl">{companySettings?.company_name || 'Company'}</h2>
