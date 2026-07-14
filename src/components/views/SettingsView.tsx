@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { getCompanySettings, updateCompanySettings, getAppLists, addAppListItem, updateAppListItem, deleteAppListItem, getDropdownOptions, getAllUsers, createUser } from '@/lib/claims-api';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -8,7 +8,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Checkbox } from '@/components/ui/checkbox';
 import { Switch } from '@/components/ui/switch';
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
-import { Settings, Save, Loader2, Plus, Trash2, Building2, List, Bell, Download, Upload, Pencil } from 'lucide-react';
+import { Settings, Save, Loader2, Plus, Trash2, Building2, List, Bell, Download, Upload, Pencil, Search, CheckCircle2 } from 'lucide-react';
 import { toast } from 'sonner';
 import ImageUpload from '@/components/ImageUpload';
 
@@ -94,6 +94,24 @@ function normalizeCustomerNamesForMode(mode: string, names: string[]) {
   return mode === 'common' ? normalized : normalized.slice(0, 1);
 }
 
+function companySettingsSignature(value: Record<string, unknown>) {
+  return JSON.stringify({
+    company_name: value.company_name || '',
+    company_subtitle: value.company_subtitle || '',
+    logo_url: value.logo_url || null,
+    support_email: value.support_email || '',
+    currency_symbol: value.currency_symbol || '',
+    address: value.address || '',
+    phone: value.phone || '',
+    website: value.website || '',
+    email_notifications_enabled: value.email_notifications_enabled ?? true,
+    app_notifications_enabled: value.app_notifications_enabled ?? true,
+    auto_approve_below: Number(value.auto_approve_below) || 0,
+    require_manager_approval: value.require_manager_approval ?? true,
+    approval_note: value.approval_note || '',
+  });
+}
+
 function CustomerNameEditor({
   names,
   onChange,
@@ -153,6 +171,7 @@ function CustomerNameEditor({
 
 export default function SettingsView() {
   const [settings, setSettings] = useState<any>({});
+  const [savedSettings, setSavedSettings] = useState<Record<string, unknown>>({});
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [lists, setLists] = useState<any[]>([]);
@@ -163,6 +182,8 @@ export default function SettingsView() {
   const [newCustomerInput, setNewCustomerInput] = useState('');
   const [editCustomerInput, setEditCustomerInput] = useState('');
   const [bulkProcessing, setBulkProcessing] = useState(false);
+  const [masterSearch, setMasterSearch] = useState('');
+  const [masterType, setMasterType] = useState('all');
 
   const categories = [...new Set(
     lists
@@ -171,15 +192,34 @@ export default function SettingsView() {
       .filter(Boolean)
   )].sort((a, b) => a.localeCompare(b));
 
+  const settingsDirty = companySettingsSignature(settings) !== companySettingsSignature(savedSettings);
+  const filteredLists = useMemo(() => {
+    const query = masterSearch.trim().toLowerCase();
+    return lists.filter((item) => {
+      const type = String(item.type || '').toLowerCase();
+      if (masterType !== 'all' && type !== masterType) return false;
+      if (!query) return true;
+      return [item.value, item.project_code, item.project, ...(item.customer_names || []), ...(item.expense_categories || [])]
+        .some((value) => String(value || '').toLowerCase().includes(query));
+    });
+  }, [lists, masterSearch, masterType]);
+
+  const masterCounts = useMemo(() => ({
+    category: lists.filter((item) => String(item.type || '').toLowerCase() === 'category').length,
+    project: lists.filter((item) => String(item.type || '').toLowerCase() === 'project').length,
+    projectcode: lists.filter((item) => String(item.type || '').toLowerCase() === 'projectcode').length,
+  }), [lists]);
+
   const loadSettings = async () => {
     setLoading(true);
     setError(null);
     try {
-      const s = await getCompanySettings();
-      if (s) setSettings(s);
-      const l = await getAppLists();
+      const [s, l, dd] = await Promise.all([getCompanySettings(), getAppLists(), getDropdownOptions()]);
+      if (s) {
+        setSettings(s);
+        setSavedSettings(s);
+      }
       setLists(l);
-      const dd = await getDropdownOptions();
       setProjects(dd.projects || []);
     } catch (e) {
       console.error('Error loading settings:', e);
@@ -188,12 +228,18 @@ export default function SettingsView() {
     setLoading(false);
   };
 
+  const loadMasterData = async () => {
+    const [nextLists, dropdowns] = await Promise.all([getAppLists(), getDropdownOptions()]);
+    setLists(nextLists);
+    setProjects(dropdowns.projects || []);
+  };
+
   useEffect(() => { loadSettings(); }, []);
 
   const handleSaveSettings = async () => {
     setSaving(true);
     try {
-      await updateCompanySettings({
+      const payload = {
         company_name: settings.company_name,
         company_subtitle: settings.company_subtitle,
         logo_url: settings.logo_url,
@@ -207,7 +253,11 @@ export default function SettingsView() {
         auto_approve_below: parseFloat(settings.auto_approve_below) || 0,
         require_manager_approval: settings.require_manager_approval ?? true,
         approval_note: settings.approval_note || null,
-      });
+      };
+      await updateCompanySettings(payload);
+      const updatedSettings = { ...settings, ...payload };
+      setSettings(updatedSettings);
+      setSavedSettings(updatedSettings);
       toast.success('Settings saved');
     } catch (err: any) {
       toast.error(err.message);
@@ -252,7 +302,7 @@ export default function SettingsView() {
       toast.success('Item added');
       setNewItem(emptyNewItem);
       setNewCustomerInput('');
-      loadSettings();
+      await loadMasterData();
     } catch (err: any) {
       toast.error(err.message);
     }
@@ -303,7 +353,7 @@ export default function SettingsView() {
       });
       toast.success('Item updated');
       setEditingItem(null);
-      await loadSettings();
+      await loadMasterData();
     } catch (err: any) {
       toast.error(err.message || 'Update failed');
     }
@@ -314,7 +364,7 @@ export default function SettingsView() {
     try {
       await deleteAppListItem(id);
       toast.success('Item deleted');
-      loadSettings();
+      await loadMasterData();
     } catch (err: any) {
       toast.error(err.message);
     }
@@ -379,7 +429,6 @@ export default function SettingsView() {
         created++;
       }
       toast.success(`${created} user(s) imported`);
-      await loadSettings();
     } catch (err: any) {
       toast.error(err.message || 'User import failed');
     }
@@ -431,7 +480,7 @@ export default function SettingsView() {
         added++;
       }
       toast.success(`${added} master data item(s) imported`);
-      await loadSettings();
+      await loadMasterData();
     } catch (err: any) {
       toast.error(err.message || 'Master data import failed');
     }
@@ -447,6 +496,23 @@ export default function SettingsView() {
           Error: {error}
         </div>
       )}
+
+      <div className="sticky top-2 z-20 flex flex-col gap-3 rounded-xl border border-border bg-background/95 p-4 shadow-lg backdrop-blur sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <h1 className="flex items-center gap-2 text-xl font-bold"><Settings className="h-5 w-5 text-primary" /> Application Settings</h1>
+          <p className="mt-1 flex items-center gap-1.5 text-sm text-muted-foreground">
+            {settingsDirty ? (
+              <><span className="h-2 w-2 rounded-full bg-warning" /> You have unsaved company, notification or workflow changes.</>
+            ) : (
+              <><CheckCircle2 className="h-4 w-4 text-success" /> All settings are saved.</>
+            )}
+          </p>
+        </div>
+        <Button className="gradient-primary text-primary-foreground" onClick={handleSaveSettings} disabled={saving || !settingsDirty}>
+          {saving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />}
+          {saving ? 'Saving...' : 'Save All Changes'}
+        </Button>
+      </div>
 
       <div className="glass-card p-6">
         <h2 className="mb-4 flex items-center gap-2 text-xl font-bold"><Building2 className="h-5 w-5 text-primary" /> Company Settings</h2>
@@ -471,10 +537,6 @@ export default function SettingsView() {
           <div><Label>Website</Label><Input value={settings.website || ''} onChange={e => setSettings({ ...settings, website: e.target.value })} /></div>
           <div className="md:col-span-2"><Label>Address</Label><Textarea value={settings.address || ''} onChange={e => setSettings({ ...settings, address: e.target.value })} rows={2} /></div>
         </div>
-        <Button className="mt-4 gradient-primary text-primary-foreground" onClick={handleSaveSettings} disabled={saving}>
-          {saving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />}
-          Save Settings
-        </Button>
       </div>
 
       <div className="glass-card p-6">
@@ -501,7 +563,7 @@ export default function SettingsView() {
             />
           </div>
         </div>
-        <p className="mt-3 text-xs text-muted-foreground">Changes are saved with the "Save Settings" button above.</p>
+        <p className="mt-3 text-xs text-muted-foreground">Use “Save All Changes” in the pinned header when finished.</p>
       </div>
 
       <div className="glass-card p-6">
@@ -545,7 +607,7 @@ export default function SettingsView() {
             />
           </div>
         </div>
-        <p className="mt-3 text-xs text-muted-foreground">Changes are saved with the "Save Settings" button above.</p>
+        <p className="mt-3 text-xs text-muted-foreground">Use “Save All Changes” in the pinned header when finished.</p>
       </div>
 
       <div className="glass-card p-6">
@@ -576,6 +638,12 @@ export default function SettingsView() {
               </Label>
             </div>
           </div>
+        </div>
+
+        <div className="mb-5 grid gap-3 sm:grid-cols-3">
+          <div className="rounded-lg border border-border bg-card p-3"><p className="text-xs text-muted-foreground">Expense Categories</p><p className="mt-1 text-xl font-bold">{masterCounts.category}</p></div>
+          <div className="rounded-lg border border-border bg-card p-3"><p className="text-xs text-muted-foreground">Projects</p><p className="mt-1 text-xl font-bold">{masterCounts.project}</p></div>
+          <div className="rounded-lg border border-border bg-card p-3"><p className="text-xs text-muted-foreground">Project Cost Codes</p><p className="mt-1 text-xl font-bold">{masterCounts.projectcode}</p></div>
         </div>
 
         <div className="mb-4 flex flex-wrap items-end gap-3">
@@ -724,9 +792,26 @@ export default function SettingsView() {
           <Button size="sm" onClick={handleAddItem}><Plus className="mr-1 h-4 w-4" /> Add</Button>
         </div>
 
-        <div className="overflow-x-auto">
+        <div className="mb-3 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <div className="relative w-full sm:max-w-md">
+            <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+            <Input className="pl-9" placeholder="Search name, code, project or customer" value={masterSearch} onChange={(event) => setMasterSearch(event.target.value)} />
+          </div>
+          <Select value={masterType} onValueChange={setMasterType}>
+            <SelectTrigger className="w-full sm:w-52"><SelectValue /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All master data</SelectItem>
+              <SelectItem value="category">Categories</SelectItem>
+              <SelectItem value="project">Projects</SelectItem>
+              <SelectItem value="projectcode">Project cost codes</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+        <p className="mb-2 text-xs text-muted-foreground">Showing {filteredLists.length} of {lists.length} items</p>
+
+        <div className="max-h-[620px] overflow-auto rounded-lg border border-border">
           <table className="w-full text-sm">
-            <thead>
+            <thead className="sticky top-0 z-10 bg-card shadow-sm">
               <tr className="bg-muted/50">
                 <th className="p-3 text-left">Type</th>
                 <th className="p-3 text-left">Value</th>
@@ -738,8 +823,10 @@ export default function SettingsView() {
               </tr>
             </thead>
             <tbody>
-              {lists.map((item) => (
-                <tr key={item.id} className="border-b border-border">
+              {filteredLists.length === 0 ? (
+                <tr><td colSpan={7} className="p-10 text-center text-muted-foreground">No master data matches this search and filter.</td></tr>
+              ) : filteredLists.map((item) => (
+                <tr key={item.id} className="border-b border-border transition-colors hover:bg-muted/30">
                   <td className="p-3 capitalize">{item.type}</td>
                   <td className="p-3">{item.value}</td>
                   <td className="p-3">{item.project_code || '-'}</td>

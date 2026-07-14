@@ -1,16 +1,17 @@
 import { useState, useEffect, useRef } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { useSearchParams, useNavigate } from 'react-router-dom';
-import { submitClaim, resubmitRejectedClaim, getDropdownOptions, getCurrentBalance, getClaimById, ProjectCodeOption } from '@/lib/claims-api';
+import { submitClaim, resubmitRejectedClaim, getDropdownOptions, getCurrentBalance, getClaimById, ProjectCodeOption, validateClaimSubmissionRules } from '@/lib/claims-api';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { ChevronDown, ChevronRight, PlusCircle, Trash2, Send, Loader2 } from 'lucide-react';
+import { ChevronDown, ChevronRight, PlusCircle, Trash2, Send, Loader2, ClipboardCheck, CircleCheck, CircleAlert } from 'lucide-react';
 import { toast } from 'sonner';
 import FileUpload, { FileUploadHandle } from '@/components/views/FileUpload';
 import RupeeIcon from '@/components/icons/RupeeIcon';
 import AttachmentPreview from '@/components/views/AttachmentPreview';
+import { localIsoDate } from '@/lib/claim-validation';
 
 interface ExpenseRow {
   id: string;
@@ -62,6 +63,7 @@ export default function SubmitClaimView() {
   const [editingClaim, setEditingClaim] = useState<any>(null);
   const [existingFileIds, setExistingFileIds] = useState<string[]>([]);
   const editClaimId = searchParams.get('editClaim');
+  const today = localIsoDate();
 
   const uniqueFileIds = (fileIds: string[]) => [...new Set(fileIds.map((fileId) => String(fileId || '').trim()).filter(Boolean))];
 
@@ -191,6 +193,13 @@ export default function SubmitClaimView() {
   const totalWithBill = expenses.reduce((sum, expense) => sum + (expense.amountWithBill || 0), 0);
   const totalWithoutBill = expenses.reduce((sum, expense) => sum + (expense.amountWithoutBill || 0), 0);
   const grandTotal = totalWithBill + totalWithoutBill;
+  const completeExpenseRows = expenses.filter((expense) => (
+    expense.category
+    && expense.projectCode
+    && ((expense.amountWithBill || 0) > 0 || (expense.amountWithoutBill || 0) > 0)
+  )).length;
+  const requiredBillRows = expenses.filter((expense) => (expense.amountWithBill || 0) > 0).length;
+  const claimDetailsReady = Boolean(site) && completeExpenseRows === expenses.length && grandTotal > 0;
 
   useEffect(() => {
     if (editingClaim) return;
@@ -218,8 +227,8 @@ export default function SubmitClaimView() {
       toast.error('Please select a project site');
       return;
     }
-    if (expenses.some((expense) => !expense.category || !expense.projectCode || (expense.amountWithBill === 0 && expense.amountWithoutBill === 0))) {
-      toast.error('Every row needs a category, a matching cost code, and an amount');
+    if (expenses.some((expense) => !expense.category || !expense.projectCode || !expense.claimDate || (expense.amountWithBill === 0 && expense.amountWithoutBill === 0))) {
+      toast.error('Every row needs a category, a matching cost code, a date, and an amount');
       return;
     }
     const hasClaimLevelAttachments = ((fileUploadRef.current?.getFileCount() || 0) + existingFileIds.length) > 0;
@@ -234,6 +243,8 @@ export default function SubmitClaimView() {
 
     setLoading(true);
     try {
+      await validateClaimSubmissionRules(user!.email, expenses);
+
       let uploadedPaths: string[] = [];
       if (fileUploadRef.current) {
         uploadedPaths = await fileUploadRef.current.uploadAll();
@@ -313,16 +324,21 @@ export default function SubmitClaimView() {
       )}
 
       <div className="glass-card p-4 sm:p-6">
-        <h2 className="mb-4 flex items-center gap-2 text-lg font-bold sm:text-xl">
-          <Send className="h-5 w-5 text-primary" /> New Claim Submission
+        <h2 className="mb-1 flex flex-wrap items-center gap-2 text-lg font-bold sm:text-xl">
+          <Send className="h-5 w-5 text-primary" /> {editingClaim ? 'Resubmit Rejected Claim' : 'New Claim Submission'}
           {editingClaim && <span className="text-sm font-normal text-muted-foreground">Editing rejected claim {editingClaim.claimId}</span>}
         </h2>
+        <p className="mb-4 text-sm text-muted-foreground">Complete the claim information, add expense rows and attach supporting bills before submitting.</p>
         {editingClaim?.rejectionReason && (
           <div className="mb-4 rounded-lg border border-destructive/20 bg-destructive/10 p-3 text-sm text-destructive">
             <strong>Required changes:</strong> {editingClaim.rejectionReason}
           </div>
         )}
         <form onSubmit={handleSubmit}>
+          <div className="mb-3 flex items-center gap-3">
+            <span className="flex h-7 w-7 items-center justify-center rounded-full bg-primary text-xs font-bold text-primary-foreground">1</span>
+            <div><h3 className="text-sm font-semibold sm:text-base">Claim information</h3><p className="text-xs text-muted-foreground">Employee, project site and customer</p></div>
+          </div>
           <div className="mb-4 grid grid-cols-1 gap-4 md:grid-cols-3">
             <div className="space-y-2">
               <Label>Name</Label>
@@ -362,7 +378,10 @@ export default function SubmitClaimView() {
           </div>
 
           <div className="mb-3 flex items-center justify-between">
-            <h3 className="text-sm font-semibold sm:text-base">Expense Details</h3>
+            <div className="flex items-center gap-3">
+              <span className="flex h-7 w-7 items-center justify-center rounded-full bg-primary text-xs font-bold text-primary-foreground">2</span>
+              <div><h3 className="text-sm font-semibold sm:text-base">Expense details</h3><p className="text-xs text-muted-foreground">One row per expense with its matching bill</p></div>
+            </div>
             <Button type="button" variant="outline" size="sm" onClick={addRow}>
               <PlusCircle className="h-4 w-4 sm:mr-1" />
               <span className="hidden sm:inline">Add Expense</span>
@@ -418,7 +437,7 @@ export default function SubmitClaimView() {
                         </div>
                         <div className="space-y-1">
                           <Label className="text-xs">Date</Label>
-                          <Input type="date" value={expense.claimDate} onChange={e => updateRow(expense.id, 'claimDate', e.target.value)} />
+                          <Input type="date" max={today} value={expense.claimDate} onChange={e => updateRow(expense.id, 'claimDate', e.target.value)} />
                         </div>
                       </div>
                       <div className="space-y-1">
@@ -569,7 +588,7 @@ export default function SubmitClaimView() {
                         </Select>
                       </td>
                       <td className="p-2">
-                        <Input type="date" className="h-10 text-sm" value={expense.claimDate} onChange={e => updateRow(expense.id, 'claimDate', e.target.value)} />
+                        <Input type="date" max={today} className="h-10 text-sm" value={expense.claimDate} onChange={e => updateRow(expense.id, 'claimDate', e.target.value)} />
                       </td>
                       <td className="p-2">
                         <Input className="h-10 text-sm" value={expense.description} onChange={e => updateRow(expense.id, 'description', e.target.value)} placeholder="Description" />
@@ -641,7 +660,10 @@ export default function SubmitClaimView() {
           </div>
 
           <div className="mb-4 rounded-lg border border-border bg-muted/10 p-3 sm:p-4">
-            <h3 className="mb-2 text-sm font-semibold">Attachments (Bills / Receipts)</h3>
+            <div className="mb-3 flex items-center gap-3">
+              <span className="flex h-7 w-7 items-center justify-center rounded-full bg-primary text-xs font-bold text-primary-foreground">3</span>
+              <div><h3 className="text-sm font-semibold">Additional claim attachments</h3><p className="text-xs text-muted-foreground">Optional general bills or receipts not already attached to an expense row</p></div>
+            </div>
             {existingFileIds.length > 0 && (
               <div className="mb-3 rounded-md border border-border bg-background p-3">
                 <div className="mb-2 flex items-center justify-between gap-2">
@@ -662,10 +684,29 @@ export default function SubmitClaimView() {
             />
           </div>
 
-          <Button type="submit" className="w-full gradient-primary text-base text-primary-foreground sm:text-sm" disabled={loading}>
-            {loading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Send className="mr-2 h-4 w-4" />}
-            {loading ? 'Submitting...' : editingClaim ? 'Resubmit Claim' : 'Submit Claim'}
-          </Button>
+          <div className="rounded-xl border border-primary/20 bg-primary/5 p-4 sm:p-5">
+            <div className="mb-4 flex items-center gap-3">
+              <span className="flex h-7 w-7 items-center justify-center rounded-full bg-primary text-xs font-bold text-primary-foreground">4</span>
+              <div><h3 className="flex items-center gap-2 text-sm font-semibold sm:text-base"><ClipboardCheck className="h-4 w-4 text-primary" />Review and submit</h3><p className="text-xs text-muted-foreground">Check the final amount and form readiness</p></div>
+            </div>
+
+            <div className="mb-4 grid grid-cols-2 gap-3 lg:grid-cols-4">
+              <div className="rounded-lg border border-border/70 bg-background/80 p-3"><p className="text-xs text-muted-foreground">Expenses</p><p className="mt-1 font-bold">{expenses.length}</p></div>
+              <div className="rounded-lg border border-border/70 bg-background/80 p-3"><p className="text-xs text-muted-foreground">With bill</p><p className="mt-1 font-bold">Rs. {totalWithBill.toFixed(2)}</p></div>
+              <div className="rounded-lg border border-border/70 bg-background/80 p-3"><p className="text-xs text-muted-foreground">Without bill</p><p className="mt-1 font-bold">Rs. {totalWithoutBill.toFixed(2)}</p></div>
+              <div className="rounded-lg border border-primary/25 bg-background/80 p-3"><p className="text-xs text-muted-foreground">Grand total</p><p className="mt-1 font-bold text-primary">Rs. {grandTotal.toFixed(2)}</p></div>
+            </div>
+
+            <div className={`mb-4 flex items-start gap-2 rounded-lg border p-3 text-sm ${claimDetailsReady ? 'border-success/25 bg-success/10 text-success' : 'border-warning/25 bg-warning/10 text-warning'}`}>
+              {claimDetailsReady ? <CircleCheck className="mt-0.5 h-4 w-4 shrink-0" /> : <CircleAlert className="mt-0.5 h-4 w-4 shrink-0" />}
+              <span>{claimDetailsReady ? `Claim details are complete. Confirm bills are attached for all ${requiredBillRows} with-bill row${requiredBillRows === 1 ? '' : 's'}.` : `${completeExpenseRows} of ${expenses.length} expense rows are complete. Select a site and finish every expense row.`}</span>
+            </div>
+
+            <Button type="submit" className="w-full gradient-primary text-base text-primary-foreground sm:text-sm" disabled={loading}>
+              {loading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Send className="mr-2 h-4 w-4" />}
+              {loading ? 'Uploading and submitting...' : editingClaim ? 'Resubmit Claim' : 'Submit Claim'}
+            </Button>
+          </div>
         </form>
       </div>
     </div>

@@ -350,15 +350,17 @@ export function exportBalancesCSV(balances: any[]) {
     totalClaimed: b.totalClaimAmount?.toFixed(2) || '0.00',
     pending: b.pendingClaims?.toFixed(2) || '0.00',
     approved: b.approvedClaims?.toFixed(2) || '0.00',
+    rejected: b.rejectedClaims?.toFixed(2) || '0.00',
     balance: b.currentBalance?.toFixed(2) || '0.00',
   })), 'user-balances', [
     { key: 'name', label: 'Name' },
     { key: 'email', label: 'Email' },
     { key: 'role', label: 'Role' },
-    { key: 'initialAdvance', label: 'Initial Advance (₹)' },
-    { key: 'totalClaimed', label: 'Total Claimed (₹)' },
-    { key: 'pending', label: 'Pending (₹)' },
-    { key: 'approved', label: 'Approved (₹)' },
-    { key: 'balance', label: 'Current Balance (₹)' },
+    { key: 'initialAdvance', label: 'Initial Advance (INR)' },
+    { key: 'totalClaimed', label: 'Total Submitted (INR)' },
+    { key: 'pending', label: 'Pending (INR)' },
+    { key: 'approved', label: 'Approved / Paid (INR)' },
+    { key: 'rejected', label: 'Rejected (INR)' },
+    { key: 'balance', label: 'Current Balance (INR)' },
   ]);
 }

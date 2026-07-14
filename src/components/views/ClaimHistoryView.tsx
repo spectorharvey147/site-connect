@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { useNavigate } from 'react-router-dom';
 import { getClaimsHistory, getClaimById, getUsersDirectory, getCompanySettings } from '@/lib/claims-api';
@@ -8,10 +8,12 @@ import { Label } from '@/components/ui/label';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { ResponsiveOverlay } from '@/components/ui/responsive-overlay';
-import { History, RefreshCw, Eye, Filter, Download, FileText, Paperclip } from 'lucide-react';
+import { History, RefreshCw, Eye, Filter, Download, FileText, Paperclip, Search, ChevronLeft, ChevronRight, ArrowUpDown, X } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
-import AttachmentPreview from '@/components/views/AttachmentPreview';
+import ClaimApprovalTimeline from '@/components/views/ClaimApprovalTimeline';
+import ClaimDetailsOverview from '@/components/views/ClaimDetailsOverview';
+import ClaimAttachmentsSection from '@/components/views/ClaimAttachmentsSection';
 import { supabase } from '@/integrations/supabase/client';
 import { exportClaimsCSV } from '@/lib/export-utils';
 import { amountToWords } from '@/lib/amount-to-words';
@@ -27,23 +29,41 @@ function escapeHtml(value: unknown) {
 
 function statusBadge(status: string) {
   const normalized = status.toLowerCase();
+  let className = 'border-orange-200 bg-orange-100 text-orange-800 hover:bg-orange-100 dark:border-orange-900 dark:bg-orange-950/50 dark:text-orange-300';
+  let dotClassName = 'bg-orange-500';
+  let label = status || 'Pending';
 
-  if (normalized === 'paid') {
-    return <Badge className="bg-green-100 px-2 py-1 text-sm font-medium text-green-800 hover:bg-green-100">Paid</Badge>;
-  }
-  if (normalized === 'accounts processing') {
-    return <Badge className="bg-blue-100 px-2 py-1 text-sm font-medium text-blue-800 hover:bg-blue-100">Accounts Processing</Badge>;
-  }
-  if (normalized === 'accounts verification' || normalized === 'sent to accounts') {
-    return <Badge className="bg-cyan-100 px-2 py-1 text-sm font-medium text-cyan-800 hover:bg-cyan-100">Accounts Verification</Badge>;
-  }
-  if (normalized === 'closed' || normalized === 'approved' || normalized === 'settled') {
-    return <Badge className="bg-green-100 px-2 py-1 text-sm font-medium text-green-800 hover:bg-green-100">{normalized === 'closed' ? 'Closed' : 'Approved'}</Badge>;
-  }
   if (normalized.includes('reject')) {
-    return <Badge className="bg-red-100 px-2 py-1 text-sm font-medium text-red-800 hover:bg-red-100">Rejected</Badge>;
+    className = 'border-red-200 bg-red-100 text-red-800 hover:bg-red-100 dark:border-red-900 dark:bg-red-950/50 dark:text-red-300';
+    dotClassName = 'bg-red-500';
+    label = 'Rejected';
+  } else if (normalized === 'paid' || normalized === 'closed') {
+    className = 'border-green-300 bg-green-100 text-green-900 hover:bg-green-100 dark:border-green-900 dark:bg-green-950/50 dark:text-green-300';
+    dotClassName = 'bg-green-700';
+    label = normalized === 'closed' ? 'Closed' : 'Paid';
+  } else if (normalized.includes('accounts')) {
+    className = 'border-emerald-200 bg-emerald-100 text-emerald-800 hover:bg-emerald-100 dark:border-emerald-900 dark:bg-emerald-950/50 dark:text-emerald-300';
+    dotClassName = 'bg-emerald-500';
+  } else if (normalized.includes('super admin') || normalized.includes('final')) {
+    className = 'border-violet-200 bg-violet-100 text-violet-800 hover:bg-violet-100 dark:border-violet-900 dark:bg-violet-950/50 dark:text-violet-300';
+    dotClassName = 'bg-violet-500';
+  } else if (normalized.includes('manager')) {
+    className = 'border-indigo-200 bg-indigo-100 text-indigo-800 hover:bg-indigo-100 dark:border-indigo-900 dark:bg-indigo-950/50 dark:text-indigo-300';
+    dotClassName = 'bg-indigo-500';
+  } else if (normalized.includes('admin verified') || normalized.includes('verified')) {
+    className = 'border-sky-200 bg-sky-100 text-sky-800 hover:bg-sky-100 dark:border-sky-900 dark:bg-sky-950/50 dark:text-sky-300';
+    dotClassName = 'bg-sky-500';
+  } else if (normalized === 'draft') {
+    className = 'border-slate-200 bg-slate-100 text-slate-700 hover:bg-slate-100 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-300';
+    dotClassName = 'bg-slate-400';
   }
-  return <Badge className="bg-yellow-100 px-2 py-1 text-sm font-medium text-yellow-800 hover:bg-yellow-100">{status}</Badge>;
+
+  return (
+    <Badge variant="outline" className={`gap-1.5 whitespace-nowrap px-2.5 py-1 text-xs font-semibold ${className}`}>
+      <span className={`h-1.5 w-1.5 rounded-full ${dotClassName}`} />
+      {label}
+    </Badge>
+  );
 }
 
 function formatDate(date: string) {
@@ -67,12 +87,6 @@ function renderAttachmentLinks(fileIds?: string[]) {
   }).join('<br>');
 }
 
-function collectAllAttachmentIdsForClaim(claim: any) {
-  const top = Array.isArray(claim?.fileIds) ? claim.fileIds : [];
-  const rows = Array.isArray(claim?.expenses) ? claim.expenses.flatMap((e: any) => Array.isArray(e?.attachmentIds) ? e.attachmentIds : []) : [];
-    const storage = Array.isArray(claim?.storageFileIds) ? claim.storageFileIds : [];
-    return Array.from(new Set([...top, ...rows, ...storage].map((id) => String(id || '').trim()).filter(Boolean)));
-}
 function generateClaimPDFHtml(claims: any[], companySettings: any, users: any[] = []) {
   const logoUrl = resolveReportAssetUrl(companySettings?.logo_url);
   const logo = `<div class="logo-frame"><img src="${escapeHtml(logoUrl)}" class="logo" onerror="this.style.display='none';this.parentElement.classList.add('logo-placeholder');this.parentElement.textContent='Logo';" /></div>`;
@@ -238,18 +252,61 @@ export default function ClaimHistoryView() {
   const [companySettings, setCompanySettings] = useState<any>(null);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [reportPreview, setReportPreview] = useState<{ url: string; title: string } | null>(null);
+  const [search, setSearch] = useState('');
+  const [statusFilter, setStatusFilter] = useState('all');
+  const [categoryFilter, setCategoryFilter] = useState('all');
+  const [sortBy, setSortBy] = useState('newest');
+  const [page, setPage] = useState(1);
+  const pageSize = 10;
   const canViewUserColumn = isAdmin || user?.role === 'Manager' || user?.role === 'Accounts';
   const visibleUsers = user?.role === 'Manager'
     ? users.filter((u) => u.email === user.email || u.manager_email === user.email)
     : users;
 
-  const loadHistory = async () => {
+  const statusOptions = useMemo(() => [...new Set(claims.map((claim) => String(claim.status || '')).filter(Boolean))].sort(), [claims]);
+  const categoryOptions = useMemo(() => [...new Set(claims.flatMap((claim) => (claim.expenses || []).map((expense: any) => String(expense.category || '')).filter(Boolean)))].sort(), [claims]);
+
+  const filteredClaims = useMemo(() => {
+    const query = search.trim().toLowerCase();
+    const result = claims.filter((claim) => {
+      if (statusFilter !== 'all' && claim.status !== statusFilter) return false;
+      if (categoryFilter !== 'all' && !(claim.expenses || []).some((expense: any) => expense.category === categoryFilter)) return false;
+      if (!query) return true;
+
+      return [
+        claim.claimId,
+        claim.submittedBy,
+        claim.userEmail,
+        claim.site,
+        claim.customerName,
+        claim.status,
+        ...(claim.expenses || []).flatMap((expense: any) => [expense.category, expense.projectCode, expense.description]),
+      ].some((value) => String(value || '').toLowerCase().includes(query));
+    });
+
+    return [...result].sort((a, b) => {
+      if (sortBy === 'oldest') return new Date(a.date).getTime() - new Date(b.date).getTime();
+      if (sortBy === 'amount-high') return (b.amount || 0) - (a.amount || 0);
+      if (sortBy === 'amount-low') return (a.amount || 0) - (b.amount || 0);
+      if (sortBy === 'claim-number') return String(a.claimId || '').localeCompare(String(b.claimId || ''), undefined, { numeric: true });
+      return new Date(b.date).getTime() - new Date(a.date).getTime();
+    });
+  }, [claims, search, statusFilter, categoryFilter, sortBy]);
+
+  const pageCount = Math.max(1, Math.ceil(filteredClaims.length / pageSize));
+  const currentPage = Math.min(page, pageCount);
+  const paginatedClaims = filteredClaims.slice((currentPage - 1) * pageSize, currentPage * pageSize);
+  const pageStart = filteredClaims.length === 0 ? 0 : (currentPage - 1) * pageSize + 1;
+  const pageEnd = Math.min(currentPage * pageSize, filteredClaims.length);
+
+  const loadHistory = async (activeFilters = filters) => {
     if (!user) return;
     setLoading(true);
     try {
-      const data = await getClaimsHistory(user.email, user.role, filters.userEmail || filters.startDate || filters.endDate ? filters : undefined);
+      const data = await getClaimsHistory(user.email, user.role, activeFilters.userEmail || activeFilters.startDate || activeFilters.endDate ? activeFilters : undefined);
       setClaims(data);
       setSelectedIds(new Set());
+      setPage(1);
     } catch (e) {
       console.error(e);
     }
@@ -277,17 +334,19 @@ export default function ClaimHistoryView() {
   };
 
   const toggleSelectAll = () => {
-    if (selectedIds.size === claims.length) {
-      setSelectedIds(new Set());
-    } else {
-      setSelectedIds(new Set(claims.map((claim) => claim.claimId)));
-    }
+    const pageIds = paginatedClaims.map((claim) => claim.claimId);
+    const allPageSelected = pageIds.length > 0 && pageIds.every((id) => selectedIds.has(id));
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      pageIds.forEach((id) => allPageSelected ? next.delete(id) : next.add(id));
+      return next;
+    });
   };
 
   const getSelectedClaims = () => claims.filter((claim) => selectedIds.has(claim.claimId));
 
   const openReportPreview = (claimsForPdf?: any[], title = 'Claims Report') => {
-    const target = claimsForPdf || claims;
+    const target = claimsForPdf || filteredClaims;
     if (target.length === 0) return;
     const html = generateClaimPDFHtml(target, companySettings, users);
     const blob = new Blob([html], { type: 'text/html;charset=utf-8;' });
@@ -299,6 +358,14 @@ export default function ClaimHistoryView() {
   };
 
   const selectedTotal = getSelectedClaims().reduce((sum, claim) => sum + (claim.amount || 0), 0);
+  const hasLocalFilters = Boolean(search || statusFilter !== 'all' || categoryFilter !== 'all' || sortBy !== 'newest');
+  const clearLocalFilters = () => {
+    setSearch('');
+    setStatusFilter('all');
+    setCategoryFilter('all');
+    setSortBy('newest');
+    setPage(1);
+  };
 
   const claimFooter = (
     <div className="flex flex-col gap-2 sm:flex-row sm:justify-end">
@@ -358,8 +425,12 @@ export default function ClaimHistoryView() {
             <Input type="date" value={filters.endDate} onChange={e => setFilters({ ...filters, endDate: e.target.value })} />
           </div>
           <div className="flex items-end gap-2">
-            <Button size="sm" onClick={loadHistory}><Filter className="mr-1 h-4 w-4" /> Apply</Button>
-            <Button size="sm" variant="outline" onClick={() => { setFilters({ userEmail: '', startDate: '', endDate: '' }); loadHistory(); }}>Reset</Button>
+            <Button size="sm" onClick={() => void loadHistory(filters)}><Filter className="mr-1 h-4 w-4" /> Apply</Button>
+            <Button size="sm" variant="outline" onClick={() => {
+              const cleared = { userEmail: '', startDate: '', endDate: '' };
+              setFilters(cleared);
+              void loadHistory(cleared);
+            }}>Reset</Button>
           </div>
         </div>
       </div>
@@ -381,21 +452,65 @@ export default function ClaimHistoryView() {
 
       <div className="glass-card">
         <div className="flex flex-col justify-between gap-3 border-b border-border p-3 sm:flex-row sm:items-center sm:p-4">
-          <h2 className="flex items-center gap-2 font-bold"><History className="h-5 w-5" /> Claim History</h2>
+          <div>
+            <h2 className="flex items-center gap-2 font-bold"><History className="h-5 w-5" /> Claim History</h2>
+            <p className="mt-1 text-xs text-muted-foreground">{filteredClaims.length} of {claims.length} claims</p>
+          </div>
           <div className="flex flex-wrap gap-2">
-            <Button variant="outline" size="sm" onClick={() => openReportPreview()} disabled={claims.length === 0} className="flex-1 sm:flex-none">
+            <Button variant="outline" size="sm" onClick={() => openReportPreview()} disabled={filteredClaims.length === 0} className="flex-1 sm:flex-none">
               <FileText className="h-4 w-4 sm:mr-1" />
               <span className="hidden sm:inline">PDF Report</span>
             </Button>
-            <Button variant="outline" size="sm" onClick={() => exportClaimsCSV(claims)} disabled={claims.length === 0} className="flex-1 sm:flex-none">
+            <Button variant="outline" size="sm" onClick={() => exportClaimsCSV(filteredClaims)} disabled={filteredClaims.length === 0} className="flex-1 sm:flex-none">
               <Download className="h-4 w-4 sm:mr-1" />
               <span className="hidden sm:inline">Export CSV</span>
             </Button>
-            <Button variant="outline" size="sm" onClick={loadHistory}>
+            <Button variant="outline" size="sm" onClick={() => void loadHistory()}>
               <RefreshCw className="h-4 w-4 sm:mr-1" />
               <span className="hidden sm:inline">Refresh</span>
             </Button>
           </div>
+        </div>
+
+        <div className="grid grid-cols-1 gap-2 border-b border-border bg-muted/20 p-3 sm:grid-cols-2 lg:grid-cols-[minmax(240px,1fr)_180px_200px_180px_auto] sm:p-4">
+          <div className="relative sm:col-span-2 lg:col-span-1">
+            <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+            <Input
+              value={search}
+              onChange={(event) => { setSearch(event.target.value); setPage(1); }}
+              placeholder="Search claim, employee, site, code..."
+              className="pl-9"
+            />
+          </div>
+          <Select value={statusFilter} onValueChange={(value) => { setStatusFilter(value); setPage(1); }}>
+            <SelectTrigger><SelectValue placeholder="All statuses" /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All Statuses</SelectItem>
+              {statusOptions.map((status) => <SelectItem key={status} value={status}>{status}</SelectItem>)}
+            </SelectContent>
+          </Select>
+          <Select value={categoryFilter} onValueChange={(value) => { setCategoryFilter(value); setPage(1); }}>
+            <SelectTrigger><SelectValue placeholder="All categories" /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All Categories</SelectItem>
+              {categoryOptions.map((category) => <SelectItem key={category} value={category}>{category}</SelectItem>)}
+            </SelectContent>
+          </Select>
+          <Select value={sortBy} onValueChange={(value) => { setSortBy(value); setPage(1); }}>
+            <SelectTrigger><ArrowUpDown className="mr-2 h-4 w-4" /><SelectValue /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="newest">Newest First</SelectItem>
+              <SelectItem value="oldest">Oldest First</SelectItem>
+              <SelectItem value="amount-high">Amount: High to Low</SelectItem>
+              <SelectItem value="amount-low">Amount: Low to High</SelectItem>
+              <SelectItem value="claim-number">Claim Number</SelectItem>
+            </SelectContent>
+          </Select>
+          {hasLocalFilters && (
+            <Button variant="ghost" size="sm" onClick={clearLocalFilters} className="justify-self-start lg:justify-self-end">
+              <X className="mr-1 h-4 w-4" /> Clear
+            </Button>
+          )}
         </div>
 
         <div className="block space-y-3 p-3 md:hidden">
@@ -407,9 +522,13 @@ export default function ClaimHistoryView() {
                 <Skeleton className="h-8 w-full" />
               </div>
             ))
-          ) : claims.length === 0 ? (
-            <div className="p-8 text-center text-muted-foreground">No claims found</div>
-          ) : claims.map((claim) => (
+          ) : filteredClaims.length === 0 ? (
+            <div className="rounded-lg border border-dashed border-border p-8 text-center text-muted-foreground">
+              <Search className="mx-auto mb-2 h-8 w-8 opacity-50" />
+              <p className="font-medium text-foreground">No matching claims</p>
+              <p className="mt-1 text-xs">Try changing your search or filters.</p>
+            </div>
+          ) : paginatedClaims.map((claim) => (
             <div key={claim.claimId} className={`space-y-3 rounded-lg border border-border bg-card p-4 ${selectedIds.has(claim.claimId) ? 'ring-2 ring-primary' : ''}`}>
               <div className="flex items-start justify-between gap-2">
                 <div className="min-w-0 flex-1">
@@ -441,9 +560,9 @@ export default function ClaimHistoryView() {
                 <Button variant="outline" size="sm" className="flex-1" onClick={() => viewClaim(claim.claimIdInternal)}>
                   <Eye className="mr-1 h-4 w-4" /> Details
                 </Button>
-                {collectAllAttachmentIdsForClaim(claim).length > 0 && (
+                {claim.fileIds && claim.fileIds.length > 0 && (
                   <Button variant="outline" size="sm" className="flex-1" onClick={() => viewClaim(claim.claimIdInternal)}>
-                    <Paperclip className="mr-1 h-4 w-4 text-primary" /> Attachments ({collectAllAttachmentIdsForClaim(claim).length})
+                    <Paperclip className="mr-1 h-4 w-4 text-primary" /> Attachments ({claim.fileIds.length})
                   </Button>
                 )}
               </div>
@@ -453,11 +572,11 @@ export default function ClaimHistoryView() {
 
         <div className="hidden overflow-x-auto md:block">
           <table className="w-full text-sm">
-            <thead>
+            <thead className="sticky top-0 z-10 bg-muted shadow-sm">
               <tr className="bg-muted/50">
                 <th className="w-10 p-3">
                   <Checkbox
-                    checked={claims.length > 0 && selectedIds.size === claims.length}
+                    checked={paginatedClaims.length > 0 && paginatedClaims.every((claim) => selectedIds.has(claim.claimId))}
                     onCheckedChange={toggleSelectAll}
                   />
                 </th>
@@ -481,9 +600,9 @@ export default function ClaimHistoryView() {
                     ))}
                   </tr>
                 ))
-              ) : claims.length === 0 ? (
+              ) : filteredClaims.length === 0 ? (
                 <tr><td colSpan={canViewUserColumn ? 10 : 9} className="p-8 text-center text-muted-foreground">No claims found</td></tr>
-              ) : claims.map((claim) => (
+              ) : paginatedClaims.map((claim) => (
                 <tr key={claim.claimId} className={`border-b border-border transition-colors hover:bg-muted/30 ${selectedIds.has(claim.claimId) ? 'bg-primary/5' : ''}`}>
                   <td className="p-3">
                     <Checkbox
@@ -509,6 +628,33 @@ export default function ClaimHistoryView() {
             </tbody>
           </table>
         </div>
+
+        {!loading && filteredClaims.length > 0 && (
+          <div className="flex flex-col gap-3 border-t border-border bg-muted/10 px-3 py-3 sm:flex-row sm:items-center sm:justify-between sm:px-4">
+            <p className="text-xs text-muted-foreground">
+              Showing <span className="font-semibold text-foreground">{pageStart}-{pageEnd}</span> of <span className="font-semibold text-foreground">{filteredClaims.length}</span>
+            </p>
+            <div className="flex items-center justify-between gap-2 sm:justify-end">
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={currentPage <= 1}
+                onClick={() => setPage((value) => Math.max(1, value - 1))}
+              >
+                <ChevronLeft className="mr-1 h-4 w-4" /> Previous
+              </Button>
+              <span className="min-w-20 text-center text-xs font-medium">Page {currentPage} of {pageCount}</span>
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={currentPage >= pageCount}
+                onClick={() => setPage((value) => Math.min(pageCount, value + 1))}
+              >
+                Next <ChevronRight className="ml-1 h-4 w-4" />
+              </Button>
+            </div>
+          </div>
+        )}
       </div>
 
       <ResponsiveOverlay
@@ -524,48 +670,11 @@ export default function ClaimHistoryView() {
       >
         {selectedClaim && (
           <div className="space-y-4">
-            <div className="grid grid-cols-1 gap-3 text-sm sm:grid-cols-2">
-              <div className="rounded-lg border border-border bg-muted/20 p-3">
-                <p className="text-xs text-muted-foreground">Status</p>
-                <div className="mt-2">{statusBadge(selectedClaim.status)}</div>
-              </div>
-              <div className="rounded-lg border border-border bg-muted/20 p-3">
-                <p className="text-xs text-muted-foreground">Grand Total</p>
-                <p className="mt-2 text-2xl font-bold text-primary">Rs. {(selectedClaim.amount ?? 0).toFixed(2)}</p>
-              </div>
-              <div className="rounded-lg border border-border bg-muted/20 p-3">
-                <p className="text-xs text-muted-foreground">Submitted By</p>
-                <p className="mt-1 font-medium">{selectedClaim.submittedBy}</p>
-              </div>
-              <div className="rounded-lg border border-border bg-muted/20 p-3">
-                <p className="text-xs text-muted-foreground">Site</p>
-                <p className="mt-1 font-medium">{selectedClaim.site}</p>
-              </div>
-              <div className="rounded-lg border border-border bg-muted/20 p-3">
-                <p className="text-xs text-muted-foreground">Date</p>
-                <p className="mt-1 font-medium">{formatDate(selectedClaim.date)}</p>
-              </div>
-              <div className="rounded-lg border border-border bg-muted/20 p-3">
-                <p className="text-xs text-muted-foreground">With Bill / Without Bill</p>
-                <p className="mt-1 font-medium">Rs. {(selectedClaim.totalWithBill ?? 0).toFixed(2)} / Rs. {(selectedClaim.totalWithoutBill ?? 0).toFixed(2)}</p>
-              </div>
-              {selectedClaim.rejectionReason && (
-                <div className="rounded-lg border border-destructive/20 bg-destructive/10 p-3 text-destructive sm:col-span-2">
-                  <strong>Rejection Reason:</strong> {selectedClaim.rejectionReason}
-                </div>
-              )}
-            </div>
+            <ClaimDetailsOverview claim={selectedClaim} />
 
-            <div className="rounded-lg border border-border bg-muted/20 p-3">
-              <h4 className="mb-3 flex items-center gap-2 text-sm font-semibold">
-                <Paperclip className="h-4 w-4" /> Attachments ({collectAllAttachmentIdsForClaim(selectedClaim).length})
-              </h4>
-              {collectAllAttachmentIdsForClaim(selectedClaim).length > 0 ? (
-                <AttachmentPreview fileIds={collectAllAttachmentIdsForClaim(selectedClaim)} claimId={selectedClaim.claimId} />
-              ) : (
-                <p className="text-sm italic text-muted-foreground">No attachments for this claim</p>
-              )}
-            </div>
+            <ClaimApprovalTimeline claim={selectedClaim} />
+
+            <ClaimAttachmentsSection claim={selectedClaim} />
 
             <h4 className="text-sm font-semibold sm:text-base">Expenses</h4>
 
@@ -579,7 +688,7 @@ export default function ClaimHistoryView() {
                   {expense.attachmentIds?.length > 0 && (
                     <div className="mt-2 border-t border-border pt-2">
                       <span className="text-muted-foreground">Bills</span>
-                      <AttachmentPreview fileIds={expense.attachmentIds} claimId={selectedClaim.claimId} compact />
+                      <p className="mt-1 text-xs font-medium text-primary">{expense.attachmentIds.length} file(s) shown in Attachments above</p>
                     </div>
                   )}
                   <div className="mt-1 flex justify-between border-t border-border pt-1">
@@ -615,7 +724,7 @@ export default function ClaimHistoryView() {
                       <td className="border p-2 text-right">Rs. {(expense.amountWithoutBill ?? 0).toFixed(2)}</td>
                       <td className="border p-2">
                         {expense.attachmentIds?.length > 0 ? (
-                          <AttachmentPreview fileIds={expense.attachmentIds} claimId={selectedClaim.claimId} compact />
+                          <span className="text-xs font-medium text-primary">{expense.attachmentIds.length} file(s)</span>
                         ) : (
                           <span className="text-xs text-muted-foreground">No bill</span>
                         )}

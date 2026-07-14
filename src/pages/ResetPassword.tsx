@@ -5,6 +5,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { KeyRound, Loader2, Eye, EyeOff, Check, AlertCircle, ArrowLeft } from 'lucide-react';
+import { PASSWORD_REQUIREMENTS, validatePassword } from '@/lib/password-validation';
 
 export default function ResetPassword() {
   const [searchParams] = useSearchParams();
@@ -33,17 +34,10 @@ export default function ResetPassword() {
     setResetToken(tokenParam);
   }, [searchParams]);
 
-  const validatePassword = (password: string): string => {
-    if (!password) return 'Password is required.';
-    if (password.length < 6) return 'Password must be at least 6 characters long.';
-    if (newPassword !== confirmPassword) return 'Passwords do not match.';
-    return '';
-  };
-
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     
-    const validation = validatePassword(newPassword);
+    const validation = validatePassword(newPassword) || (newPassword !== confirmPassword ? 'Passwords do not match.' : '');
     if (validation) {
       setValidationError(validation);
       return;
@@ -187,7 +181,7 @@ export default function ResetPassword() {
               </button>
             </div>
             <p className="text-xs text-muted-foreground">
-              At least 6 characters
+              {PASSWORD_REQUIREMENTS}
             </p>
           </div>
 

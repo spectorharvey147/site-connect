@@ -1,5 +1,14 @@
 import { supabase } from '@/integrations/supabase/client';
 import { hashPassword, isDemoEmail } from '@/lib/auth';
+import { validatePassword } from '@/lib/password-validation';
+import { resolveClaimAttachments } from '@/lib/claim-attachments';
+import {
+  expenseFingerprint,
+  findDuplicateExpensePair,
+  findFutureExpenseIndex,
+  normalizeExpenseDate,
+  type ClaimExpenseRuleInput,
+} from '@/lib/claim-validation';
 
 export interface ProjectCodeOption {
   code: string;
@@ -277,6 +286,8 @@ export async function checkAdminExists(): Promise<boolean> {
 }
 
 export async function createFirstAdmin(data: { name: string; email: string; password: string }): Promise<{ ok: boolean; message?: string }> {
+  const passwordError = validatePassword(data.password);
+  if (passwordError) return { ok: false, message: passwordError };
   // First verify no admin exists
   const adminExists = await checkAdminExists();
   if (adminExists) {
@@ -705,12 +716,54 @@ export async function getCurrentBalance(email: string): Promise<number> {
 }
 
 // ============= CLAIMS =============
+export async function validateClaimSubmissionRules(userEmail: string, expenses: ClaimExpenseRuleInput[]) {
+  const missingDateIndex = expenses.findIndex((expense) => !normalizeExpenseDate(expense.claimDate));
+  if (missingDateIndex >= 0) throw new Error(`Expense #${missingDateIndex + 1} needs a claim date.`);
+
+  const futureDateIndex = findFutureExpenseIndex(expenses);
+  if (futureDateIndex >= 0) throw new Error(`Expense #${futureDateIndex + 1} cannot use a future date.`);
+
+  const duplicatePair = findDuplicateExpensePair(expenses);
+  if (duplicatePair) {
+    throw new Error(`Expenses #${duplicatePair.firstIndex + 1} and #${duplicatePair.duplicateIndex + 1} have the same date and amount.`);
+  }
+
+  if (isDemoEmail(userEmail)) return;
+
+  const { data, error } = await supabase
+    .from('claims')
+    .select('claim_id, claim_number, status, expense_items(expense_date, amount_with_bill, amount_without_bill)')
+    .eq('user_email', userEmail);
+  if (error) throw new Error(`Could not verify duplicate expenses: ${error.message}`);
+
+  const submittedFingerprints = new Map(expenses.map((expense, index) => [expenseFingerprint(expense), index]));
+  for (const storedClaim of (data || []) as any[]) {
+    if (normalizeStatus(storedClaim.status).includes('reject')) continue;
+    for (const storedExpense of storedClaim.expense_items || []) {
+      const storedDate = normalizeExpenseDate(storedExpense.expense_date || '');
+      if (!storedDate) continue;
+      const fingerprint = expenseFingerprint({
+        claimDate: storedDate,
+        amountWithBill: parseFloat(storedExpense.amount_with_bill || 0),
+        amountWithoutBill: parseFloat(storedExpense.amount_without_bill || 0),
+      });
+      const submittedIndex = submittedFingerprints.get(fingerprint);
+      if (submittedIndex != null) {
+        const claimNumber = storedClaim.claim_number || storedClaim.claim_id;
+        throw new Error(`Possible duplicate: expense #${submittedIndex + 1} has the same date and amount as ${claimNumber}.`);
+      }
+    }
+  }
+}
+
 export async function submitClaim(claim: {
   site: string;
   customerName?: string;
   expenses: Array<{ category: string; projectCode: string; customerName?: string; claimDate: string; description: string; amountWithBill: number; amountWithoutBill: number; attachmentIds?: string[] }>;
   fileIds?: string[];
 }, userEmail: string, userName: string) {
+  await validateClaimSubmissionRules(userEmail, claim.expenses);
+
   if (isDemoEmail(userEmail)) {
     return { ok: true, message: `Demo claim submitted for ${userName}. Supabase was not changed.` };
   }
@@ -2072,25 +2125,8 @@ export async function getClaimsHistory(userEmail: string, userRole: string, filt
 
   query = query.order('created_at', { ascending: false });
   const result = await query;
-  return (result.data || []).map((c: any) => ({
-    claimId: c.claim_number || c.claim_id,
-    claimIdInternal: c.claim_id,
-    date: c.created_at,
-    submittedBy: c.submitted_by,
-    userEmail: c.user_email,
-    site: c.site_name,
-    customerName: c.customer_name,
-    amount: getClaimAmount(c),
-    submittedAmount: getSubmittedAmount(c),
-    verifiedAmount: c.verified_amount == null ? null : parseFloat(c.verified_amount),
-    totalWithBill: parseFloat(c.total_with_bill || 0),
-    totalWithoutBill: parseFloat(c.total_without_bill || 0),
-    status: c.status,
-    rejectionReason: c.rejection_reason,
-    paymentVoucherCode: c.payment_voucher_code,
-    paymentVoucherGeneratedAt: c.payment_voucher_generated_at,
-    fileIds: c.drive_file_ids || [],
-    expenses: (c.expense_items || []).map((e: any) => ({
+  return (result.data || []).map((c: any) => {
+    const expenses = (c.expense_items || []).map((e: any) => ({
       category: e.category,
       projectCode: e.project_code,
       customerName: e.customer_name || c.customer_name || '',
@@ -2100,8 +2136,53 @@ export async function getClaimsHistory(userEmail: string, userRole: string, filt
       amountWithoutBill: parseFloat(e.amount_without_bill || 0),
       amount: parseFloat(e.amount_with_bill || 0) + parseFloat(e.amount_without_bill || 0),
       attachmentIds: e.attachment_ids || [],
-    })),
-  }));
+    }));
+
+    return {
+      claimId: c.claim_number || c.claim_id,
+      claimIdInternal: c.claim_id,
+      date: c.created_at,
+      submittedBy: c.submitted_by,
+      userEmail: c.user_email,
+      site: c.site_name,
+      customerName: c.customer_name,
+      amount: getClaimAmount(c),
+      submittedAmount: getSubmittedAmount(c),
+      verifiedAmount: c.verified_amount == null ? null : parseFloat(c.verified_amount),
+      totalWithBill: parseFloat(c.total_with_bill || 0),
+      totalWithoutBill: parseFloat(c.total_without_bill || 0),
+      status: c.status,
+      rejectionReason: c.rejection_reason,
+      paymentVoucherCode: c.payment_voucher_code,
+      paymentVoucherGeneratedAt: c.payment_voucher_generated_at,
+      ...resolveClaimAttachments(c.drive_file_ids, expenses),
+      expenses,
+    };
+  });
+}
+
+async function listClaimStorageFileIds(claimId: string) {
+  const results: string[] = [];
+  const queue = [String(claimId || '').replace(/\/$/, '')];
+
+  while (queue.length > 0) {
+    const currentPath = queue.shift();
+    if (!currentPath) continue;
+    const { data, error } = await supabase.storage
+      .from('claim-attachments')
+      .list(currentPath, { limit: 1000 });
+    if (error || !Array.isArray(data)) continue;
+
+    data.forEach((entry) => {
+      if (!entry?.name) return;
+      const entryPath = `${currentPath}/${entry.name}`;
+      const isFolder = entry.id == null && entry.metadata == null;
+      if (isFolder) queue.push(entryPath);
+      else results.push(entryPath);
+    });
+  }
+
+  return results;
 }
 
 export async function getClaimById(claimId: string) {
@@ -2113,37 +2194,29 @@ export async function getClaimById(claimId: string) {
   if (!c) return null;
   // load expense items
   const { data: items } = await supabase.from('expense_items').select('*').eq('claim_id', c.claim_id);
-  // recursively list objects in storage under the claim folder to include files nested under expense directories
-  async function listStorageFilesRecursively(path: string) {
-    const results: string[] = [];
-    const queue = [path.replace(/\/$/, '')];
-
-    while (queue.length > 0) {
-      const currentPath = queue.shift()!;
-      const { data: storageList, error: storageErr } = await supabase.storage.from('claim-attachments').list(currentPath, { limit: 1000 });
-      if (storageErr || !Array.isArray(storageList)) continue;
-
-      for (const entry of storageList) {
-        if (!entry || !entry.name) continue;
-        const entryPath = `${currentPath}/${entry.name}`;
-        const isFolder = (entry as any).type === 'folder' || (entry.id == null && entry.metadata == null);
-        if (isFolder) {
-          queue.push(entryPath);
-        } else {
-          results.push(entryPath);
-        }
-      }
-    }
-
-    return results;
-  }
-
+  const expenses = (items || []).map((e: any) => ({
+    category: e.category,
+    projectCode: e.project_code,
+    customerName: e.customer_name || c.customer_name || '',
+    claimDate: e.expense_date,
+    description: e.description,
+    amountWithBill: parseFloat(e.amount_with_bill || 0),
+    amountWithoutBill: parseFloat(e.amount_without_bill || 0),
+    amount: parseFloat(e.amount_with_bill || 0) + parseFloat(e.amount_without_bill || 0),
+    attachmentIds: e.attachment_ids || [],
+  }));
+  const approvalTrail = (await getClaimApprovalTrail([c.claim_id]))[c.claim_id] || {};
   let storageFileIds: string[] = [];
   try {
-    storageFileIds = await listStorageFilesRecursively(c.claim_id);
-  } catch (e) {
-    // ignore storage listing failures — best-effort only
+    storageFileIds = await listClaimStorageFileIds(c.claim_id);
+  } catch (error) {
+    console.warn('Unable to list claim storage attachments:', error);
   }
+  const attachments = resolveClaimAttachments(
+    [...(c.drive_file_ids || []), ...storageFileIds],
+    expenses,
+  );
+
   return {
     claimId: c.claim_number || c.claim_id,
     claimIdInternal: c.claim_id,
@@ -2166,38 +2239,36 @@ export async function getClaimById(claimId: string) {
     rejectionReason: c.rejection_reason,
     paymentVoucherCode: c.payment_voucher_code,
     paymentVoucherGeneratedAt: c.payment_voucher_generated_at,
-    expenses: (items || []).map((e: any) => ({
-      category: e.category,
-      projectCode: e.project_code,
-      customerName: e.customer_name || c.customer_name || '',
-      claimDate: e.expense_date,
-      description: e.description,
-      amountWithBill: parseFloat(e.amount_with_bill || 0),
-      amountWithoutBill: parseFloat(e.amount_without_bill || 0),
-      amount: parseFloat(e.amount_with_bill || 0) + parseFloat(e.amount_without_bill || 0),
-      attachmentIds: e.attachment_ids || [],
-    })),
-    fileIds: c.drive_file_ids || [],
+    expenses,
+    approvalTrail,
     storageFileIds,
+    ...attachments,
   };
 }
 
-type ApprovalStamp = {
+export type ApprovalStamp = {
   name: string;
   email: string;
   date: string;
   signatureUrl?: string;
+  remarks?: string;
 };
 
-type ClaimApprovalTrail = {
+export type ClaimApprovalTrail = {
   admin?: ApprovalStamp;
   manager?: ApprovalStamp;
   final?: ApprovalStamp;
   accounts?: ApprovalStamp;
   paid?: ApprovalStamp;
+  rejected?: ApprovalStamp;
 };
 
-function approvalStamp(email: string | null | undefined, date: string | null | undefined, usersMap: Record<string, { name: string; signatureUrl?: string }>): ApprovalStamp | undefined {
+function approvalStamp(
+  email: string | null | undefined,
+  date: string | null | undefined,
+  usersMap: Record<string, { name: string; signatureUrl?: string }>,
+  remarks?: string | null,
+): ApprovalStamp | undefined {
   const normalizedEmail = String(email || '').trim().toLowerCase();
   if (!normalizedEmail || !date) return undefined;
   const user = usersMap[normalizedEmail];
@@ -2206,6 +2277,7 @@ function approvalStamp(email: string | null | undefined, date: string | null | u
     name: user?.name || normalizedEmail,
     date,
     signatureUrl: user?.signatureUrl || '',
+    remarks: String(remarks || '').trim() || undefined,
   };
 }
 
@@ -2216,9 +2288,6 @@ function isMissingFinalApprovalColumnError(error: any) {
 
 export async function getClaimApprovalTrail(claimIds: string[]): Promise<Record<string, ClaimApprovalTrail>> {
   const uniqueIds = [...new Set(claimIds.map((id) => String(id || '').trim()).filter(Boolean))];
-  console.log('Approval trail input:', claimIds);
-console.log('Approval trail uniqueIds:', uniqueIds);
-console.log('Is array?', Array.isArray(uniqueIds));
   if (uniqueIds.length === 0) return {};
 
   if (isDemoMode()) {
@@ -2248,10 +2317,10 @@ console.log('Is array?', Array.isArray(uniqueIds));
 
   const { data: auditRows } = await supabase
     .from('audit_logs' as any)
-    .select('target_id,action,performed_by,created_at')
+    .select('target_id,action,performed_by,created_at,details')
     .eq('target_type', 'claim')
     .in('target_id', uniqueIds)
-    .in('action', ['claim_admin_verified', 'claim_manager_approved', 'claim_admin_approved', 'claim_final_approved', 'claim_accounts_verified', 'claim_paid'])
+    .in('action', ['claim_admin_verified', 'claim_manager_approved', 'claim_admin_approved', 'claim_final_approved', 'claim_accounts_verified', 'claim_paid', 'claim_rejected'])
     .order('created_at', { ascending: true });
 
   const emails = new Set<string>();
@@ -2313,7 +2382,7 @@ console.log('Is array?', Array.isArray(uniqueIds));
   (auditRows || []).forEach((row: any) => {
     const id = String(row.target_id || '');
     if (!id) return;
-    const stamp = approvalStamp(row.performed_by, row.created_at, usersMap);
+    const stamp = approvalStamp(row.performed_by, row.created_at, usersMap, row.details);
     if (!stamp) return;
     const trail = trails[id] || {};
     if (row.action === 'claim_admin_verified') trail.admin = stamp;
@@ -2321,6 +2390,7 @@ console.log('Is array?', Array.isArray(uniqueIds));
     if (row.action === 'claim_admin_approved' || row.action === 'claim_final_approved') trail.final = stamp;
     if (row.action === 'claim_accounts_verified') trail.accounts = stamp;
     if (row.action === 'claim_paid') trail.paid = stamp;
+    if (row.action === 'claim_rejected') trail.rejected = stamp;
     trails[id] = trail;
   });
 
@@ -2455,6 +2525,8 @@ export async function createUser(newUser: {
   date_of_joining?: string;
   signatureUrl?: string;
 }) {
+  const passwordError = validatePassword(newUser.password);
+  if (passwordError) throw new Error(passwordError);
   if (isDemoMode()) return { ok: true, message: `Demo user ${newUser.name} previewed. Supabase was not changed.` };
 
   const email = newUser.email.trim().toLowerCase();
@@ -2519,6 +2591,10 @@ export async function createUser(newUser: {
 }
 
 export async function updateUser(payload: { originalEmail: string; name?: string; email?: string; role?: string; password?: string; manager?: string; signatureUrl?: string }) {
+  if (payload.password) {
+    const passwordError = validatePassword(payload.password);
+    if (passwordError) throw new Error(passwordError);
+  }
   if (isDemoMode()) return;
 
   const oldEmail = payload.originalEmail.trim().toLowerCase();

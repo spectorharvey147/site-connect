@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { CheckCircle2, CreditCard, Eye, Loader2, Paperclip, RefreshCw } from 'lucide-react';
+import { CheckCircle2, CreditCard, Eye, Loader2, RefreshCw, WalletCards } from 'lucide-react';
 import { toast } from 'sonner';
 import { useAuth } from '@/contexts/AuthContext';
 import { approveClaimAsAccounts, getAccountsClaims, getClaimById, markClaimPaid } from '@/lib/claims-api';
@@ -10,7 +10,10 @@ import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { ResponsiveOverlay } from '@/components/ui/responsive-overlay';
 import { Skeleton } from '@/components/ui/skeleton';
-import AttachmentPreview from '@/components/views/AttachmentPreview';
+import { Checkbox } from '@/components/ui/checkbox';
+import ClaimApprovalTimeline from '@/components/views/ClaimApprovalTimeline';
+import ClaimDetailsOverview from '@/components/views/ClaimDetailsOverview';
+import ClaimAttachmentsSection from '@/components/views/ClaimAttachmentsSection';
 
 function formatCurrency(value: number) {
   return `Rs. ${Number(value || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -18,13 +21,6 @@ function formatCurrency(value: number) {
 
 function formatDate(date?: string) {
   return date ? new Date(date).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) : '-';
-}
-
-function collectAllAttachmentIdsForClaim(claim: any) {
-  const top = Array.isArray(claim?.fileIds) ? claim.fileIds : [];
-  const rows = Array.isArray(claim?.expenses) ? claim.expenses.flatMap((expense: any) => Array.isArray(expense?.attachmentIds) ? expense.attachmentIds : []) : [];
-  const storage = Array.isArray(claim?.storageFileIds) ? claim.storageFileIds : [];
-  return Array.from(new Set([...top, ...rows, ...storage].map((id) => String(id || '').trim()).filter(Boolean)));
 }
 
 function StatusBadge({ status }: { status: string }) {
@@ -49,7 +45,7 @@ function ClaimExpenseDetails({ claim }: { claim: any }) {
             {expense.attachmentIds?.length > 0 && (
               <div className="mt-2 border-t border-border pt-2">
                 <span className="text-muted-foreground">Bills</span>
-                <AttachmentPreview fileIds={expense.attachmentIds} claimId={claim.claimId} compact />
+                <p className="mt-1 text-xs font-medium text-primary">{expense.attachmentIds.length} file(s) shown in Attachments</p>
               </div>
             )}
             <div className="mt-1 flex justify-between border-t border-border pt-1">
@@ -85,7 +81,7 @@ function ClaimExpenseDetails({ claim }: { claim: any }) {
                 <td className="border p-2 text-right">{formatCurrency(expense.amountWithoutBill)}</td>
                 <td className="border p-2">
                   {expense.attachmentIds?.length > 0 ? (
-                    <AttachmentPreview fileIds={expense.attachmentIds} claimId={claim.claimId} compact />
+                    <span className="text-xs font-medium text-primary">{expense.attachmentIds.length} file(s)</span>
                   ) : (
                     <span className="text-xs text-muted-foreground">No bill</span>
                   )}
@@ -112,48 +108,11 @@ function ClaimDetailsPanel({ claim }: { claim: any }) {
 
   return (
     <div className="space-y-4 text-sm">
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-        <div className="rounded-lg border border-border bg-muted/20 p-3">
-          <p className="text-xs text-muted-foreground">Submitted By</p>
-          <p className="mt-1 font-medium">{claim.submittedBy}</p>
-        </div>
-        <div className="rounded-lg border border-border bg-muted/20 p-3">
-          <p className="text-xs text-muted-foreground">Site</p>
-          <p className="mt-1 font-medium">{claim.site}</p>
-        </div>
-        <div className="rounded-lg border border-border bg-muted/20 p-3">
-          <p className="text-xs text-muted-foreground">Claim Date</p>
-          <p className="mt-1 font-medium">{formatDate(claim.date)}</p>
-        </div>
-        <div className="rounded-lg border border-border bg-muted/20 p-3">
-          <p className="text-xs text-muted-foreground">Status</p>
-          <div className="mt-2"><StatusBadge status={claim.status || ''} /></div>
-        </div>
-        <div className="rounded-lg border border-border bg-muted/20 p-3">
-          <p className="text-xs text-muted-foreground">Grand Total</p>
-          <p className="mt-1 text-2xl font-bold text-primary">{formatCurrency(claim.verifiedAmount ?? claim.amount)}</p>
-          {claim.submittedAmount != null && claim.submittedAmount !== (claim.verifiedAmount ?? claim.amount) && (
-            <p className="text-xs text-muted-foreground">Submitted {formatCurrency(claim.submittedAmount)}</p>
-          )}
-        </div>
-        <div className="rounded-lg border border-border bg-muted/20 p-3">
-          <p className="text-xs text-muted-foreground">With Bill</p>
-          <p className="mt-1 font-medium">{formatCurrency(claim.totalWithBill)}</p>
-        </div>
-        <div className="rounded-lg border border-border bg-muted/20 p-3">
-          <p className="text-xs text-muted-foreground">Without Bill</p>
-          <p className="mt-1 font-medium">{formatCurrency(claim.totalWithoutBill)}</p>
-        </div>
-      </div>
+      <ClaimDetailsOverview claim={claim} />
 
-      {collectAllAttachmentIdsForClaim(claim).length > 0 && (
-        <div className="rounded-lg border border-border bg-muted/20 p-3">
-          <h4 className="mb-3 flex items-center gap-2 text-sm font-semibold">
-            <Paperclip className="h-4 w-4" /> Attachments ({collectAllAttachmentIdsForClaim(claim).length})
-          </h4>
-          <AttachmentPreview fileIds={collectAllAttachmentIdsForClaim(claim)} claimId={claim.claimId} />
-        </div>
-      )}
+      <ClaimAttachmentsSection claim={claim} />
+
+      <ClaimApprovalTimeline claim={claim} />
 
       <div className="rounded-lg border border-border bg-muted/20 p-3">
         <h4 className="mb-3 text-sm font-semibold">Expense Details</h4>
@@ -174,11 +133,20 @@ export default function AccountsProcessingView() {
   const [amount, setAmount] = useState('');
   const [reference, setReference] = useState('');
   const [note, setNote] = useState('');
+  const [selectedPayIds, setSelectedPayIds] = useState<string[]>([]);
+  const [bulkPayOpen, setBulkPayOpen] = useState(false);
+  const [bulkReference, setBulkReference] = useState('');
+  const [bulkNote, setBulkNote] = useState('');
 
   const loadClaims = async () => {
     setLoading(true);
     try {
-      setClaims(await getAccountsClaims());
+      const rows = await getAccountsClaims();
+      setClaims(rows);
+      const eligibleIds = new Set(rows
+        .filter((claim) => ['payment processing', 'accounts processing'].includes(String(claim.status || '').toLowerCase()))
+        .map((claim) => claim.claimIdInternal || claim.claimId));
+      setSelectedPayIds((current) => current.filter((id) => eligibleIds.has(id)));
     } catch (error: any) {
       toast.error(error.message || 'Failed to load accounts claims');
     } finally {
@@ -192,6 +160,18 @@ export default function AccountsProcessingView() {
 
   const accountsVerification = useMemo(() => claims.filter((claim) => ['accounts verification', 'sent to accounts'].includes(String(claim.status || '').toLowerCase())), [claims]);
   const processingClaims = useMemo(() => claims.filter((claim) => ['payment processing', 'accounts processing'].includes(String(claim.status || '').toLowerCase())), [claims]);
+  const selectedPaySet = useMemo(() => new Set(selectedPayIds), [selectedPayIds]);
+  const selectedPayClaims = useMemo(() => processingClaims.filter((claim) => selectedPaySet.has(claim.claimIdInternal || claim.claimId)), [processingClaims, selectedPaySet]);
+  const selectedPayTotal = useMemo(() => selectedPayClaims.reduce((sum, claim) => sum + Number(claim.verifiedAmount ?? claim.amount ?? 0), 0), [selectedPayClaims]);
+  const allProcessingSelected = processingClaims.length > 0 && processingClaims.every((claim) => selectedPaySet.has(claim.claimIdInternal || claim.claimId));
+
+  const togglePayClaim = (claimId: string) => {
+    setSelectedPayIds((current) => current.includes(claimId) ? current.filter((id) => id !== claimId) : [...current, claimId]);
+  };
+
+  const toggleAllProcessing = (checked: boolean) => {
+    setSelectedPayIds(checked ? processingClaims.map((claim) => claim.claimIdInternal || claim.claimId) : []);
+  };
 
   const openVerify = async (claim: any) => {
     const fallbackClaim = { ...claim, status: claim.status || 'Accounts Verification' };
@@ -268,11 +248,47 @@ export default function AccountsProcessingView() {
     }
   };
 
+  const handleBulkPaid = async () => {
+    if (!user || selectedPayClaims.length === 0) return;
+    setProcessing(true);
+    const failedIds: string[] = [];
+    let completed = 0;
+    for (const claim of selectedPayClaims) {
+      const claimId = claim.claimIdInternal || claim.claimId;
+      const paidAmount = Number(claim.verifiedAmount ?? claim.amount ?? 0);
+      if (!claimId || !Number.isFinite(paidAmount) || paidAmount <= 0) {
+        failedIds.push(claimId);
+        continue;
+      }
+      try {
+        await markClaimPaid(claimId, user.email, paidAmount, bulkReference.trim(), bulkNote.trim());
+        completed += 1;
+      } catch (error) {
+        console.error(`Failed to mark ${claim.claimId || claimId} paid:`, error);
+        failedIds.push(claimId);
+      }
+    }
+
+    if (completed > 0) toast.success(`${completed} claim${completed === 1 ? '' : 's'} marked paid`);
+    if (failedIds.length > 0) toast.error(`${failedIds.length} claim${failedIds.length === 1 ? '' : 's'} could not be updated and remain selected`);
+    setSelectedPayIds(failedIds);
+    if (failedIds.length === 0) {
+      setBulkPayOpen(false);
+      setBulkReference('');
+      setBulkNote('');
+    }
+    await loadClaims();
+    setProcessing(false);
+  };
+
   const ClaimTable = ({ rows, mode }: { rows: any[]; mode: 'verify' | 'pay' }) => (
     <div className="overflow-x-auto rounded-md border border-border bg-card">
       <table className="min-w-[900px] w-full text-sm">
         <thead className="bg-muted/50">
           <tr>
+            {mode === 'pay' ? (
+              <th className="w-12 p-3 text-center"><Checkbox checked={allProcessingSelected} onCheckedChange={(checked) => toggleAllProcessing(Boolean(checked))} aria-label="Select all payment-processing claims" /></th>
+            ) : null}
             <th className="p-3 text-left">Claim ID</th>
             <th className="p-3 text-left">Date</th>
             <th className="p-3 text-left">User</th>
@@ -286,13 +302,16 @@ export default function AccountsProcessingView() {
           {loading ? (
             Array.from({ length: 3 }).map((_, index) => (
               <tr key={index} className="border-t border-border">
-                {Array.from({ length: 7 }).map((__, cell) => <td key={cell} className="p-3"><Skeleton className="h-4 w-full" /></td>)}
+                {Array.from({ length: mode === 'pay' ? 8 : 7 }).map((__, cell) => <td key={cell} className="p-3"><Skeleton className="h-4 w-full" /></td>)}
               </tr>
             ))
           ) : rows.length === 0 ? (
-            <tr><td colSpan={7} className="p-8 text-center text-muted-foreground">No claims in this stage</td></tr>
+            <tr><td colSpan={mode === 'pay' ? 8 : 7} className="p-8 text-center text-muted-foreground">No claims in this stage</td></tr>
           ) : rows.map((claim) => (
             <tr key={claim.claimIdInternal || claim.claimId} className="border-t border-border hover:bg-muted/30">
+              {mode === 'pay' ? (
+                <td className="p-3 text-center"><Checkbox checked={selectedPaySet.has(claim.claimIdInternal || claim.claimId)} onCheckedChange={() => togglePayClaim(claim.claimIdInternal || claim.claimId)} aria-label={`Select ${claim.claimId}`} /></td>
+              ) : null}
               <td className="p-3 font-mono text-xs">{claim.claimId}</td>
               <td className="p-3">{formatDate(claim.date)}</td>
               <td className="p-3">{claim.submittedBy}</td>
@@ -330,7 +349,20 @@ export default function AccountsProcessingView() {
       </section>
 
       <section className="glass-card p-4">
-        <h3 className="mb-3 text-sm font-semibold uppercase text-muted-foreground">Payment Processing</h3>
+        <div className="mb-3 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <h3 className="text-sm font-semibold uppercase text-muted-foreground">Payment Processing</h3>
+            <p className="mt-1 text-xs text-muted-foreground">{selectedPayIds.length} selected · {formatCurrency(selectedPayTotal)}</p>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <Button type="button" variant="outline" size="sm" onClick={() => toggleAllProcessing(!allProcessingSelected)} disabled={processingClaims.length === 0}>
+              {allProcessingSelected ? 'Clear Selection' : 'Select All'}
+            </Button>
+            <Button type="button" size="sm" className="gradient-success text-success-foreground" onClick={() => setBulkPayOpen(true)} disabled={selectedPayIds.length === 0 || processing}>
+              <WalletCards className="mr-2 h-4 w-4" />Mark Selected Paid
+            </Button>
+          </div>
+        </div>
         <ClaimTable rows={processingClaims} mode="pay" />
       </section>
 
@@ -355,6 +387,44 @@ export default function AccountsProcessingView() {
           <ClaimDetailsPanel claim={verifyClaim} />
           <div><Label>Accounts Verified Amount</Label><Input type="number" min="0" step="0.01" value={amount} onChange={(event) => setAmount(event.target.value)} /></div>
           <div><Label>Accounts Note</Label><Textarea rows={4} value={note} onChange={(event) => setNote(event.target.value)} placeholder="Optional verification note" /></div>
+        </div>
+      </ResponsiveOverlay>
+
+      <ResponsiveOverlay
+        open={bulkPayOpen}
+        onOpenChange={(open) => {
+          if (!processing) setBulkPayOpen(open);
+        }}
+        title={`Mark ${selectedPayClaims.length} Claims Paid`}
+        desktopClassName="max-w-3xl"
+        mobileClassName="max-h-[94svh]"
+        bodyClassName="max-h-[72vh] overflow-y-auto pr-1"
+        footer={bulkPayOpen ? (
+          <div className="flex flex-col gap-2 sm:flex-row sm:justify-end">
+            <Button variant="outline" onClick={() => setBulkPayOpen(false)} disabled={processing}>Cancel</Button>
+            <Button className="gradient-success text-success-foreground" onClick={handleBulkPaid} disabled={processing || selectedPayClaims.length === 0}>
+              {processing ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <WalletCards className="mr-2 h-4 w-4" />}
+              Confirm & Mark All Paid
+            </Button>
+          </div>
+        ) : undefined}
+      >
+        <div className="space-y-4">
+          <div className="grid grid-cols-2 gap-3">
+            <div className="rounded-lg border border-border bg-muted/20 p-3"><p className="text-xs text-muted-foreground">Selected Claims</p><p className="mt-1 text-xl font-bold">{selectedPayClaims.length}</p></div>
+            <div className="rounded-lg border border-border bg-muted/20 p-3"><p className="text-xs text-muted-foreground">Total Paid Amount</p><p className="mt-1 text-xl font-bold text-success">{formatCurrency(selectedPayTotal)}</p></div>
+          </div>
+          <div className="rounded-lg border border-warning/25 bg-warning/10 p-3 text-sm text-warning">
+            Each claim will be paid using its own accounts-approved amount. Ledger, payment status and audit information will be updated separately for every claim.
+          </div>
+          <div className="max-h-64 overflow-auto rounded-lg border border-border">
+            <table className="w-full min-w-[520px] text-sm">
+              <thead className="sticky top-0 bg-card"><tr className="bg-muted/50"><th className="p-2 text-left">Claim</th><th className="p-2 text-left">Employee</th><th className="p-2 text-right">Paid Amount</th></tr></thead>
+              <tbody>{selectedPayClaims.map((claim) => <tr key={claim.claimIdInternal || claim.claimId} className="border-t border-border"><td className="p-2 font-mono text-xs">{claim.claimId}</td><td className="p-2">{claim.submittedBy}</td><td className="p-2 text-right font-semibold">{formatCurrency(claim.verifiedAmount ?? claim.amount)}</td></tr>)}</tbody>
+            </table>
+          </div>
+          <div><Label>Shared Payment Reference</Label><Input value={bulkReference} onChange={(event) => setBulkReference(event.target.value)} placeholder="UTR / cheque / cash reference applied to all selected claims" /></div>
+          <div><Label>Shared Payment Note</Label><Textarea rows={3} value={bulkNote} onChange={(event) => setBulkNote(event.target.value)} placeholder="Optional note applied to all selected claims" /></div>
         </div>
       </ResponsiveOverlay>
 

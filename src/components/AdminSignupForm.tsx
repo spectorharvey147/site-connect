@@ -5,6 +5,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Loader2, UserPlus, ArrowLeft, ShieldCheck } from 'lucide-react';
 import { toast } from 'sonner';
+import { PASSWORD_REQUIREMENTS, validatePassword } from '@/lib/password-validation';
 
 interface AdminSignupFormProps {
   onBack: () => void;
@@ -31,8 +32,9 @@ export default function AdminSignupForm({ onBack, onSuccess }: AdminSignupFormPr
       setError('Please enter your email address');
       return;
     }
-    if (password.length < 6) {
-      setError('Password must be at least 6 characters');
+    const passwordError = validatePassword(password);
+    if (passwordError) {
+      setError(passwordError);
       return;
     }
     if (password !== confirmPassword) {
@@ -49,8 +51,8 @@ export default function AdminSignupForm({ onBack, onSuccess }: AdminSignupFormPr
       } else {
         setError(result.message || 'Failed to create admin account');
       }
-    } catch (err: any) {
-      setError(err.message || 'Network error. Please try again.');
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : 'Network error. Please try again.');
     }
     setLoading(false);
   };
@@ -109,10 +111,11 @@ export default function AdminSignupForm({ onBack, onSuccess }: AdminSignupFormPr
               value={password} 
               onChange={e => setPassword(e.target.value)} 
               required 
-              placeholder="Create a password (min 6 chars)"
+              placeholder="Create a strong password"
               className="h-11 sm:h-10 text-base sm:text-sm"
               autoComplete="new-password"
             />
+            <p className="mt-1 text-xs text-muted-foreground">{PASSWORD_REQUIREMENTS}</p>
           </div>
           <div className="space-y-2">
             <Label htmlFor="confirm-password">Confirm Password</Label>

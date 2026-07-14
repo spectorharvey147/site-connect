@@ -6,8 +6,14 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Checkbox } from '@/components/ui/checkbox';
-import { LogIn, Loader2, UserPlus, KeyRound, Eye, EyeOff, ArrowLeft } from 'lucide-react';
+import { LogIn, Loader2, UserPlus, KeyRound, Eye, EyeOff, ArrowLeft, ShieldCheck } from 'lucide-react';
 import AdminSignupForm from '@/components/AdminSignupForm';
+
+interface LoginCompanySettings {
+  logo_url?: string | null;
+  company_name?: string | null;
+  company_subtitle?: string | null;
+}
 
 export default function LoginPage() {
   const { login } = useAuth();
@@ -15,7 +21,7 @@ export default function LoginPage() {
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
-  const [companySettings, setCompanySettings] = useState<any>(null);
+  const [companySettings, setCompanySettings] = useState<LoginCompanySettings | null>(null);
   const [adminExists, setAdminExists] = useState<boolean | null>(null);
   const [showSignup, setShowSignup] = useState(false);
   const [showForgotPassword, setShowForgotPassword] = useState(false);
@@ -102,12 +108,14 @@ export default function LoginPage() {
   }
 
   return (
-    <div className="min-h-screen flex items-center justify-center p-4 gradient-primary animate-gradient relative overflow-hidden">
+    <div className="relative isolate flex min-h-[100dvh] items-center justify-center overflow-hidden p-4 gradient-primary sm:p-6">
       <div className="absolute inset-0 opacity-10" style={{
         backgroundImage: 'radial-gradient(circle, rgba(255,255,255,0.15) 1px, transparent 1px)',
         backgroundSize: '50px 50px',
       }} />
-      <div className="w-full max-w-md rounded-2xl shadow-2xl bg-card/95 backdrop-blur-xl overflow-hidden border border-white/20 relative z-10">
+      <div className="absolute -left-24 top-10 h-72 w-72 rounded-full bg-white/10 blur-3xl" />
+      <div className="absolute -bottom-28 right-0 h-80 w-80 rounded-full bg-primary-foreground/10 blur-3xl" />
+      <div className="relative z-10 w-full max-w-md overflow-hidden rounded-2xl border border-white/25 bg-card/95 shadow-2xl backdrop-blur-xl">
         <div className="gradient-primary p-6 sm:p-8 text-center">
           {logoUrl ? (
             <img 
@@ -126,8 +134,12 @@ export default function LoginPage() {
 
         {!showForgotPassword ? (
           <div className="p-6 sm:p-8 space-y-4 sm:space-y-5">
+            <div>
+              <h3 className="text-lg font-semibold text-foreground">Welcome back</h3>
+              <p className="mt-1 text-sm text-muted-foreground">Use your registered work account to continue.</p>
+            </div>
             {error && (
-              <div className="bg-destructive/10 text-destructive text-sm p-3 rounded-lg border border-destructive/20">
+              <div role="alert" aria-live="polite" className="bg-destructive/10 text-destructive text-sm p-3 rounded-lg border border-destructive/20">
                 {error}
               </div>
             )}
@@ -161,6 +173,7 @@ export default function LoginPage() {
                   <button
                     type="button"
                     onClick={() => setShowPassword(!showPassword)}
+                    aria-label={showPassword ? 'Hide password' : 'Show password'}
                     className="absolute right-3 top-1/2 transform -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors"
                   >
                     {showPassword ? (
@@ -193,6 +206,7 @@ export default function LoginPage() {
             </form>
 
             <button
+              type="button"
               onClick={() => {
                 setShowForgotPassword(true);
                 setError('');
@@ -218,13 +232,17 @@ export default function LoginPage() {
           </div>
         ) : (
           <div className="p-6 sm:p-8 space-y-4 sm:space-y-5">
+            <div>
+              <h3 className="text-lg font-semibold text-foreground">Reset your password</h3>
+              <p className="mt-1 text-sm text-muted-foreground">We will send a secure, time-limited reset link.</p>
+            </div>
             {forgotError && (
-              <div className="bg-destructive/10 text-destructive text-sm p-3 rounded-lg border border-destructive/20">
+              <div role="alert" aria-live="polite" className="bg-destructive/10 text-destructive text-sm p-3 rounded-lg border border-destructive/20">
                 {forgotError}
               </div>
             )}
             {forgotSuccess && (
-              <div className="bg-green-500/10 text-green-700 text-sm p-3 rounded-lg border border-green-500/20">
+              <div role="status" aria-live="polite" className="bg-success/10 text-success text-sm p-3 rounded-lg border border-success/20">
                 {forgotSuccess}
               </div>
             )}
@@ -257,6 +275,7 @@ export default function LoginPage() {
             </form>
 
             <button
+              type="button"
               onClick={() => {
                 setShowForgotPassword(false);
                 setForgotEmail('');
@@ -270,6 +289,9 @@ export default function LoginPage() {
             </button>
           </div>
         )}
+        <div className="flex items-center justify-center gap-2 border-t border-border bg-muted/30 px-5 py-3 text-xs text-muted-foreground">
+          <ShieldCheck className="h-4 w-4 text-success" /> Secure role-based claims access
+        </div>
       </div>
     </div>
   );
