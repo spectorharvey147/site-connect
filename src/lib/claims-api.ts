@@ -1123,6 +1123,9 @@ export async function approveClaimAsManager(claimId: string, approverEmail: stri
   const { data: claim } = await supabase.from('claims').select('*').eq('claim_id', claimId).single();
   if (!claim) throw new Error('Claim not found');
   const claimData = claim as any;
+  if (!isPendingManagerStatus(claimData.status)) {
+    throw new Error(`This manager approval link is no longer valid. The claim is currently "${claimData.status || 'Unknown'}".`);
+  }
   
   const updates: any = {
     status: STATUS_MANAGER_APPROVED,
@@ -1192,6 +1195,9 @@ export async function approveClaimAsAdmin(claimId: string, approverEmail: string
   if (!claim) throw new Error('Claim not found');
 
   const c = claim as any;
+  if (!isPendingAdminVerificationStatus(c.status)) {
+    throw new Error(`This admin approval link is no longer valid. The claim is currently "${c.status || 'Unknown'}".`);
+  }
   const submittedAmount = getSubmittedAmount(c);
   const verifiedAmount = normalizeVerifiedAmount(verifiedAmountInput, getClaimAmount(c) || submittedAmount);
   const settings = await getCompanySettings();
@@ -1286,6 +1292,9 @@ export async function approveClaimAsSuperAdmin(claimId: string, approverEmail: s
   if (!claim) throw new Error('Claim not found');
 
   const c = claim as any;
+  if (!isPendingSuperAdminStatus(c.status)) {
+    throw new Error(`This final approval link is no longer valid. The claim is currently "${c.status || 'Unknown'}".`);
+  }
   const submittedAmount = getSubmittedAmount(c);
   const persistedVerified = c.verified_amount == null ? null : parseFloat(c.verified_amount);
   const amount = normalizeVerifiedAmount(verifiedAmountInput ?? persistedVerified ?? getClaimAmount(c), getClaimAmount(c));
@@ -2022,8 +2031,21 @@ export async function markClaimPaid(claimId: string, accountsEmail: string, paid
 export async function rejectClaim(claimId: string, reason: string, rejectorEmail: string, rejectorRole: string) {
   if (isDemoEmail(rejectorEmail)) return;
 
+  const { data: currentClaim } = await supabase.from('claims').select('*').eq('claim_id', claimId).single();
+  if (!currentClaim) throw new Error('Claim not found');
+  const currentStatus = (currentClaim as any).status;
+  const normalizedRole = rejectorRole.toLowerCase();
+  const canReject = normalizedRole === 'manager'
+    ? isPendingManagerStatus(currentStatus)
+    : normalizedRole === 'super admin'
+      ? isPendingSuperAdminStatus(currentStatus)
+      : isPendingAdminVerificationStatus(currentStatus);
+  if (!canReject) {
+    throw new Error(`This rejection link is no longer valid. The claim is currently "${currentStatus || 'Unknown'}".`);
+  }
+
   const updates: any = { status: 'Rejected', rejection_reason: reason };
-  if (rejectorRole.toLowerCase() === 'manager') {
+  if (normalizedRole === 'manager') {
     updates.manager_approval_status = 'Rejected';
   } else {
     updates.admin_email = rejectorEmail;
@@ -2034,7 +2056,7 @@ export async function rejectClaim(claimId: string, reason: string, rejectorEmail
   if (error) throw error;
 
   // Refund transaction
-  const { data: claim } = await supabase.from('claims').select('*').eq('claim_id', claimId).single();
+  const claim = currentClaim;
   if (claim) {
     const displayClaimNo = (claim as any).claim_number || claimId;
     const amount = getClaimAmount(claim);
@@ -2330,6 +2352,7 @@ export async function getClaimApprovalTrail(claimIds: string[]): Promise<Record<
       if (normalized) emails.add(normalized);
     });
   });
+  const seenAuditStages = new Set<string>();
   (auditRows || []).forEach((row: any) => {
     const normalized = String(row.performed_by || '').trim().toLowerCase();
     if (normalized) emails.add(normalized);
@@ -2385,12 +2408,18 @@ export async function getClaimApprovalTrail(claimIds: string[]): Promise<Record<
     const stamp = approvalStamp(row.performed_by, row.created_at, usersMap, row.details);
     if (!stamp) return;
     const trail = trails[id] || {};
-    if (row.action === 'claim_admin_verified') trail.admin = stamp;
-    if (row.action === 'claim_manager_approved') trail.manager = stamp;
-    if (row.action === 'claim_admin_approved' || row.action === 'claim_final_approved') trail.final = stamp;
-    if (row.action === 'claim_accounts_verified') trail.accounts = stamp;
-    if (row.action === 'claim_paid') trail.paid = stamp;
-    if (row.action === 'claim_rejected') trail.rejected = stamp;
+    const stage = row.action === 'claim_admin_verified' ? 'admin'
+      : row.action === 'claim_manager_approved' ? 'manager'
+        : row.action === 'claim_admin_approved' || row.action === 'claim_final_approved' ? 'final'
+          : row.action === 'claim_accounts_verified' ? 'accounts'
+            : row.action === 'claim_paid' ? 'paid'
+              : row.action === 'claim_rejected' ? 'rejected'
+                : null;
+    const auditStageKey = stage ? `${id}:${stage}` : '';
+    if (stage && !seenAuditStages.has(auditStageKey)) {
+      trail[stage] = stamp;
+      seenAuditStages.add(auditStageKey);
+    }
     trails[id] = trail;
   });
 
