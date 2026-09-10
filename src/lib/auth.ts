@@ -38,27 +38,53 @@ export async function login(email: string, password: string): Promise<{ ok: bool
 
   const hashedInput = hashPassword(password);
 
-  const { data: user, error } = await supabase
-    .from('users')
-    .select('*')
-    .eq('email', email)
-    .single();
+  let user: any;
+  let error: any;
+  try {
+    ({ data: user, error } = await supabase
+      .from('users')
+      .select('*')
+      .eq('email', email)
+      .single());
+  } catch (cause: any) {
+    console.error('Supabase login request failed:', cause);
+    return { ok: false, message: 'Cannot reach the database. Check your internet/VPN connection and try again.' };
+  }
 
-  if (error || !user) return { ok: false, message: 'Invalid email or password.' };
+  if (error) {
+    const message = String(error.message || '').toLowerCase();
+    if (error.name === 'AbortError' || message.includes('fetch') || message.includes('network')) {
+      return { ok: false, message: 'Cannot reach the database. Check your internet/VPN connection and try again.' };
+    }
+    return { ok: false, message: 'Invalid email or password.' };
+  }
+  if (!user) return { ok: false, message: 'Invalid email or password.' };
   if ((user as any).password_hash !== hashedInput) return { ok: false, message: 'Invalid email or password.' };
   if ((user as any).active === false) return { ok: false, message: 'Account is deactivated.' };
 
   const token = generateSecureToken();
   const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
 
-  const { error: sessionError } = await supabase.from('sessions').insert({
-    token,
-    user_email: email,
-    role: (user as any).role,
-    expires_at: expiresAt,
-  });
+  let sessionError: any;
+  try {
+    ({ error: sessionError } = await supabase.from('sessions').insert({
+      token,
+      user_email: email,
+      role: (user as any).role,
+      expires_at: expiresAt,
+    }));
+  } catch (cause) {
+    console.error('Supabase session request failed:', cause);
+    return { ok: false, message: 'Cannot reach the database. Check your internet/VPN connection and try again.' };
+  }
 
-  if (sessionError) return { ok: false, message: 'Failed to create session.' };
+  if (sessionError) {
+    const message = String(sessionError.message || '').toLowerCase();
+    if (message.includes('fetch') || message.includes('network') || sessionError.name === 'AbortError') {
+      return { ok: false, message: 'Cannot reach the database. Check your internet/VPN connection and try again.' };
+    }
+    return { ok: false, message: 'Failed to create session.' };
+  }
 
   const session: SessionData = {
     token,
