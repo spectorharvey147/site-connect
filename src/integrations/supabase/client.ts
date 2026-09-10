@@ -45,6 +45,14 @@ if (!supabaseUrl || !supabaseKey) {
   };
 } else {
   supabase = createClient(supabaseUrl, supabaseKey, {
+    global: {
+      // Fail fast when a network/VPN policy blocks Supabase instead of leaving login spinning.
+      fetch: (input: RequestInfo | URL, init?: RequestInit) => {
+        const controller = new AbortController();
+        const timeout = window.setTimeout(() => controller.abort(), 15000);
+        return fetch(input, { ...init, signal: controller.signal }).finally(() => window.clearTimeout(timeout));
+      },
+    },
     auth: {
       storage: localStorage,
       persistSession: true,
