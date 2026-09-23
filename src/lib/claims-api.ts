@@ -49,7 +49,7 @@ const STATUS_PAYMENT_PROCESSING = 'Payment Processing';
 const STATUS_PAID = 'Paid';
 const STATUS_CLOSED = 'Closed';
 const STATUS_REJECTED = 'Rejected';
-const DEFAULT_APP_URL = 'https://claimflow-pro-kappa.vercel.app';
+const DEFAULT_APP_URL = 'https://site-connect-three.vercel.app';
 
 function normalizeStatus(status?: string | null) {
   return String(status || '').trim().toLowerCase();
@@ -814,6 +814,12 @@ export async function submitClaim(claim: {
     p_expenses: expenseItems,
   });
   if (submissionError) throw new Error('Claim submission failed: ' + submissionError.message);
+  const { data: submittedClaim } = await supabase
+    .from('claims')
+    .select('created_at')
+    .eq('claim_id', claimID)
+    .maybeSingle();
+  const submittedAt = (submittedClaim as any)?.created_at || new Date().toISOString();
 
   const attachmentsForEmail = mapAttachmentEmailData(allFileIds);
   const primaryProjectCode = claim.expenses.find((expense) => expense.projectCode)?.projectCode || '';
@@ -830,9 +836,9 @@ export async function submitClaim(claim: {
   await sendEmailNotification('claim_submitted_user', userEmail, { 
     claim_id: claimID,
     claim_number: claimNumber, 
-    generated_on: new Date().toISOString(),
+    generated_on: submittedAt,
     submitted_by: userName,
-    submission_date: new Date().toISOString(),
+    submission_date: submittedAt,
     project_site: claim.site,
     work_name: assignedWork.workName,
     customer_name: claim.customerName || '',
@@ -852,13 +858,14 @@ export async function submitClaim(claim: {
       sendEmailNotification('claim_submitted_manager', email, {
         claim_id: claimID,
         claim_number: claimNumber,
+        generated_on: submittedAt,
         employee_name: userName,
         employee_email: userEmail,
         project_site: claim.site,
     work_name: assignedWork.workName,
         customer_name: claim.customerName || '',
         primary_project_code: primaryProjectCode,
-        submission_date: new Date().toISOString(),
+        submission_date: submittedAt,
         manager_status: managerEmail ? 'Not Started' : 'Not Required',
         admin_status: 'Pending Verification',
         total_amount: grandTotal,

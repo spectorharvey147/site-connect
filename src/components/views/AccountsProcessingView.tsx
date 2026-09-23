@@ -391,7 +391,7 @@ export default function AccountsProcessingView() {
       >
         <div className="space-y-3">
           <ClaimDetailsPanel claim={verifyClaim} />
-          <ExpenseApprovalEditor expenses={verifyClaim.expenses || []} amounts={rowAmounts} onChange={setRowAmounts} disabled={processing} />
+          <ExpenseApprovalEditor expenses={verifyClaim?.expenses || []} amounts={rowAmounts} onChange={setRowAmounts} disabled={processing} />
           <div><Label>Accounts Note</Label><Textarea rows={4} value={note} onChange={(event) => setNote(event.target.value)} placeholder="Optional verification note" /></div>
         </div>
       </ResponsiveOverlay>

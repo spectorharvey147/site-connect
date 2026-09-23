@@ -8,13 +8,56 @@ export interface SessionData { token: string; user: AppUser }
 export function isDemoEmail(_email?: string | null) { return false; }
 // Used only by authorized account administration. Password verification runs on the server.
 export function hashPassword(password: string): string { return SHA256(password).toString(); }
-const errorMessage = (error: unknown) => error instanceof Error ? error.message : 'Unable to reach the authentication service. Please try again.';
+const ROLE_ALIASES: Record<string, UserRole> = {
+  user: 'User',
+  manager: 'Manager',
+  admin: 'Admin',
+  administrator: 'Admin',
+  superadmin: 'Super Admin',
+  'super admin': 'Super Admin',
+  super_admin: 'Super Admin',
+  accounts: 'Accounts',
+  account: 'Accounts',
+  finance: 'Accounts',
+};
+
+export function normalizeRole(role: unknown): UserRole | null {
+  const normalized = String(role || '').trim().replace(/[-\s]+/g, ' ').toLowerCase();
+  return ROLE_ALIASES[normalized] || ROLE_ALIASES[normalized.replace(/\s+/g, '_')] || null;
+}
+
+function normalizeUser(user: any): AppUser | null {
+  if (!user) return null;
+  return {
+    ...user,
+    role: normalizeRole(user.role) || 'User',
+  };
+}
+
+const networkErrorMessage = 'Unable to reach the Supabase server from this network. If it works after enabling VPN, the local ISP/firewall/DNS is blocking the Supabase URL; keep VPN enabled or ask the network admin to allow the project URL.';
+
+function getErrorText(error: unknown) {
+  if (error instanceof Error) return error.message;
+  if (error && typeof error === 'object' && 'message' in error) return String(error.message || '');
+  return String(error || '');
+}
+
+function isNetworkError(error: unknown) {
+  return /failed to fetch|network|abort|load failed|fetch/i.test(getErrorText(error));
+}
+
+const errorMessage = (error: unknown) => isNetworkError(error)
+  ? networkErrorMessage
+  : getErrorText(error) || 'Unable to reach the authentication service. Please try again.';
 
 export async function login(email: string, password: string): Promise<{ ok: boolean; message: string; session?: SessionData }> {
   if (!email.trim() || !password) return { ok: false, message: 'Email and password required.' };
   try {
     const { data, error } = await supabase.rpc('app_login', { p_email: email.trim().toLowerCase(), p_password: password });
-    if (error) return { ok: false, message: error.message };
+    if (error) return { ok: false, message: errorMessage(error) };
+    if (data?.ok && data.session?.user) {
+      return { ...data, session: { ...data.session, user: normalizeUser(data.session.user) } };
+    }
     return data;
   } catch (error) { return { ok: false, message: errorMessage(error) }; }
 }
@@ -22,7 +65,7 @@ export async function verifyToken(token: string): Promise<AppUser | null> {
   if (!token || token.startsWith('demo:')) return null;
   const { data, error } = await supabase.rpc('app_session', { p_token: token });
   if (error) throw new Error(error.message);
-  return data;
+  return normalizeUser(data);
 }
 export async function logout(token: string) {
   if (token) {

@@ -1,5 +1,6 @@
 import { Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
+import { normalizeRole } from '@/lib/auth';
 import LoginPage from '@/components/LoginPage';
 import AppSidebar from '@/components/AppSidebar';
 import AppHeader from '@/components/AppHeader';
@@ -30,7 +31,8 @@ const viewRoles: Record<string, string[]> = {
 
 function canAccessView(view: string, role?: string) {
   const roles = viewRoles[view] || ['all'];
-  return roles.includes('all') || roles.includes(role || '');
+  const normalizedRole = normalizeRole(role) || '';
+  return roles.includes('all') || roles.includes(normalizedRole);
 }
 
 export default function Index() {

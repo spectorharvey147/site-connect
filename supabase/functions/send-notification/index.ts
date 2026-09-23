@@ -3,6 +3,7 @@ import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { getTemplate, EmailTemplateType } from "./emailTemplates.ts";
 import nodemailer from "npm:nodemailer@10.0.10";
 import { Buffer } from "node:buffer";
+import { PDFDocument, StandardFonts, rgb } from "npm:pdf-lib@1.17.1";
 
 const DEFAULT_FROM_NAME = 'Claim App Notifications';
 const ALLOWED_METHODS = 'POST, OPTIONS';
@@ -78,91 +79,182 @@ function isValidEmail(value: unknown): value is string {
   return typeof value === 'string' && EMAIL_REGEX.test(value.trim());
 }
 
-function escapePdfText(value: unknown) {
-  return String(value ?? '')
-    .replace(/\\/g, '\\\\')
-    .replace(/\(/g, '\\(')
-    .replace(/\)/g, '\\)')
-    .replace(/[\r\n]+/g, ' ');
-}
-
-function truncate(value: unknown, max = 74) {
-  const text = String(value ?? '');
-  return text.length > max ? `${text.slice(0, max - 3)}...` : text;
-}
-
 function formatAmount(value: unknown) {
   return Number(value || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
-function buildClaimReportPdf(data: any) {
-  const claimNumber = data.claim_number || data.claim_id || 'claim';
-  const lines = [
-    'Claim Report',
-    `Claim Number: ${claimNumber}`,
-    `Submitted By: ${data.submitted_by || data.employee_name || ''}`,
-    `Employee Email: ${data.employee_email || ''}`,
-    `Submission Date: ${data.submission_date || data.generated_on || ''}`,
-    `Project / Site: ${data.project_site || ''}`,
-    `Primary Project Code: ${data.primary_project_code || ''}`,
-    `Status: ${data.status || data.admin_status || data.manager_status || ''}`,
-    `Total With Bill: Rs. ${formatAmount(data.total_with_bill)}`,
-    `Total Without Bill: Rs. ${formatAmount(data.total_without_bill)}`,
-    `Total Amount: Rs. ${formatAmount(data.total_amount)}`,
-    '',
-    'Expense Details',
-    'Category | Project Code | Date | Description | With Bill | Without Bill | Total',
-    ...((Array.isArray(data.items) ? data.items : []).map((item: any) => [
-      truncate(item.category, 16),
-      truncate(item.projectCode, 18),
-      truncate(item.claimDate, 12),
-      truncate(item.description, 28),
-      formatAmount(item.amountWithBill),
-      formatAmount(item.amountWithoutBill),
-      formatAmount(item.totalAmount ?? item.amount),
-    ].join(' | '))),
-  ];
-
-  const contentLines = lines.flatMap((line) => {
-    const text = String(line || '');
-    const chunks = text.match(/.{1,110}/g);
-    return chunks || [''];
+function formatClaimDate(value: unknown) {
+  if (!value) return '-';
+  const date = new Date(String(value));
+  if (Number.isNaN(date.getTime())) return String(value);
+  return date.toLocaleString('en-IN', {
+    timeZone: 'Asia/Kolkata',
+    day: '2-digit',
+    month: 'short',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+    timeZoneName: 'short',
   });
-  const stream = [
-    'BT',
-    '/F1 10 Tf',
-    '50 790 Td',
-    '14 TL',
-    ...contentLines.slice(0, 52).map((line, index) => `${index === 0 ? '' : 'T*'}(${escapePdfText(line)}) Tj`),
-    'ET',
-  ].join('\n');
+}
 
-  const encoder = new TextEncoder();
-  const streamLength = encoder.encode(stream).length;
-  const objects = [
-    '1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n',
-    '2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n',
-    '3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>\nendobj\n',
-    '4 0 obj\n<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>\nendobj\n',
-    `5 0 obj\n<< /Length ${streamLength} >>\nstream\n${stream}\nendstream\nendobj\n`,
+function pdfText(value: unknown) {
+  return String(value ?? '-')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .replace(/[^\x20-\x7E]/g, ' ') || '-';
+}
+
+function wrapPdfText(text: string, font: any, size: number, maxWidth: number) {
+  const words = pdfText(text).split(' ');
+  const lines: string[] = [];
+  let current = '';
+
+  for (const word of words) {
+    const next = current ? `${current} ${word}` : word;
+    if (font.widthOfTextAtSize(next, size) <= maxWidth) {
+      current = next;
+      continue;
+    }
+    if (current) lines.push(current);
+    if (font.widthOfTextAtSize(word, size) <= maxWidth) {
+      current = word;
+    } else {
+      let chunk = '';
+      for (const char of word) {
+        const nextChunk = chunk + char;
+        if (font.widthOfTextAtSize(nextChunk, size) > maxWidth && chunk) {
+          lines.push(chunk);
+          chunk = char;
+        } else {
+          chunk = nextChunk;
+        }
+      }
+      current = chunk;
+    }
+  }
+  if (current) lines.push(current);
+  return lines.length ? lines : ['-'];
+}
+
+async function buildClaimReportPdf(data: any) {
+  const claimNumber = data.claim_number || data.claim_id || 'claim';
+  const pdfDoc = await PDFDocument.create();
+  const regular = await pdfDoc.embedFont(StandardFonts.Helvetica);
+  const bold = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
+  const pageSize: [number, number] = [842, 595];
+  const margin = 36;
+  const tableWidths = [92, 108, 78, 198, 78, 86, 75];
+  const headers = ['Category', 'Project Code', 'Date', 'Description', 'With Bill', 'Without Bill', 'Total'];
+  let page = pdfDoc.addPage(pageSize);
+  let y = pageSize[1] - margin;
+
+  const drawText = (text: unknown, x: number, baseline: number, size = 9, font = regular, color = rgb(0.15, 0.18, 0.23)) => {
+    page.drawText(pdfText(text), { x, y: baseline, size, font, color });
+  };
+  const addPage = () => {
+    page = pdfDoc.addPage(pageSize);
+    y = pageSize[1] - margin;
+  };
+  const ensureSpace = (height: number) => {
+    if (y - height < margin) addPage();
+  };
+
+  page.drawRectangle({ x: 0, y: pageSize[1] - 86, width: pageSize[0], height: 86, color: rgb(0.03, 0.45, 0.42) });
+  drawText('Claim Report', margin, pageSize[1] - 42, 22, bold, rgb(1, 1, 1));
+  drawText(`Claim Number: ${claimNumber}`, margin, pageSize[1] - 64, 12, bold, rgb(0.9, 1, 0.98));
+  drawText(`Generated: ${formatClaimDate(data.generated_on || new Date().toISOString())}`, pageSize[0] - 285, pageSize[1] - 42, 9, regular, rgb(0.9, 1, 0.98));
+  y = pageSize[1] - 112;
+
+  const details = [
+    ['Submitted By', data.submitted_by || data.employee_name || '-'],
+    ['Employee Email', data.employee_email || '-'],
+    ['Submission Date', formatClaimDate(data.submission_date || data.generated_on)],
+    ['Project / Site', data.project_site || '-'],
+    ['Work / Activity', data.work_name || '-'],
+    ['Primary Project Code', data.primary_project_code || '-'],
+    ['Status', data.status || data.admin_status || data.manager_status || '-'],
   ];
-  let pdf = '%PDF-1.4\n';
-  const offsets = [0];
-  for (const object of objects) {
-    offsets.push(encoder.encode(pdf).length);
-    pdf += object;
+  const detailColWidth = (pageSize[0] - margin * 2 - 20) / 3;
+  details.forEach(([label, value], index) => {
+    const col = index % 3;
+    const row = Math.floor(index / 3);
+    const x = margin + col * (detailColWidth + 10);
+    const boxY = y - row * 52;
+    page.drawRectangle({ x, y: boxY - 34, width: detailColWidth, height: 42, borderColor: rgb(0.83, 0.87, 0.91), borderWidth: 1, color: rgb(0.97, 0.98, 0.99) });
+    drawText(label, x + 8, boxY - 8, 7, bold, rgb(0.39, 0.45, 0.55));
+    wrapPdfText(String(value), bold, 9, detailColWidth - 16).slice(0, 2).forEach((line, lineIndex) => {
+      drawText(line, x + 8, boxY - 22 - lineIndex * 10, 9, bold, rgb(0.08, 0.1, 0.15));
+    });
+  });
+  y -= Math.ceil(details.length / 3) * 52 + 8;
+
+  const totalCards = [
+    ['Total With Bill', `Rs. ${formatAmount(data.total_with_bill)}`],
+    ['Total Without Bill', `Rs. ${formatAmount(data.total_without_bill)}`],
+    ['Grand Total', `Rs. ${formatAmount(data.total_amount)}`],
+  ];
+  totalCards.forEach(([label, value], index) => {
+    const x = margin + index * (detailColWidth + 10);
+    page.drawRectangle({ x, y: y - 38, width: detailColWidth, height: 38, borderColor: rgb(0.13, 0.55, 0.49), borderWidth: 1, color: rgb(0.92, 0.98, 0.96) });
+    drawText(label, x + 8, y - 14, 8, bold, rgb(0.13, 0.34, 0.32));
+    drawText(value, x + 8, y - 29, 12, bold, rgb(0.02, 0.37, 0.34));
+  });
+  y -= 62;
+
+  const drawTableHeader = () => {
+    ensureSpace(34);
+    drawText('Expense Details', margin, y, 12, bold, rgb(0.08, 0.1, 0.15));
+    y -= 22;
+    let x = margin;
+    headers.forEach((header, index) => {
+      page.drawRectangle({ x, y: y - 18, width: tableWidths[index], height: 22, borderColor: rgb(0.75, 0.8, 0.86), borderWidth: 1, color: rgb(0.9, 0.95, 1) });
+      drawText(header, x + 5, y - 10, 8, bold, rgb(0.04, 0.21, 0.33));
+      x += tableWidths[index];
+    });
+    y -= 18;
+  };
+
+  drawTableHeader();
+  const items = Array.isArray(data.items) ? data.items : [];
+  if (!items.length) {
+    drawText('No expense line items were included in this email payload.', margin, y - 16, 9);
   }
-  const xrefOffset = encoder.encode(pdf).length;
-  pdf += `xref\n0 ${objects.length + 1}\n`;
-  pdf += '0000000000 65535 f \n';
-  for (let i = 1; i < offsets.length; i++) {
-    pdf += `${String(offsets[i]).padStart(10, '0')} 00000 n \n`;
-  }
-  pdf += `trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xrefOffset}\n%%EOF`;
+
+  items.forEach((item: any) => {
+    const cells = [
+      item.category || '-',
+      item.projectCode || '-',
+      item.claimDate || '-',
+      item.description || '-',
+      `Rs. ${formatAmount(item.amountWithBill)}`,
+      `Rs. ${formatAmount(item.amountWithoutBill)}`,
+      `Rs. ${formatAmount(item.totalAmount ?? item.amount)}`,
+    ];
+    const wrapped = cells.map((cell, index) => wrapPdfText(String(cell), regular, 8, tableWidths[index] - 10));
+    const rowHeight = Math.max(24, Math.max(...wrapped.map((lines) => lines.length)) * 10 + 12);
+    if (y - rowHeight < margin) {
+      addPage();
+      drawTableHeader();
+    }
+    let x = margin;
+    wrapped.forEach((lines, index) => {
+      page.drawRectangle({ x, y: y - rowHeight, width: tableWidths[index], height: rowHeight, borderColor: rgb(0.83, 0.87, 0.91), borderWidth: 1, color: rgb(1, 1, 1) });
+      lines.slice(0, Math.floor((rowHeight - 8) / 10)).forEach((line, lineIndex) => {
+        const alignRight = index >= 4;
+        const textWidth = regular.widthOfTextAtSize(line, 8);
+        drawText(line, alignRight ? x + tableWidths[index] - textWidth - 5 : x + 5, y - 14 - lineIndex * 10, 8);
+      });
+      x += tableWidths[index];
+    });
+    y -= rowHeight;
+  });
+
+  const bytes = await pdfDoc.save();
 
   return {
     filename: `Claim-Report-${String(claimNumber).replace(/[^a-z0-9_-]+/gi, '-')}.pdf`,
-    content: Buffer.from(encoder.encode(pdf)),
+    content: Buffer.from(bytes),
     contentType: 'application/pdf',
   };
 }
@@ -263,7 +355,7 @@ Deno.serve(async (req) => {
 
     const template = getTemplate(type, data);
     const attachments = String(type).startsWith('claim_submitted')
-      ? [buildClaimReportPdf(data)]
+      ? [await buildClaimReportPdf(data)]
       : [];
 
     const mailResult = await transporter.sendMail({

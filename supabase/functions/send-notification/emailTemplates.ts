@@ -3,6 +3,7 @@ const DEFAULT_SUBTITLE = 'Claims Management System';
 const DEFAULT_SUPPORT_EMAIL = 'projects@ipi-india.com';
 const DEFAULT_APP_URL = 'https://claimflow-pro-kappa.vercel.app';
 const DEFAULT_CURRENCY = '&#8377;';
+const APP_TIME_ZONE = 'Asia/Kolkata';
 
 type Attachment = string | { name?: string; url?: string };
 
@@ -15,6 +16,7 @@ interface BrandData {
   loginUrl?: string;
   userGuideUrl?: string;
   currency?: string;
+  generated_on?: string;
 }
 
 interface KeyValueItem {
@@ -92,16 +94,30 @@ function fmtAmount(value?: number, currency = DEFAULT_CURRENCY) {
 
 function fmtDate(value?: string) {
   if (!value) return '';
-  return escapeHtml(new Date(value).toLocaleString('en-IN'));
-}
-
-function fmtGeneratedAt() {
-  return new Date().toLocaleString('en-IN', {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return escapeHtml(value);
+  return escapeHtml(date.toLocaleString('en-IN', {
+    timeZone: APP_TIME_ZONE,
     day: '2-digit',
     month: 'short',
     year: 'numeric',
     hour: '2-digit',
     minute: '2-digit',
+    timeZoneName: 'short',
+  }));
+}
+
+function fmtGeneratedAt(value?: string) {
+  const date = value ? new Date(value) : new Date();
+  const safeDate = Number.isNaN(date.getTime()) ? new Date() : date;
+  return safeDate.toLocaleString('en-IN', {
+    timeZone: APP_TIME_ZONE,
+    day: '2-digit',
+    month: 'short',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+    timeZoneName: 'short',
   });
 }
 
@@ -245,7 +261,7 @@ function wrapEmail(title: string, body: string, data: BrandData) {
               ${logo}
               <div style="font-size: 12px; text-transform: uppercase; letter-spacing: 0.08em; opacity: 0.9; font-weight: 700;">${safeText(info.companySubtitle)}</div>
               <div style="font-size: 24px; font-weight: 800; line-height: 1.2; margin-top: 6px;">${safeText(info.companyName)}</div>
-              <div style="font-size: 13px; margin-top: 6px; opacity: 0.95;">Date &amp; Time: ${safeText(fmtGeneratedAt())}</div>
+              <div style="font-size: 13px; margin-top: 6px; opacity: 0.95;">Date &amp; Time: ${safeText(fmtGeneratedAt(data.generated_on))}</div>
               <div style="font-size: 13px; margin-top: 6px; opacity: 0.95;">Automated system notification from ${safeText(info.companyName)}</div>
             </div>
             <div style="${bodyStyles}">
@@ -348,12 +364,13 @@ export function claimSubmittedUserTemplate(data: {
   `;
   return {
     subject: `Claim Submitted - ${data.claim_number}`,
-    html: wrapEmail('Claim Submitted', body, info),
+    html: wrapEmail('Claim Submitted', body, data),
   };
 }
 
 export function claimSubmittedManagerTemplate(data: {
   claim_number: string;
+  generated_on?: string;
   employee_name: string;
   employee_email?: string;
   project_site?: string;
@@ -407,7 +424,7 @@ export function claimSubmittedManagerTemplate(data: {
   `;
   return {
     subject: `Action Required - ${data.claim_number}`,
-    html: wrapEmail('Claim Approval Required', body, info),
+    html: wrapEmail('Claim Approval Required', body, data),
   };
 }
 

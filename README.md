@@ -2,7 +2,7 @@
 
 ## Project info
 
-**URL**: https://lovable.dev/projects/REPLACE_WITH_PROJECT_ID
+**Production URL**: https://site-connect-three.vercel.app
 
 ## How can I edit this code?
 
@@ -63,6 +63,19 @@ This project is built with:
 ## How can I deploy this project?
 
 Simply open [Lovable](https://lovable.dev/projects/REPLACE_WITH_PROJECT_ID) and click on Share -> Publish.
+
+### Supabase access on filtered networks
+
+Production builds use `/supabase` as a same-origin API gateway. The Vercel rewrite in
+`vercel.json` forwards that path to this project's Supabase endpoint, so browsers do
+not need to resolve the ISP-filtered `*.supabase.co` hostname directly.
+
+Keep `VITE_SUPABASE_URL` and `VITE_SUPABASE_PUBLISHABLE_KEY` configured in Vercel.
+After deploying, verify that
+`https://site-connect-three.vercel.app/supabase/auth/v1/health` returns a Supabase
+health response from the application domain. Local development still uses the direct URL;
+set `VITE_SUPABASE_PROXY_URL` to a deployed gateway URL if local access without VPN
+is required.
 
 ## Can I connect a custom domain to my Lovable project?
 
