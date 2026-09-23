@@ -2,3 +2,6 @@ project_id = "ixlmzpweixniuvbfyalo"
 
 [functions.send-notification]
 verify_jwt = false
+
+[functions.storage-access]
+verify_jwt = false

@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Button } from '@/components/ui/button';
 import { ResponsiveOverlay } from '@/components/ui/responsive-overlay';
 import { Image, FileText, Download, ExternalLink } from 'lucide-react';
@@ -11,10 +11,7 @@ interface AttachmentPreviewProps {
   compact?: boolean;
 }
 
-function getPublicUrl(fileId: string) {
-  const { data } = supabase.storage.from('claim-attachments').getPublicUrl(fileId);
-  return data?.publicUrl || '';
-}
+
 
 function isImage(name: string) {
   return /\.(jpg|jpeg|png|gif|webp|bmp|svg)$/i.test(name);
@@ -34,12 +31,27 @@ export default function AttachmentPreview({ fileIds, compact = false }: Attachme
   const [previewFileId, setPreviewFileId] = useState<string | null>(null);
   const [previewType, setPreviewType] = useState<'image' | 'pdf' | 'other'>('other');
 
+  const [signedUrls, setSignedUrls] = useState<Record<string,string>>({});
+  const fileKey = JSON.stringify(fileIds || []);
+  useEffect(() => {
+    let cancelled=false;
+    const paths: string[] = JSON.parse(fileKey);
+    setSignedUrls({});
+    if(paths.length) supabase.storage.from('claim-attachments').createSignedUrls(paths,3600).then(({data,error}: {data?:{path:string;signedUrl:string}[];error?:unknown}) => {
+      if(cancelled) return;
+      if(error) { toast.error('Unable to load attachment previews'); return; }
+      setSignedUrls(Object.fromEntries((data || []).map(row=>[row.path,row.signedUrl])));
+    }).catch(()=>{if(!cancelled) toast.error('Unable to load attachment previews');});
+    return ()=>{cancelled=true;};
+  },[fileKey]);
+
   if (!fileIds || fileIds.length === 0) {
     return <p className="text-sm italic text-muted-foreground">No attachments</p>;
   }
 
   const openPreview = (fileId: string) => {
-    const url = getPublicUrl(fileId);
+    const url = signedUrls[fileId] || '';
+    if (!url) { toast.error('Attachment is still loading or access was denied'); return; }
     setPreviewType(isImage(fileId) ? 'image' : isPdf(fileId) ? 'pdf' : 'other');
     setPreviewFileId(fileId);
     setPreviewUrl(url);
@@ -92,7 +104,7 @@ export default function AttachmentPreview({ fileIds, compact = false }: Attachme
       )}
       <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 md:grid-cols-4">
         {fileIds.map((fileId, idx) => {
-          const url = getPublicUrl(fileId);
+          const url = signedUrls[fileId] || '';
           const name = getFileName(fileId);
           const imageFile = isImage(fileId);
 
@@ -102,7 +114,7 @@ export default function AttachmentPreview({ fileIds, compact = false }: Attachme
               className="group relative overflow-hidden rounded-lg border border-border transition-all hover:ring-2 hover:ring-primary/50"
             >
               <div className="cursor-pointer" onClick={() => openPreview(fileId)}>
-                {imageFile ? (
+                {imageFile && url ? (
                   <div className="aspect-square overflow-hidden bg-muted/30">
                     <img src={url} alt={name} className="h-full w-full object-cover transition-transform group-hover:scale-105" loading="lazy" />
                   </div>

@@ -16,6 +16,8 @@ interface ClaimDetailsOverviewProps {
     submittedBy?: string;
     userEmail?: string;
     site?: string;
+    workName?: string;
+    managerEmail?: string;
     customerName?: string;
     date?: string;
     status?: string;
@@ -101,6 +103,8 @@ export default function ClaimDetailsOverview({ claim }: ClaimDetailsOverviewProp
           <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3">
             <DetailItem icon={CalendarDays} label="Submitted Date" value={dateLabel(claim.date)} />
             <DetailItem icon={MapPin} label="Project / Site" value={claim.site} />
+            {claim.workName && <DetailItem icon={FileText} label="Work / Activity" value={claim.workName} />}
+            {claim.workName && <DetailItem icon={UserRound} label="Assigned Manager" value={claim.managerEmail} />}
             <DetailItem icon={Building2} label="Customer" value={claim.customerName} />
           </div>
         </div>

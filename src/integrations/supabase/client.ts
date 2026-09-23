@@ -47,10 +47,20 @@ if (!supabaseUrl || !supabaseKey) {
   supabase = createClient(supabaseUrl, supabaseKey, {
     global: {
       // Fail fast when a network/VPN policy blocks Supabase instead of leaving login spinning.
-      fetch: (input: RequestInfo | URL, init?: RequestInit) => {
+      fetch: async (input: RequestInfo | URL, init?: RequestInit) => {
         const controller = new AbortController();
         const timeout = window.setTimeout(() => controller.abort(), 15000);
-        return fetch(input, { ...init, signal: controller.signal }).finally(() => window.clearTimeout(timeout));
+        const headers = new Headers(init?.headers || (input instanceof Request ? input.headers : undefined));
+        const appToken = localStorage.getItem('claimsToken');
+        if (appToken) headers.set('x-claims-token', appToken);
+        const requestedUrl = input instanceof Request ? input.url : String(input);
+        const marker = '/storage/v1';
+        if (requestedUrl.startsWith(supabaseUrl + marker)) {
+          const destination = supabaseUrl + '/functions/v1/storage-access?path=' + encodeURIComponent(requestedUrl.slice((supabaseUrl + marker).length));
+          const body = init?.body ?? (input instanceof Request && !['GET','HEAD'].includes(input.method) ? await input.clone().arrayBuffer() : undefined);
+          return fetch(destination, { ...init, method: init?.method || (input instanceof Request ? input.method : 'GET'), body, headers, signal: controller.signal }).finally(() => window.clearTimeout(timeout));
+        }
+        return fetch(input, { ...init, headers, signal: controller.signal }).finally(() => window.clearTimeout(timeout));
       },
     },
     auth: {

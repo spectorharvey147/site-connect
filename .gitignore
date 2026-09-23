@@ -9,3 +9,6 @@ android/keystore.properties
 android/app/*.jks
 supabase/.temp
 *.tsbuildinfo
+
+# Local operational backups contain claim data.
+scripts/backups/

@@ -23,7 +23,7 @@ export default function ThemeProvider({ children }: { children: ReactNode }) {
     }
     try {
       localStorage.setItem('site-theme', theme);
-    } catch {}
+    } catch { /* Storage may be disabled; keep the theme for this session. */ }
   }, [theme]);
 
   return <ThemeContext.Provider value={{ theme, setTheme }}>{children}</ThemeContext.Provider>;

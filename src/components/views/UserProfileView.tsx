@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { getCurrentBalance, getClaimsHistory, getTransactions } from '@/lib/claims-api';
 import { supabase } from '@/integrations/supabase/client';
-import { hashPassword } from '@/lib/auth';
+import { changePassword } from '@/lib/auth';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -61,19 +61,7 @@ export default function UserProfileView() {
 
     setChanging(true);
     try {
-      // Verify current password
-      const currentHash = hashPassword(currentPassword);
-      const { data: userData } = await supabase.from('users').select('password_hash').eq('email', user!.email).single();
-      if (!userData || userData.password_hash !== currentHash) {
-        toast.error('Current password is incorrect');
-        setChanging(false);
-        return;
-      }
-
-      // Update password
-      const newHash = hashPassword(newPassword);
-      const { error } = await supabase.from('users').update({ password_hash: newHash }).eq('email', user!.email);
-      if (error) throw error;
+      await changePassword(currentPassword, newPassword);
 
       toast.success('Password changed successfully');
       setCurrentPassword('');

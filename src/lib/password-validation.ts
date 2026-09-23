@@ -2,6 +2,7 @@ export const PASSWORD_REQUIREMENTS = 'Use at least 8 characters with uppercase, 
 
 export function validatePassword(password: string): string | null {
   if (!password) return 'Password is required.';
+  if (new TextEncoder().encode(password).length > 72) return 'Password must not exceed 72 UTF-8 bytes.';
   if (password.length < 8) return 'Password must be at least 8 characters long.';
   if (!/[a-z]/.test(password)) return 'Password must include a lowercase letter.';
   if (!/[A-Z]/.test(password)) return 'Password must include an uppercase letter.';

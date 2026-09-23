@@ -1,10 +1,10 @@
+import { attachmentLink } from '@/lib/private-files';
 import { useEffect, useMemo, useState } from 'react';
 import { Download, Eye, FileSpreadsheet, History, Loader2, RefreshCw, Search, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { useAuth } from '@/contexts/AuthContext';
 import {
   downloadSapPreviewExcel,
-  generateSapExcelExport,
   getSapExportBatchClaims,
   getSapExportBatches,
   getSapHistoricalClaims,
@@ -18,6 +18,8 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Skeleton } from '@/components/ui/skeleton';
 import { ResponsiveOverlay } from '@/components/ui/responsive-overlay';
 import { Input } from '@/components/ui/input';
+import SapJournalExportDialog from './SapJournalExportDialog';
+import { downloadJournalFile } from '@/lib/accounting-api';
 
 function formatCurrency(value: number) {
   return `Rs. ${Number(value || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -41,7 +43,8 @@ export default function AccountsSapEntryView() {
   const [loadingClaims, setLoadingClaims] = useState(true);
   const [loadingHistorical, setLoadingHistorical] = useState(true);
   const [loadingReports, setLoadingReports] = useState(true);
-  const [generating, setGenerating] = useState(false);
+  const [exportClaimIds, setExportClaimIds] = useState<string[] | null>(null);
+  const generating = exportClaimIds !== null;
   const [previewing, setPreviewing] = useState(false);
   const [viewBatch, setViewBatch] = useState<any | null>(null);
   const [batchClaims, setBatchClaims] = useState<any[]>([]);
@@ -139,27 +142,23 @@ export default function AccountsSapEntryView() {
 
   const handleGenerate = async () => {
     if (!user || selected.length === 0) return;
-    setGenerating(true);
-    try {
-      const result = await generateSapExcelExport(selected, user.email);
-      toast.success(`Generated ${result.batchId}`);
-      setSelected([]);
-      await Promise.all([loadClaims(), loadReports()]);
-      if (result.fileUrl) window.open(result.fileUrl, '_blank', 'noopener,noreferrer');
-    } catch (error: any) {
-      toast.error(error.message || 'Failed to generate SAP Excel');
-    } finally {
-      setGenerating(false);
-    }
+    setExportClaimIds([...selected]);
   };
 
-  const handleDownload = async (report: any) => {
+  const handleDownload = async (report: any, kind: 'excel' | 'header' | 'details' = 'excel') => {
+    if (report.export_payload) {
+      try { await downloadJournalFile(report, kind); if (user?.email) void logSapReportDownloaded(report.batch_id,user.email); }
+      catch (error: any) { toast.error(error.message); }
+      return;
+    }
     if (!report.file_url) {
       toast.error('No file is available for this batch');
       return;
     }
     if (user?.email) void logSapReportDownloaded(report.batch_id, user.email);
-    window.open(report.file_url, '_blank', 'noopener,noreferrer');
+    const path = report.file_path || report.file_url.split('/sap-exports/')[1]?.split('?')[0];
+    if (!path) { toast.error('This old report has no valid file path'); return; }
+    window.open(attachmentLink(decodeURIComponent(path), 'sap-exports'), '_blank', 'noopener,noreferrer');
   };
 
   const handlePreviewDownload = async () => {
@@ -190,6 +189,7 @@ export default function AccountsSapEntryView() {
 
   return (
     <div className="animate-in fade-in slide-in-from-bottom-4 duration-500 space-y-4">
+      {exportClaimIds && <SapJournalExportDialog claimIds={exportClaimIds} onClose={() => setExportClaimIds(null)} onComplete={async () => { setSelected([]); await Promise.all([loadClaims(), loadReports(), loadHistoricalClaims()]); }} />}
       <div className="glass-card flex flex-col gap-3 p-4 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <h2 className="flex items-center gap-2 font-bold"><FileSpreadsheet className="h-5 w-5" /> Accounts SAP Entry</h2>
@@ -227,7 +227,7 @@ export default function AccountsSapEntryView() {
             </div>
             <Button onClick={handleGenerate} disabled={selected.length === 0 || generating}>
               {generating ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <FileSpreadsheet className="mr-2 h-4 w-4" />}
-              Generate SAP Excel
+              Generate SAP Excel & CSV
             </Button>
           </div>
 
@@ -394,7 +394,7 @@ export default function AccountsSapEntryView() {
                     <td className="p-3">{report.generated_by}</td>
                     <td className="p-3 text-right">{report.total_claims}</td>
                     <td className="p-3 text-right font-bold text-primary">{formatCurrency(report.total_amount)}</td>
-                    <td className="p-3 text-center"><Button variant="ghost" size="sm" onClick={() => void handleDownload(report)}><Download className="h-4 w-4" /></Button></td>
+                    <td className="p-3 text-center"><div className="flex flex-wrap gap-1"><Button variant="outline" size="sm" onClick={() => void handleDownload(report)}><Download className="mr-1 h-4 w-4" />Excel</Button>{report.export_payload && <><Button variant="outline" size="sm" onClick={() => void handleDownload(report,'header')}>Header CSV</Button><Button variant="outline" size="sm" onClick={() => void handleDownload(report,'details')}>Details CSV</Button></>}</div></td>
                     <td className="p-3 text-center"><Button variant="ghost" size="sm" onClick={() => void handleViewClaims(report)}><Eye className="h-4 w-4" /></Button></td>
                   </tr>
                 ))}

@@ -85,6 +85,8 @@ export type Database = {
       }
       claims: {
         Row: {
+          work_id: string | null
+          work_name: string | null
           admin_approval_date: string | null
           admin_description: string | null
           admin_email: string | null
@@ -129,6 +131,8 @@ export type Database = {
           accounts_verified_email?: string | null
           claim_id: string
           claim_number?: string | null
+          work_id?: string | null
+          work_name?: string | null
           created_at?: string
           customer_name?: string | null
           drive_file_ids?: string[] | null
@@ -164,6 +168,8 @@ export type Database = {
           accounts_verified_date?: string | null
           accounts_verified_email?: string | null
           claim_id?: string
+          work_id?: string | null
+          work_name?: string | null
           claim_number?: string | null
           created_at?: string
           customer_name?: string | null
@@ -250,6 +256,7 @@ export type Database = {
       }
       expense_items: {
         Row: {
+          approved_amount: number | null
           amount_with_bill: number
           amount_without_bill: number
           attachment_ids: string[] | null
@@ -263,6 +270,7 @@ export type Database = {
           project_code: string | null
         }
         Insert: {
+          approved_amount?: number | null
           amount_with_bill?: number
           amount_without_bill?: number
           attachment_ids?: string[] | null
@@ -276,6 +284,7 @@ export type Database = {
           project_code?: string | null
         }
         Update: {
+          approved_amount?: number | null
           amount_with_bill?: number
           amount_without_bill?: number
           attachment_ids?: string[] | null

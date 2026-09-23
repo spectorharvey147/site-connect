@@ -17,6 +17,7 @@ import { Loader2 } from "lucide-react";
 
 const queryClient = new QueryClient();
 
+const AttachmentAccessView = lazy(() => import('@/components/views/AttachmentAccessView'));
 const DashboardView = lazy(() => import("@/components/views/DashboardView"));
 const SubmitClaimView = lazy(() => import("@/components/views/SubmitClaimView"));
 const ClaimHistoryView = lazy(() => import("@/components/views/ClaimHistoryView"));
@@ -25,6 +26,8 @@ const UserBalanceView = lazy(() => import("@/components/views/UserBalanceView"))
 const ApprovalView = lazy(() => import("@/components/views/ApprovalView"));
 const AccountsProcessingView = lazy(() => import("@/components/views/AccountsProcessingView"));
 const AccountsSapEntryView = lazy(() => import("@/components/views/AccountsSapEntryView"));
+const AccountingSetupView = lazy(() => import("@/components/views/AccountingSetupView"));
+const WorkAllocationView = lazy(() => import("@/components/views/WorkAllocationView"));
 const PaymentVoucherView = lazy(() => import("@/components/views/PaymentVoucherView"));
 const UserManagementView = lazy(() => import("@/components/views/UserManagementView"));
 const SettingsView = lazy(() => import("@/components/views/SettingsView"));
@@ -55,6 +58,7 @@ const App = () => (
           <Routes>
             <Route path="/" element={<Index />}>
               <Route index element={withSuspense(<DashboardView />)} />
+              <Route path="attachment" element={withSuspense(<AttachmentAccessView />)} />
               <Route path="dashboard" element={<Navigate to="/" replace />} />
               <Route path="submit" element={withSuspense(<SubmitClaimView />)} />
               <Route path="history" element={withSuspense(<ClaimHistoryView />)} />
@@ -66,6 +70,8 @@ const App = () => (
               <Route path="final-approval" element={withSuspense(<ApprovalView type="super-admin" />)} />
               <Route path="accounts-processing" element={withSuspense(<AccountsProcessingView />)} />
               <Route path="accounts-sap-entry" element={withSuspense(<AccountsSapEntryView />)} />
+              <Route path="accounting-setup" element={withSuspense(<AccountingSetupView />)} />
+              <Route path="work-allocation" element={withSuspense(<WorkAllocationView />)} />
               <Route path="voucher" element={withSuspense(<PaymentVoucherView />)} />
               <Route path="users" element={withSuspense(<UserManagementView />)} />
               <Route path="settings" element={withSuspense(<SettingsView />)} />

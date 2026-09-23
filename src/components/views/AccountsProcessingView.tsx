@@ -1,3 +1,5 @@
+import ExpenseApprovalEditor from './ExpenseApprovalEditor';
+import { initialRowAmounts, approvedRows, type RowAmounts } from '@/lib/expense-approval';
 import { useEffect, useMemo, useState } from 'react';
 import { CheckCircle2, CreditCard, Eye, Loader2, RefreshCw, WalletCards } from 'lucide-react';
 import { toast } from 'sonner';
@@ -131,6 +133,7 @@ export default function AccountsProcessingView() {
   const [verifyClaim, setVerifyClaim] = useState<any>(null);
   const [payClaim, setPayClaim] = useState<any>(null);
   const [amount, setAmount] = useState('');
+  const [rowAmounts, setRowAmounts] = useState<RowAmounts>({});
   const [reference, setReference] = useState('');
   const [note, setNote] = useState('');
   const [selectedPayIds, setSelectedPayIds] = useState<string[]>([]);
@@ -176,11 +179,12 @@ export default function AccountsProcessingView() {
   const openVerify = async (claim: any) => {
     const fallbackClaim = { ...claim, status: claim.status || 'Accounts Verification' };
     setVerifyClaim(fallbackClaim);
+    setRowAmounts({});
     setAmount(String((claim.verifiedAmount ?? claim.amount ?? 0).toFixed(2)));
     setNote('');
     try {
       const details = await getClaimById(claim.claimIdInternal || claim.claimId);
-      if (details) setVerifyClaim(details);
+      if (details) { setVerifyClaim(details); setRowAmounts(initialRowAmounts(details.expenses || [], details.verifiedAmount)); }
     } catch (error: any) {
       toast.error(error.message || 'Unable to load claim details');
     }
@@ -210,14 +214,16 @@ export default function AccountsProcessingView() {
 
   const handleVerify = async () => {
     if (!verifyClaim || !user) return;
-    const value = Number(amount);
-    if (!amount || Number.isNaN(value) || value < 0) {
+    let approved;
+    try { approved = approvedRows(verifyClaim.expenses || [], rowAmounts); } catch (e) { toast.error(e instanceof Error ? e.message : String(e)); return; }
+    const value = approved.total;
+    if (!Number.isFinite(value) || value < 0) {
       toast.error('Enter a valid accounts verified amount');
       return;
     }
     setProcessing(true);
     try {
-      await approveClaimAsAccounts(verifyClaim.claimIdInternal || verifyClaim.claimId, user.email, note, value);
+      await approveClaimAsAccounts(verifyClaim.claimIdInternal || verifyClaim.claimId, user.email, note, value, Object.fromEntries(approved.rows.map(row => [row.id, row.amount])));
       toast.success('Claim moved to payment processing');
       setVerifyClaim(null);
       await loadClaims();
@@ -385,7 +391,7 @@ export default function AccountsProcessingView() {
       >
         <div className="space-y-3">
           <ClaimDetailsPanel claim={verifyClaim} />
-          <div><Label>Accounts Verified Amount</Label><Input type="number" min="0" step="0.01" value={amount} onChange={(event) => setAmount(event.target.value)} /></div>
+          <ExpenseApprovalEditor expenses={verifyClaim.expenses || []} amounts={rowAmounts} onChange={setRowAmounts} disabled={processing} />
           <div><Label>Accounts Note</Label><Textarea rows={4} value={note} onChange={(event) => setNote(event.target.value)} placeholder="Optional verification note" /></div>
         </div>
       </ResponsiveOverlay>

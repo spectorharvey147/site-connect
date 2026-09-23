@@ -1,7 +1,9 @@
+import { attachmentLink } from './private-files';
 import { supabase } from '@/integrations/supabase/client';
 import { hashPassword, isDemoEmail } from '@/lib/auth';
 import { validatePassword } from '@/lib/password-validation';
 import { resolveClaimAttachments } from '@/lib/claim-attachments';
+import { resolveClaimWork } from '@/lib/accounting-api';
 import {
   expenseFingerprint,
   findDuplicateExpensePair,
@@ -115,7 +117,7 @@ function canViewAllFinanceData(role: string) {
 }
 
 function getClaimAmount(claim: any) {
-  return parseFloat(claim?.verified_amount ?? claim?.grand_total ?? ((claim?.total_with_bill || 0) + (claim?.total_without_bill || 0)) ?? 0);
+  return parseFloat(claim?.verified_amount ?? claim?.grand_total ?? ((Number(claim?.total_with_bill) || 0) + (Number(claim?.total_without_bill) || 0)));
 }
 
 async function fetchClaimRowByAnyId(id: string) {
@@ -128,13 +130,14 @@ async function fetchClaimRowByAnyId(id: string) {
 }
 
 function getSubmittedAmount(claim: any) {
-  return parseFloat(claim?.grand_total ?? ((claim?.total_with_bill || 0) + (claim?.total_without_bill || 0)) ?? 0);
+  return parseFloat(claim?.grand_total ?? ((Number(claim?.total_with_bill) || 0) + (Number(claim?.total_without_bill) || 0)));
 }
 
-function normalizeVerifiedAmount(value: number | undefined, fallback: number) {
-  if (value == null || Number.isNaN(value)) return fallback;
-  if (value < 0) throw new Error('Verified amount cannot be negative.');
-  return value;
+function normalizeVerifiedAmount(value: number | undefined, fallback: number, submitted?: number) {
+  const amount = value ?? fallback;
+  if (!Number.isFinite(amount) || amount < 0 || Math.abs(amount * 100 - Math.round(amount * 100)) > 0.000001) throw new Error('Enter a valid approved amount with at most two decimal places.');
+  if (submitted != null && Math.round(amount * 100) > Math.round(submitted * 100)) throw new Error('Approved amount cannot exceed submitted amount.');
+  return amount;
 }
 
 function isMissingVerifiedAmountColumnError(error: any) {
@@ -278,7 +281,7 @@ function visibleDemoClaims(userEmail: string, userRole: string) {
 export async function checkAdminExists(): Promise<boolean> {
   const { count, error } = await supabase
     .from('users')
-    .select('*', { count: 'exact', head: true })
+    .select('id,email,name,role,manager_email,advance_amount,active,created_at,profile_picture_url,signature_url,employee_id,mobile_number,date_of_joining,sap_gl_code,sap_location_code', { count: 'exact', head: true })
     .or('role.eq.Admin,role.eq.Super Admin');
   
   if (error) return true; // Assume admin exists on error for security
@@ -380,10 +383,10 @@ function mapAttachmentEmailData(fileIds?: string[]) {
   return (fileIds || []).map((fileId) => {
     const parts = fileId.split('/');
     const name = parts[parts.length - 1] || fileId;
-    const { data } = supabase.storage.from('claim-attachments').getPublicUrl(fileId);
+
     return {
       name,
-      url: data?.publicUrl || '',
+      url: attachmentLink(fileId),
     };
   });
 }
@@ -485,7 +488,7 @@ async function getAdminApproverEmails() {
     .eq('role', 'Admin')
     .eq('active', true);
 
-  const adminEmails = [...new Set((data || []).map((user: any) => user.email).filter(Boolean))];
+  const adminEmails = [...new Set<string>((data || []).map((user: { email: string }) => user.email).filter(Boolean))];
   if (adminEmails.length > 0) return adminEmails;
   return getSuperAdminApproverEmails();
 }
@@ -497,7 +500,7 @@ async function getAdminVerifierEmails() {
     .eq('role', 'Admin')
     .eq('active', true);
 
-  const adminEmails = [...new Set((data || []).map((user: any) => user.email).filter(Boolean))];
+  const adminEmails = [...new Set<string>((data || []).map((user: { email: string }) => user.email).filter(Boolean))];
   if (adminEmails.length > 0) return adminEmails;
   return getSuperAdminApproverEmails();
 }
@@ -509,7 +512,7 @@ async function getSuperAdminApproverEmails() {
     .eq('role', 'Super Admin')
     .eq('active', true);
 
-  return [...new Set((data || []).map((user: any) => user.email).filter(Boolean))];
+  return [...new Set<string>((data || []).map((user: { email: string }) => user.email).filter(Boolean))];
 }
 
 async function getAccountsUserEmails() {
@@ -519,7 +522,7 @@ async function getAccountsUserEmails() {
     .eq('role', 'Accounts')
     .eq('active', true);
 
-  return [...new Set((data || []).map((user: any) => user.email).filter(Boolean))];
+  return [...new Set<string>((data || []).map((user: { email: string }) => user.email).filter(Boolean))];
 }
 
 async function isManagerAlsoSuperAdmin(managerEmail?: string | null) {
@@ -554,8 +557,10 @@ export async function getDropdownOptions() {
   const projects = (data as any[])
     .filter(r => String(r.type || '').toLowerCase() === 'project')
     .map(r => ({
+      id: r.id,
       name: String(r.value || '').trim(),
       code: String(r.project_code || '').trim(),
+      defaultManagerEmail: r.default_manager_email || '',
       customerNames: normalizeCustomerList(r.customer_names),
     }))
     .filter(p => p.name);
@@ -681,7 +686,7 @@ export async function getDashboardSummary(userEmail: string, userRole: string) {
       if (isPaidStatus(c.status)) paid++;
     }
 
-    const { count: userCount } = await supabase.from('users').select('*', { count: 'exact', head: true });
+    const { count: userCount } = await supabase.from('users').select('id,email,name,role,manager_email,advance_amount,active,created_at,profile_picture_url,signature_url,employee_id,mobile_number,date_of_joining,sap_gl_code,sap_location_code', { count: 'exact', head: true });
 
     return { role: userRole, totalClaims: total, totalUsers: userCount || 0, totalAmount, pendingClaims: pending, pendingManagerClaims: pendingManager, pendingAdminClaims: pendingAdmin, pendingFinalClaims: pendingFinal, pendingAccountsClaims: pendingAccounts, accountsProcessingClaims: accountsProcessing, paidClaims: paid };
   } else {
@@ -758,6 +763,7 @@ export async function validateClaimSubmissionRules(userEmail: string, expenses: 
 
 export async function submitClaim(claim: {
   site: string;
+  workId?: string;
   customerName?: string;
   expenses: Array<{ category: string; projectCode: string; customerName?: string; claimDate: string; description: string; amountWithBill: number; amountWithoutBill: number; attachmentIds?: string[] }>;
   fileIds?: string[];
@@ -769,20 +775,6 @@ export async function submitClaim(claim: {
   }
 
   const claimID = 'C-' + Date.now();
-  
-  // Generate claim_number in format CLM-0001, CLM-0002, etc.
-  const { data: existingClaims } = await supabase.from('claims').select('claim_number', { count: 'exact' }).order('created_at', { ascending: false }).limit(1);
-  let nextSequence = 1;
-  if (existingClaims && existingClaims.length > 0) {
-    const lastClaimNumber = (existingClaims[0] as any)?.claim_number;
-    if (lastClaimNumber) {
-      const match = lastClaimNumber.match(/\d+/);
-      if (match) {
-        nextSequence = parseInt(match[0]) + 1;
-      }
-    }
-  }
-  const claimNumber = `CLM-${String(nextSequence).padStart(4, '0')}`;
   
   let totalWithBill = 0, totalWithoutBill = 0;
   const allFileIds = collectClaimFileIds(claim);
@@ -803,60 +795,25 @@ export async function submitClaim(claim: {
     };
   });
 
-  // Get manager
-  const { data: userRecord } = await supabase.from('users').select('manager_email').eq('email', userEmail).single();
-  const managerEmail = String((userRecord as any)?.manager_email || '').trim().toLowerCase() || null;
+  const assignedWork = await resolveClaimWork(claim.site, claim.workId);
+  const managerEmail = assignedWork.managerEmail;
 
   const grandTotal = totalWithBill + totalWithoutBill;
 
   // Get company workflow settings
   const companySettings = await getCompanySettings();
-  const requireManager = companySettings?.require_manager_approval ?? true;
-  const autoApproveThreshold = parseFloat(companySettings?.auto_approve_below || 0);
+  // Work-based claims always require admin verification and their assigned manager.
+  const status = STATUS_SUBMITTED;
+  const managerApprovalStatus = 'Not Started';
 
-  let status = STATUS_SUBMITTED;
-  let managerApprovalStatus = 'Not Started';
-
-  // Auto-approve if below threshold
-  if (autoApproveThreshold > 0 && grandTotal <= autoApproveThreshold) {
-    status = STATUS_ACCOUNTS_VERIFICATION;
-    managerApprovalStatus = 'Skipped';
-  }
-
-  // Get current balance
-  const currentBalance = await getCurrentBalance(userEmail);
-  const newBalance = currentBalance - grandTotal;
-
-  const { error: cErr } = await supabase.from('claims').insert({
-    claim_id: claimID,
-    claim_number: claimNumber,
-    user_email: userEmail,
-    submitted_by: userName,
-    site_name: claim.site,
-    customer_name: claim.customerName || null,
-    status,
-    manager_email: managerEmail,
-    manager_approval_status: managerApprovalStatus,
-    total_with_bill: totalWithBill,
-    total_without_bill: totalWithoutBill,
-    drive_file_ids: allFileIds,
+  const { data: claimNumber, error: submissionError } = await supabase.rpc('submit_claim_secure', {
+    p_claim: {
+      claim_id: claimID, site_name: claim.site, work_id: assignedWork.workId,
+      customer_name: claim.customerName || null, drive_file_ids: allFileIds,
+    },
+    p_expenses: expenseItems,
   });
-  if (cErr) throw new Error('Claim insert failed: ' + cErr.message);
-
-  const { error: eErr } = await supabase.from('expense_items').insert(expenseItems);
-  if (eErr) throw new Error('Expense items insert failed: ' + eErr.message);
-
-  const { error: tErr } = await supabase.from('transactions').insert({
-    user_email: userEmail,
-    admin_email: userEmail,
-    type: 'claim_submitted',
-    reference_id: claimID,
-    credit: 0,
-    debit: grandTotal,
-    balance_after: newBalance,
-    description: `Claim submission: ${claimNumber}`,
-  });
-  if (tErr) throw new Error('Transaction insert failed: ' + tErr.message);
+  if (submissionError) throw new Error('Claim submission failed: ' + submissionError.message);
 
   const attachmentsForEmail = mapAttachmentEmailData(allFileIds);
   const primaryProjectCode = claim.expenses.find((expense) => expense.projectCode)?.projectCode || '';
@@ -865,27 +822,11 @@ export async function submitClaim(claim: {
 
   // Notifications & audit
   await logAudit('claim_submitted', userEmail, 'claim', claimID, `Amount: ₹${grandTotal}`);
-  if (status === STATUS_ACCOUNTS_VERIFICATION) {
-    await logAudit('claim_auto_accounts_verification', 'system', 'claim', claimID, `Amount: Rs. ${grandTotal}`);
-    await createNotification(userEmail, 'Claim Sent for Accounts Verification', `Your claim ${claimID} was auto-approved and sent for accounts verification.`, 'success', claimID);
-    await createNotification(userEmail, 'Claim Auto-Approved', `Your claim ${claimID} (₹${grandTotal.toLocaleString('en-IN')}) was auto-approved.`, 'success', claimID);
-  } else {
-    const adminVerifiers = await getAdminVerifierEmails();
-    await Promise.all(adminVerifiers.map((email) =>
-      createNotification(email, 'Claim Awaiting Admin Verification', `${userName} submitted claim ${claimID} (Rs. ${grandTotal.toLocaleString('en-IN')})`, 'info', claimID)
-    ));
-    if (isPendingManagerStatus(status) && managerEmail) {
-      await createNotification(managerEmail, 'New Claim for Approval', `${userName} submitted claim ${claimID} (₹${grandTotal.toLocaleString('en-IN')})`, 'info', claimID);
-    }
-    if (isPendingSuperAdminStatus(status)) {
-      const adminApprovers = await getAdminApproverEmails();
-      await Promise.all(adminApprovers.map((email) =>
-        createNotification(email, 'New Claim for Approval', `${userName} submitted claim ${claimID} (₹${grandTotal.toLocaleString('en-IN')})`, 'info', claimID)
-      ));
-    }
-    await createNotification(userEmail, 'Claim Submitted', `Your claim ${claimID} has been submitted successfully.`, 'success', claimID);
-  }
-
+  const adminVerifiers = await getAdminVerifierEmails();
+  await Promise.all(adminVerifiers.map((email) =>
+    createNotification(email, 'Claim Awaiting Admin Verification', `${userName} submitted claim ${claimID} for ${assignedWork.workName} (Rs. ${grandTotal.toLocaleString('en-IN')})`, 'info', claimID)
+  ));
+  await createNotification(userEmail, 'Claim Submitted', `Your claim ${claimID} has been submitted successfully.`, 'success', claimID);
   await sendEmailNotification('claim_submitted_user', userEmail, { 
     claim_id: claimID,
     claim_number: claimNumber, 
@@ -893,6 +834,7 @@ export async function submitClaim(claim: {
     submitted_by: userName,
     submission_date: new Date().toISOString(),
     project_site: claim.site,
+    work_name: assignedWork.workName,
     customer_name: claim.customerName || '',
     primary_project_code: primaryProjectCode,
     status,
@@ -913,6 +855,7 @@ export async function submitClaim(claim: {
         employee_name: userName,
         employee_email: userEmail,
         project_site: claim.site,
+    work_name: assignedWork.workName,
         customer_name: claim.customerName || '',
         primary_project_code: primaryProjectCode,
         submission_date: new Date().toISOString(),
@@ -929,98 +872,6 @@ export async function submitClaim(claim: {
       })
     ));
   }
-  if (isPendingManagerStatus(status) && managerEmail) {
-    await sendEmailNotification('claim_submitted_manager', managerEmail, { 
-      claim_id: claimID,
-      claim_number: claimNumber,
-      employee_name: userName,
-      employee_email: userEmail,
-      project_site: claim.site,
-      customer_name: claim.customerName || '',
-      primary_project_code: primaryProjectCode,
-      submission_date: new Date().toISOString(),
-      manager_status: 'Pending',
-      admin_status: 'Pending',
-      total_amount: grandTotal,
-      total_with_bill: totalWithBill,
-      total_without_bill: totalWithoutBill,
-      currency: '₹',
-      items: expenseItemsForEmail,
-      attachments: attachmentsForEmail,
-      approve_link: buildClaimActionLink(appUrl, claimID, 'approve', 'manager', managerEmail),
-      reject_link: buildClaimActionLink(appUrl, claimID, 'reject', 'manager', managerEmail)
-    });
-    const superAdminApprovers: string[] = [];
-    await Promise.all(superAdminApprovers.map((email) =>
-      sendEmailNotification('claim_submitted_manager', email, {
-        claim_id: claimID,
-        claim_number: claimNumber,
-        employee_name: userName,
-        employee_email: userEmail,
-        project_site: claim.site,
-        customer_name: claim.customerName || '',
-        primary_project_code: primaryProjectCode,
-        submission_date: new Date().toISOString(),
-        manager_status: 'Pending',
-        admin_status: 'Pending',
-        total_amount: grandTotal,
-        total_with_bill: totalWithBill,
-        total_without_bill: totalWithoutBill,
-        currency: '₹',
-        items: expenseItemsForEmail,
-        attachments: attachmentsForEmail,
-        approve_link: buildClaimActionLink(appUrl, claimID, 'approve', 'admin', email),
-        reject_link: buildClaimActionLink(appUrl, claimID, 'reject', 'admin', email),
-      })
-    ));
-    await Promise.all(superAdminApprovers.map((email) =>
-      sendEmailNotification('claim_submitted_manager', email, {
-        claim_id: claimID,
-        claim_number: claimNumber,
-        employee_name: userName,
-        employee_email: userEmail,
-        project_site: claim.site,
-        customer_name: claim.customerName || '',
-        primary_project_code: primaryProjectCode,
-        submission_date: new Date().toISOString(),
-        manager_status: 'Pending',
-        admin_status: 'Pending',
-        total_amount: grandTotal,
-        currency: '₹',
-        total_with_bill: totalWithBill,
-        total_without_bill: totalWithoutBill,
-        items: expenseItemsForEmail,
-        attachments: attachmentsForEmail,
-        approve_link: buildClaimActionLink(appUrl, claimID, 'approve', 'manager', email),
-        reject_link: buildClaimActionLink(appUrl, claimID, 'reject', 'manager', email),
-      })
-    ));
-  } else if (isPendingSuperAdminStatus(status)) {
-    const adminApprovers = await getAdminApproverEmails();
-    await Promise.all(adminApprovers.map((email) =>
-      sendEmailNotification('claim_submitted_manager', email, {
-        claim_id: claimID,
-        claim_number: claimNumber,
-        employee_name: userName,
-        employee_email: userEmail,
-        project_site: claim.site,
-        customer_name: claim.customerName || '',
-        primary_project_code: primaryProjectCode,
-        submission_date: new Date().toISOString(),
-        manager_status: requireManager ? 'Not Required / Skipped' : 'Not Required',
-        admin_status: 'Pending',
-        total_amount: grandTotal,
-        total_with_bill: totalWithBill,
-        total_without_bill: totalWithoutBill,
-        currency: '₹',
-        items: expenseItemsForEmail,
-        attachments: attachmentsForEmail,
-        approve_link: buildClaimActionLink(appUrl, claimID, 'approve', 'admin', email),
-        reject_link: buildClaimActionLink(appUrl, claimID, 'reject', 'admin', email),
-      })
-    ));
-  }
-
   return { ok: true, id: claimNumber, message: `Claim ${claimNumber} submitted. Status: ${status}` };
 }
 
@@ -1051,6 +902,8 @@ export async function getPendingManagerClaims(userEmail: string, userRole: strin
     submittedBy: c.submitted_by,
     userEmail: c.user_email,
     site: c.site_name,
+    workId: c.work_id,
+    workName: c.work_name,
     totalWithBill: parseFloat(c.total_with_bill || 0),
     totalWithoutBill: parseFloat(c.total_without_bill || 0),
     submittedAmount: getSubmittedAmount(c),
@@ -1080,6 +933,8 @@ export async function getPendingAdminClaims() {
     submittedBy: c.submitted_by,
     userEmail: c.user_email,
     site: c.site_name,
+    workId: c.work_id,
+    workName: c.work_name,
     totalWithBill: parseFloat(c.total_with_bill || 0),
     totalWithoutBill: parseFloat(c.total_without_bill || 0),
     submittedAmount: getSubmittedAmount(c),
@@ -1107,6 +962,8 @@ export async function getPendingSuperAdminClaims() {
     submittedBy: c.submitted_by,
     userEmail: c.user_email,
     site: c.site_name,
+    workId: c.work_id,
+    workName: c.work_name,
     totalWithBill: parseFloat(c.total_with_bill || 0),
     totalWithoutBill: parseFloat(c.total_without_bill || 0),
     submittedAmount: getSubmittedAmount(c),
@@ -1117,7 +974,17 @@ export async function getPendingSuperAdminClaims() {
   }));
 }
 
-export async function approveClaimAsManager(claimId: string, approverEmail: string, description?: string, verifiedAmountInput?: number) {
+async function commitRowApproval(claim: any, stage: string, rows: Record<string, number>, updates: any, note?: string) {
+  const { error } = await supabase.rpc('approve_claim_expense_rows', {
+    p_token: localStorage.getItem('claimsToken') || '', p_claim_id: claim.claim_id,
+    p_stage: stage, p_expected_status: claim.status, p_amounts: rows,
+    p_expected_total: updates.verified_amount, p_skip_manager: updates.manager_approval_status === 'Skipped', p_note: note || null,
+  });
+  if (error) throw new Error(error.code === 'PGRST202' ? 'Row-wise approval needs the database update. Please apply the approval migration before approving.' : error.message);
+  return { error: null };
+}
+
+export async function approveClaimAsManager(claimId: string, approverEmail: string, description?: string, verifiedAmountInput?: number, rowAmounts?: Record<string, number>) {
   if (isDemoEmail(approverEmail)) return;
 
   const { data: claim } = await supabase.from('claims').select('*').eq('claim_id', claimId).single();
@@ -1126,6 +993,9 @@ export async function approveClaimAsManager(claimId: string, approverEmail: stri
   if (!isPendingManagerStatus(claimData.status)) {
     throw new Error(`This manager approval link is no longer valid. The claim is currently "${claimData.status || 'Unknown'}".`);
   }
+  if (claimData.work_id && String(claimData.manager_email || '').toLowerCase() !== approverEmail.toLowerCase()) {
+    throw new Error('Only the manager assigned to this work can approve this claim.');
+  }
   
   const updates: any = {
     status: STATUS_MANAGER_APPROVED,
@@ -1133,9 +1003,11 @@ export async function approveClaimAsManager(claimId: string, approverEmail: stri
     manager_approval_date: new Date().toISOString(),
   };
   if (verifiedAmountInput != null) {
-    updates.verified_amount = normalizeVerifiedAmount(verifiedAmountInput, getClaimAmount(claimData) || getSubmittedAmount(claimData));
+    updates.verified_amount = normalizeVerifiedAmount(verifiedAmountInput, getClaimAmount(claimData) || getSubmittedAmount(claimData), getSubmittedAmount(claimData));
   }
-  const { error } = await supabase.from('claims').update(updates).eq('claim_id', claimId);
+  const { error } = rowAmounts ? await commitRowApproval(claimData, 'manager', rowAmounts, updates, description) : claimData.work_id
+    ? await (supabase as any).rpc('act_on_work_claim', { p_token: localStorage.getItem('claimsToken') || '', p_claim_id: claimId, p_approve: true, p_amount: updates.verified_amount ?? getClaimAmount(claimData), p_note: description || null })
+    : await supabase.from('claims').update(updates).eq('claim_id', claimId);
   if (error) throw error;
 
   await logAudit('claim_manager_approved', approverEmail, 'claim', claimId, description || undefined);
@@ -1169,6 +1041,7 @@ export async function approveClaimAsManager(claimId: string, approverEmail: stri
         employee_name: claimData.submitted_by,
         employee_email: claimData.user_email,
         project_site: claimData.site_name,
+        work_name: claimData.work_name || '',
         primary_project_code: emailSummary.primaryProjectCode,
         submission_date: claimData.created_at,
         manager_status: 'Approved',
@@ -1188,7 +1061,7 @@ export async function approveClaimAsManager(claimId: string, approverEmail: stri
   }
 }
 
-export async function approveClaimAsAdmin(claimId: string, approverEmail: string, description?: string, verifiedAmountInput?: number) {
+export async function approveClaimAsAdmin(claimId: string, approverEmail: string, description?: string, verifiedAmountInput?: number, rowAmounts?: Record<string, number>) {
   if (isDemoEmail(approverEmail)) return;
 
   const { data: claim } = await supabase.from('claims').select('*').eq('claim_id', claimId).single();
@@ -1199,11 +1072,17 @@ export async function approveClaimAsAdmin(claimId: string, approverEmail: string
     throw new Error(`This admin approval link is no longer valid. The claim is currently "${c.status || 'Unknown'}".`);
   }
   const submittedAmount = getSubmittedAmount(c);
-  const verifiedAmount = normalizeVerifiedAmount(verifiedAmountInput, getClaimAmount(c) || submittedAmount);
+  const verifiedAmount = normalizeVerifiedAmount(verifiedAmountInput, getClaimAmount(c) || submittedAmount, submittedAmount);
   const settings = await getCompanySettings();
   const requireManager = settings?.require_manager_approval ?? true;
   const managerEmail = String(c.manager_email || '').trim().toLowerCase();
-  const skipManagerStage = !requireManager || !managerEmail || (await isManagerAlsoSuperAdmin(managerEmail));
+  const skipManagerStage = !c.work_id && (!requireManager || !managerEmail || (await isManagerAlsoSuperAdmin(managerEmail)));
+  if (c.work_id) {
+    const { data: assignedManager } = await supabase.from('users').select('active,role').eq('email', managerEmail).single();
+    if (!assignedManager?.active || !['Manager', 'Super Admin'].includes(assignedManager.role)) {
+      throw new Error('The assigned work manager is inactive. Restore the manager before forwarding this claim.');
+    }
+  }
   const nextStatus = skipManagerStage ? STATUS_MANAGER_APPROVED : STATUS_ADMIN_VERIFIED;
   const managerApprovalStatus = skipManagerStage ? 'Skipped' : 'Pending';
 
@@ -1214,7 +1093,7 @@ export async function approveClaimAsAdmin(claimId: string, approverEmail: string
     admin_approval_date: new Date().toISOString(),
     verified_amount: verifiedAmount,
   };
-  const { error } = await supabase.from('claims').update(claimUpdates).eq('claim_id', claimId);
+  const { error } = rowAmounts ? await commitRowApproval(c, 'admin', rowAmounts, claimUpdates, description) : await supabase.from('claims').update(claimUpdates).eq('claim_id', claimId);
   if (error) {
     if (!isMissingVerifiedAmountColumnError(error)) throw error;
     const { verified_amount, ...fallbackUpdates } = claimUpdates;
@@ -1243,6 +1122,7 @@ export async function approveClaimAsAdmin(claimId: string, approverEmail: string
         employee_name: c.submitted_by,
         employee_email: c.user_email,
         project_site: c.site_name,
+        work_name: c.work_name || '',
         primary_project_code: emailSummary.primaryProjectCode,
         submission_date: c.created_at,
         manager_status: 'Skipped',
@@ -1267,6 +1147,7 @@ export async function approveClaimAsAdmin(claimId: string, approverEmail: string
       employee_name: c.submitted_by,
       employee_email: c.user_email,
       project_site: c.site_name,
+        work_name: c.work_name || '',
       primary_project_code: emailSummary.primaryProjectCode,
       submission_date: c.created_at,
       manager_status: 'Pending',
@@ -1285,7 +1166,7 @@ export async function approveClaimAsAdmin(claimId: string, approverEmail: string
   }
 }
 
-export async function approveClaimAsSuperAdmin(claimId: string, approverEmail: string, description?: string, verifiedAmountInput?: number) {
+export async function approveClaimAsSuperAdmin(claimId: string, approverEmail: string, description?: string, verifiedAmountInput?: number, rowAmounts?: Record<string, number>) {
   if (isDemoEmail(approverEmail)) return;
 
   const { data: claim } = await supabase.from('claims').select('*').eq('claim_id', claimId).single();
@@ -1297,7 +1178,7 @@ export async function approveClaimAsSuperAdmin(claimId: string, approverEmail: s
   }
   const submittedAmount = getSubmittedAmount(c);
   const persistedVerified = c.verified_amount == null ? null : parseFloat(c.verified_amount);
-  const amount = normalizeVerifiedAmount(verifiedAmountInput ?? persistedVerified ?? getClaimAmount(c), getClaimAmount(c));
+  const amount = normalizeVerifiedAmount(verifiedAmountInput ?? persistedVerified ?? getClaimAmount(c), getClaimAmount(c), submittedAmount);
 
   const finalApprovalDate = new Date().toISOString();
   const updates: any = {
@@ -1306,7 +1187,7 @@ export async function approveClaimAsSuperAdmin(claimId: string, approverEmail: s
     final_approval_date: finalApprovalDate,
     verified_amount: amount,
   };
-  const { error } = await supabase.from('claims').update(updates).eq('claim_id', claimId);
+  const { error } = rowAmounts ? await commitRowApproval(c, 'super-admin', rowAmounts, updates, description) : await supabase.from('claims').update(updates).eq('claim_id', claimId);
   if (error) {
     if (!isMissingFinalApprovalColumnError(error)) throw error;
     const { error: fallbackError } = await supabase.from('claims').update({
@@ -1406,6 +1287,8 @@ function mapClaimQueueRow(c: any) {
     submittedBy: c.submitted_by,
     userEmail: c.user_email,
     site: c.site_name,
+    workId: c.work_id,
+    workName: c.work_name,
     customerName: c.customer_name,
     totalWithBill: parseFloat(c.total_with_bill || 0),
     totalWithoutBill: parseFloat(c.total_without_bill || 0),
@@ -1575,11 +1458,11 @@ function summarizeSapClaim(c: any, customerResolver?: SapCustomerResolver) {
   return {
     claimId: c.claim_number || c.claim_id,
     claimIdInternal: c.claim_id,
-    projectCode: firstExpense.project_code || '',
-    customerName,
+    projectCode: [...new Set(expenses.map((e: any) => e.project_code).filter(Boolean))].join(', '),
+    customerName: [...new Set(expenses.map((e: any) => e.customer_name).filter(Boolean))].join(', ') || customerName,
     employeeName: c.submitted_by || '',
     submittedDate: c.created_at,
-    serviceType: c.service_type || 'Site Execution',
+    serviceType: c.work_name || c.service_type || 'Site Execution',
     boardingAmount: totals.boarding,
     otherAmount: totals.other,
     daAmount: totals.da,
@@ -1639,39 +1522,6 @@ function sapExcelRows(claims: any[], customerResolver?: SapCustomerResolver) {
   return rows;
 }
 
-async function fetchSapClaimsByIds(claimIds: string[]) {
-  const ids = [...new Set(claimIds.map((id) => String(id || '').trim()).filter(Boolean))];
-  if (ids.length === 0) throw new Error('Select at least one claim.');
-
-  const { data, error } = await supabase
-    .from('claims')
-    .select('*, expense_items(*)')
-    .in('claim_id', ids);
-  if (error) throw error;
-
-  const claims = (data || []) as any[];
-  if (claims.length !== ids.length) throw new Error('One or more selected claims could not be found.');
-  const invalid = claims.find((claim) => !isAccountsVerifiedStatus(claim.status) || claim.sap_exported === true);
-  if (invalid) throw new Error(`Claim ${invalid.claim_number || invalid.claim_id} is not eligible for SAP export.`);
-  return claims;
-}
-
-async function nextSapBatchId() {
-  const today = new Date();
-  const yyyymmdd = today.toISOString().slice(0, 10).replace(/-/g, '');
-  const prefix = `SAP-${yyyymmdd}-`;
-  const { data, error } = await supabase
-    .from('sap_export_batches' as any)
-    .select('batch_id')
-    .like('batch_id', `${prefix}%`)
-    .order('batch_id', { ascending: false })
-    .limit(1);
-  if (error) throw error;
-  const last = String((data as any[])?.[0]?.batch_id || '');
-  const next = (parseInt(last.slice(prefix.length), 10) || 0) + 1;
-  return `${prefix}${String(next).padStart(3, '0')}`;
-}
-
 export async function getSapPendingClaims() {
   if (isDemoMode()) return [];
 
@@ -1703,7 +1553,7 @@ export async function getSapHistoricalClaims() {
       claimId: claim.claimId,
       claimIdInternal: claim.claimIdInternal,
       projectCode,
-      customerName: claim.customerName || customerResolver(projectCode, claim.site) || '',
+      customerName: ('customerName' in claim ? String(claim.customerName || '') : '') || customerResolver(projectCode, claim.site) || '',
       employeeName: claim.submittedBy,
       submittedDate: claim.date,
       serviceType: 'Site Execution',
@@ -1791,8 +1641,9 @@ export async function downloadSapPreviewExcel(claimIds: string[], generatedBy?: 
       .from('sap-exports')
       .upload(storagePath, blob, { contentType: blob.type, upsert: true });
     if (uploadError) throw uploadError;
-    const { data: publicUrl } = supabase.storage.from('sap-exports').getPublicUrl(storagePath);
-    fileUrl = publicUrl.publicUrl;
+    const { data: signed, error: signError } = await supabase.storage.from('sap-exports').createSignedUrl(storagePath,3600);
+    if (signError) throw signError;
+    fileUrl = signed.signedUrl;
   }
 
   const url = fileUrl || URL.createObjectURL(blob);
@@ -1813,74 +1664,6 @@ export async function downloadSapPreviewExcel(claimIds: string[], generatedBy?: 
   return { fileName, totalClaims: claims.length, fileUrl };
 }
 
-export async function generateSapExcelExport(claimIds: string[], generatedBy: string) {
-  if (isDemoEmail(generatedBy)) {
-    throw new Error('SAP export is disabled in demo mode.');
-  }
-
-  const claims = await fetchSapClaimsByIds(claimIds);
-  const batchId = await nextSapBatchId();
-  const generatedAt = new Date();
-  const fileName = `SAP_Export_${generatedAt.toISOString().slice(0, 10).replace(/-/g, '')}_${generatedAt.toTimeString().slice(0, 5).replace(':', '')}.xlsx`;
-  const storagePath = `${generatedAt.getFullYear()}/${String(generatedAt.getMonth() + 1).padStart(2, '0')}/${fileName}`;
-
-  const XLSX = await import('xlsx');
-  const customerResolver = await getSapCustomerResolver();
-  const worksheet = XLSX.utils.json_to_sheet(sapExcelRows(claims, customerResolver));
-  const workbook = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(workbook, worksheet, 'SAP Export');
-  const workbookData = XLSX.write(workbook, { bookType: 'xlsx', type: 'array' });
-  const fileBlob = new Blob([workbookData], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
-
-  const { error: uploadError } = await supabase.storage
-    .from('sap-exports')
-    .upload(storagePath, fileBlob, { contentType: fileBlob.type, upsert: false });
-  if (uploadError) throw uploadError;
-
-  const { data: publicUrl } = supabase.storage.from('sap-exports').getPublicUrl(storagePath);
-  const totalAmount = claims.reduce((sum, claim) => sum + (claim.verified_amount == null ? getClaimAmount(claim) : toNumber(claim.verified_amount)), 0);
-
-  const { error: batchError } = await supabase.from('sap_export_batches' as any).insert({
-    batch_id: batchId,
-    generated_by: generatedBy,
-    generated_at: generatedAt.toISOString(),
-    total_claims: claims.length,
-    total_amount: totalAmount,
-    file_url: publicUrl.publicUrl,
-    file_path: storagePath,
-  });
-  if (batchError) throw batchError;
-
-  const { error: itemsError } = await supabase.from('sap_export_batch_items' as any).insert(
-    claims.map((claim) => ({ batch_id: batchId, claim_id: claim.claim_id }))
-  );
-  if (itemsError) throw itemsError;
-
-  const { error: updateError } = await supabase.from('claims').update({
-    sap_exported: true,
-    sap_exported_at: generatedAt.toISOString(),
-    sap_exported_by: generatedBy,
-    sap_export_batch_id: batchId,
-    status: STATUS_PAYMENT_PROCESSING,
-  } as any).in('claim_id', claims.map((claim) => claim.claim_id));
-  if (updateError) throw updateError;
-
-  await Promise.all(claims.map((claim) => ensurePaymentVoucherCode(claim.claim_id)));
-
-  await logAudit('sap_report_generated', generatedBy, 'sap_export_batch', batchId, `Claims: ${claims.length} | Total: Rs. ${totalAmount.toLocaleString('en-IN')}`);
-  await Promise.all(claims.map((claim) =>
-    logAudit('sap_report_claim_included', generatedBy, 'claim', claim.claim_id, `Batch: ${batchId}`)
-  ));
-
-  return {
-    batchId,
-    fileName,
-    fileUrl: publicUrl.publicUrl,
-    totalClaims: claims.length,
-    totalAmount,
-  };
-}
-
 export async function getSapExportBatches() {
   if (isDemoMode()) return [];
 
@@ -1894,6 +1677,17 @@ export async function getSapExportBatches() {
 
 export async function getSapExportBatchClaims(batchId: string) {
   if (isDemoMode()) return [];
+
+  const { data: batch, error: batchError } = await supabase.from('sap_export_batches').select('export_payload').eq('batch_id',batchId).single();
+  if (batchError) throw batchError;
+  const snapshot = batch?.export_payload as import('./sap-journal').JournalPayload | undefined;
+  if (snapshot) return snapshot.claims.map(claim => {
+    const headers = snapshot.headers.slice(2).filter((_,i) => snapshot.journalClaims[i] === claim.claimId);
+    const ids = new Set(headers.map(h=>h[0]));
+    const details = snapshot.details.slice(2).filter(d=>ids.has(d[0]));
+    const amount = (line: number) => details.filter(d=>d[1]===line).reduce((sum,d)=>sum+Number(d[4] || 0),0);
+    return { claimId: claim.reference, claimIdInternal: claim.claimId, projectCode: [...new Set(headers.map(h=>h[7]))].join(', '), customerName: [...new Set(headers.map(h=>h[2]))].join(', '), employeeName: claim.employeeName, submittedDate: snapshot.postingDate, serviceType: headers[0]?.[5] || '', boardingAmount: amount(4), otherAmount: amount(3), daAmount: amount(2), travelAmount: amount(1), grandTotal: claim.amount, remarks: headers.map(h=>h[12]).join('; '), status: 'Exported', sapStatus: 'Exported' };
+  });
 
   const { data: items, error: itemsError } = await supabase
     .from('sap_export_batch_items' as any)
@@ -1924,7 +1718,7 @@ export async function ensurePaymentVoucherCode(claimId: string) {
   return String(data || '');
 }
 
-export async function approveClaimAsAccounts(claimId: string, accountsEmail: string, note?: string, processingAmountInput?: number) {
+export async function approveClaimAsAccounts(claimId: string, accountsEmail: string, note?: string, processingAmountInput?: number, rowAmounts?: Record<string, number>) {
   if (isDemoEmail(accountsEmail)) return;
 
   const { data: claim } = await supabase.from('claims').select('*').eq('claim_id', claimId).single();
@@ -1935,7 +1729,7 @@ export async function approveClaimAsAccounts(claimId: string, accountsEmail: str
   }
 
   const submittedAmount = getSubmittedAmount(c);
-  const amount = normalizeVerifiedAmount(processingAmountInput ?? getClaimAmount(c), getClaimAmount(c) || submittedAmount);
+  const amount = normalizeVerifiedAmount(processingAmountInput ?? getClaimAmount(c), getClaimAmount(c) || submittedAmount, submittedAmount);
   const updates: any = {
     status: STATUS_ACCOUNTS_VERIFIED,
     accounts_verified_email: accountsEmail,
@@ -1943,7 +1737,7 @@ export async function approveClaimAsAccounts(claimId: string, accountsEmail: str
     accounts_note: note || null,
     verified_amount: amount,
   };
-  const { error } = await supabase.from('claims').update(updates).eq('claim_id', claimId);
+  const { error } = rowAmounts ? await commitRowApproval(c, 'accounts', rowAmounts, updates, note) : await supabase.from('claims').update(updates).eq('claim_id', claimId);
   if (error) throw error;
 
   await logAudit('claim_accounts_verified', accountsEmail, 'claim', claimId, note ? `Amount: Rs. ${amount} | ${note}` : `Amount: Rs. ${amount}`);
@@ -2035,6 +1829,9 @@ export async function rejectClaim(claimId: string, reason: string, rejectorEmail
   if (!currentClaim) throw new Error('Claim not found');
   const currentStatus = (currentClaim as any).status;
   const normalizedRole = rejectorRole.toLowerCase();
+  if (normalizedRole === 'manager' && currentClaim.work_id && String(currentClaim.manager_email || '').toLowerCase() !== rejectorEmail.toLowerCase()) {
+    throw new Error('Only the assigned work manager can reject this claim at the manager stage.');
+  }
   const canReject = normalizedRole === 'manager'
     ? isPendingManagerStatus(currentStatus)
     : normalizedRole === 'super admin'
@@ -2052,7 +1849,9 @@ export async function rejectClaim(claimId: string, reason: string, rejectorEmail
     updates.admin_approval_date = new Date().toISOString();
   }
 
-  const { error } = await supabase.from('claims').update(updates).eq('claim_id', claimId);
+  const { error } = normalizedRole === 'manager' && currentClaim.work_id
+    ? await (supabase as any).rpc('act_on_work_claim', { p_token: localStorage.getItem('claimsToken') || '', p_claim_id: claimId, p_approve: false, p_note: reason })
+    : await supabase.from('claims').update(updates).eq('claim_id', claimId);
   if (error) throw error;
 
   // Refund transaction
@@ -2091,6 +1890,7 @@ export async function rejectClaim(claimId: string, reason: string, rejectorEmail
 
 export async function resubmitRejectedClaim(claimId: string, claim: {
   site: string;
+  workId?: string;
   customerName?: string;
   expenses: Array<{ category: string; projectCode: string; customerName?: string; claimDate: string; description: string; amountWithBill: number; amountWithoutBill: number; attachmentIds?: string[] }>;
   fileIds?: string[];
@@ -2130,10 +1930,7 @@ export async function getClaimsHistory(userEmail: string, userRole: string, filt
   if (canViewAllFinanceData(role)) {
     if (filters?.userEmail) query = query.eq('user_email', filters.userEmail);
   } else if (role === 'manager') {
-    // Get managed users
-    const { data: managed } = await supabase.from('users').select('email').eq('manager_email', userEmail);
-    const emails = [userEmail, ...(managed || []).map((u: any) => u.email)];
-    query = query.in('user_email', emails);
+    query = query.or(`user_email.eq.${userEmail},manager_email.eq.${userEmail}`);
   } else {
     query = query.eq('user_email', userEmail);
   }
@@ -2167,6 +1964,8 @@ export async function getClaimsHistory(userEmail: string, userRole: string, filt
       submittedBy: c.submitted_by,
       userEmail: c.user_email,
       site: c.site_name,
+    workId: c.work_id,
+    workName: c.work_name,
       customerName: c.customer_name,
       amount: getClaimAmount(c),
       submittedAmount: getSubmittedAmount(c),
@@ -2209,7 +2008,8 @@ async function listClaimStorageFileIds(claimId: string) {
 
 export async function getClaimById(claimId: string) {
   if (isDemoMode()) {
-    return demoClaims.find((claim) => claim.claimId === claimId || claim.claimIdInternal === claimId) ?? null;
+    const demo = demoClaims.find((claim) => claim.claimId === claimId || claim.claimIdInternal === claimId);
+    return demo ? { ...demo, workId: undefined, workName: undefined, customerName: '', verifiedAmount: null } : null;
   }
 
   const c = await fetchClaimRowByAnyId(claimId) as any;
@@ -2217,6 +2017,8 @@ export async function getClaimById(claimId: string) {
   // load expense items
   const { data: items } = await supabase.from('expense_items').select('*').eq('claim_id', c.claim_id);
   const expenses = (items || []).map((e: any) => ({
+    id: e.id,
+    approvedAmount: e.approved_amount == null ? null : Number(e.approved_amount),
     category: e.category,
     projectCode: e.project_code,
     customerName: e.customer_name || c.customer_name || '',
@@ -2246,6 +2048,8 @@ export async function getClaimById(claimId: string) {
     submittedBy: c.submitted_by,
     userEmail: c.user_email,
     site: c.site_name,
+    workId: c.work_id,
+    workName: c.work_name,
     customerName: c.customer_name,
     amount: getClaimAmount(c),
     submittedAmount: getSubmittedAmount(c),
@@ -2474,7 +2278,7 @@ export async function getTransactions(userEmail: string, userRole: string, filte
   const rows = result.data || [];
   // Resolve user names for display
   const emails = [...new Set((rows as any[]).map(r => String(r.user_email || '').toLowerCase()).filter(Boolean))];
-  let usersMap: Record<string, string> = {};
+  const usersMap: Record<string, string> = {};
   if (emails.length > 0) {
     const { data: users } = await supabase.from('users').select('email, name').in('email', emails);
     (users || []).forEach((u: any) => { usersMap[String(u.email || '').toLowerCase()] = u.name || u.email; });
@@ -2482,7 +2286,7 @@ export async function getTransactions(userEmail: string, userRole: string, filte
 
   // Resolve claim_number for reference ids so ledger shows CLM-0001 style
   const refs = [...new Set((rows as any[]).map(r => String(r.reference_id || '').trim()).filter(Boolean))];
-  let claimMap: Record<string, string> = {};
+  const claimMap: Record<string, string> = {};
   if (refs.length > 0) {
     const { data: claims } = await supabase.from('claims').select('claim_id, claim_number').in('claim_id', refs);
     (claims || []).forEach((c: any) => { claimMap[String(c.claim_id || '')] = String(c.claim_number || c.claim_id || ''); });
@@ -2518,7 +2322,7 @@ export async function getAllUsers() {
     }));
   }
 
-  const { data, error } = await supabase.from('users').select('*').order('name');
+  const { data, error } = await supabase.from('users').select('id,email,name,role,manager_email,advance_amount,active,created_at,profile_picture_url,signature_url,employee_id,mobile_number,date_of_joining,sap_gl_code,sap_location_code').order('name');
   if (error) throw error;
   
   const users = [];
@@ -2643,7 +2447,8 @@ export async function updateUser(payload: { originalEmail: string; name?: string
     if (fallbackError) throw fallbackError;
     console.warn('signature_url column is not available yet; signature was not persisted.');
   }
-  await logAudit('user_updated', oldEmail, 'user', oldEmail, JSON.stringify(updates));
+  const { password_hash: _privatePasswordHash, ...auditUpdates } = updates;
+  await logAudit('user_updated', oldEmail, 'user', oldEmail, JSON.stringify(auditUpdates));
 }
 
 export async function deleteUser(email: string) {
@@ -2699,7 +2504,7 @@ export async function getUserBalanceSummary(userEmail: string, userRole: string)
   }
 
   const role = userRole.toLowerCase();
-  const { data: users } = await supabase.from('users').select('*');
+  const { data: users } = await supabase.from('users').select('id,email,name,role,manager_email,advance_amount,active,created_at,profile_picture_url,signature_url,employee_id,mobile_number,date_of_joining,sap_gl_code,sap_location_code');
   const { data: claims } = await supabase.from('claims').select('*');
 
   if (!users) return [];
@@ -2822,7 +2627,7 @@ export async function getManagerAssignedUsersWithBalances(managerEmail: string) 
       }));
   }
 
-  const { data: managedUsers } = await supabase.from('users').select('*').eq('manager_email', managerEmail).order('name');
+  const { data: managedUsers } = await supabase.from('users').select('id,email,name,role,manager_email,advance_amount,active,created_at,profile_picture_url,signature_url,employee_id,mobile_number,date_of_joining,sap_gl_code,sap_location_code').eq('manager_email', managerEmail).order('name');
   
   if (!managedUsers) return [];
   
@@ -2943,14 +2748,14 @@ export async function getAuditLogs() {
 
   // Resolve performer names (performed_by stored as email) and claim numbers for claim targets
   const performerEmails = [...new Set(rows.map(r => String(r.performed_by || '').toLowerCase()).filter(Boolean))];
-  let usersMap: Record<string, string> = {};
+  const usersMap: Record<string, string> = {};
   if (performerEmails.length > 0) {
     const { data: users } = await supabase.from('users').select('email, name').in('email', performerEmails);
     (users || []).forEach((u: any) => { usersMap[String(u.email || '').toLowerCase()] = u.name || u.email; });
   }
 
   const claimIds = [...new Set(rows.filter(r => String(r.target_type || '').toLowerCase() === 'claim').map(r => String(r.target_id || '').trim()).filter(Boolean))];
-  let claimMap: Record<string, string> = {};
+  const claimMap: Record<string, string> = {};
   if (claimIds.length > 0) {
     const { data: claims } = await supabase.from('claims').select('claim_id, claim_number').in('claim_id', claimIds);
     (claims || []).forEach((c: any) => { claimMap[String(c.claim_id || '')] = String(c.claim_number || c.claim_id || ''); });
@@ -2995,10 +2800,7 @@ export async function getDashboardChartData(userEmail: string, userRole: string)
   if (role === 'user') {
     claimsQuery = claimsQuery.eq('user_email', userEmail);
   } else if (role === 'manager') {
-    // Manager sees own + managed users
-    const { data: managed } = await supabase.from('users').select('email').eq('manager_email', userEmail);
-    const emails = [userEmail, ...(managed || []).map((u: any) => u.email)];
-    claimsQuery = claimsQuery.in('user_email', emails);
+    claimsQuery = claimsQuery.or(`user_email.eq.${userEmail},manager_email.eq.${userEmail}`);
   }
 
   const { data: claims } = await claimsQuery;
