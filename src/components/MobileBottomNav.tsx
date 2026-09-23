@@ -29,6 +29,8 @@ const allNavItems = [
   { id: 'final-approval', icon: Crown, iconClassName: 'text-violet-600 dark:text-violet-400', label: 'Final Approval', roles: ['Super Admin'] },
   { id: 'accounts-processing', icon: Receipt, iconClassName: 'text-emerald-600 dark:text-emerald-400', label: 'Accounts Processing', roles: ['Accounts', 'Super Admin'] },
   { id: 'accounts-sap-entry', icon: FileSpreadsheet, label: 'Accounts SAP Entry', roles: ['Accounts', 'Super Admin'] },
+  { id: 'accounting-setup', icon: FileSpreadsheet, label: 'GL & Location Setup', roles: ['Accounts', 'Admin', 'Super Admin'] },
+  { id: 'work-allocation', icon: Users, label: 'Work Allocation', roles: ['Admin', 'Super Admin'] },
   { id: 'voucher', icon: Banknote, label: 'Payment Voucher', roles: ['Accounts', 'Admin', 'Super Admin'] },
   { id: 'users', icon: Users, label: 'User Management', roles: ['Admin', 'Super Admin'] },
   { id: 'audit', icon: Shield, label: 'Audit Trail', roles: ['Admin', 'Super Admin'] },

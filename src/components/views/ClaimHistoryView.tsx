@@ -1,3 +1,4 @@
+import { attachmentLink } from '@/lib/private-files';
 import { useState, useEffect, useMemo } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { useNavigate } from 'react-router-dom';
@@ -81,9 +82,9 @@ function renderAttachmentLinks(fileIds?: string[]) {
   const ids = fileIds || [];
   if (ids.length === 0) return '<span class="muted">No bill</span>';
   return ids.map((fileId, index) => {
-    const { data } = supabase.storage.from('claim-attachments').getPublicUrl(fileId);
+    const fileUrl = attachmentLink(fileId);
     const label = `Bill ${index + 1}`;
-    return `<a href="${escapeHtml(data.publicUrl)}" target="_blank" rel="noopener noreferrer">${label}</a>`;
+    return `<a href="${escapeHtml(fileUrl)}" target="_blank" rel="noopener noreferrer">${label}</a>`;
   }).join('<br>');
 }
 

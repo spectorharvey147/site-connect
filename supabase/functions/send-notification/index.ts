@@ -1,6 +1,8 @@
+import { createClient } from "npm:@supabase/supabase-js@2";
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { getTemplate, EmailTemplateType } from "./emailTemplates.ts";
-import nodemailer from "npm:nodemailer";
+import nodemailer from "npm:nodemailer@10.0.10";
+import { Buffer } from "node:buffer";
 
 const DEFAULT_FROM_NAME = 'Claim App Notifications';
 const ALLOWED_METHODS = 'POST, OPTIONS';
@@ -32,7 +34,7 @@ function resolveCorsHeaders(req: Request) {
   if (!requestOrigin) {
     return {
       'Access-Control-Allow-Origin': allowedOrigins[0] || '*',
-      'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
+      'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-claims-token',
       'Access-Control-Allow-Methods': ALLOWED_METHODS,
       Vary: 'Origin',
     };
@@ -41,7 +43,7 @@ function resolveCorsHeaders(req: Request) {
   if (allowedOrigins.length === 0 || allowedOrigins.includes(requestOrigin)) {
     return {
       'Access-Control-Allow-Origin': requestOrigin,
-      'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
+      'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-claims-token',
       'Access-Control-Allow-Methods': ALLOWED_METHODS,
       Vary: 'Origin',
     };
@@ -160,7 +162,7 @@ function buildClaimReportPdf(data: any) {
 
   return {
     filename: `Claim-Report-${String(claimNumber).replace(/[^a-z0-9_-]+/gi, '-')}.pdf`,
-    content: encoder.encode(pdf),
+    content: Buffer.from(encoder.encode(pdf)),
     contentType: 'application/pdf',
   };
 }
@@ -212,7 +214,7 @@ Deno.serve(async (req) => {
 
     const recipientEmail = String(requestBody?.recipientEmail || '').trim().toLowerCase();
     const type = requestBody?.type;
-    const data = (typeof requestBody?.data === 'object' && requestBody?.data !== null) ? requestBody.data : {};
+    let data = (typeof requestBody?.data === 'object' && requestBody?.data !== null) ? requestBody.data : {};
 
     if (!isValidEmail(recipientEmail)) {
       return jsonResponse(req, 400, {
@@ -226,6 +228,22 @@ Deno.serve(async (req) => {
         success: false,
         error: 'Invalid email template type',
       });
+    }
+
+    const backend = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!);
+    if (type === 'password_reset') {
+      // Only the backend creates and sees the single-use reset token.
+      const { data: resetToken, error: resetError } = await backend.rpc('app_issue_password_reset', { p_email: recipientEmail });
+      if (resetError) throw resetError;
+      if (!resetToken) return jsonResponse(req, 200, { success: true, message: 'If registered, a reset link will be sent.' });
+      const appUrl = (Deno.env.get('APP_URL') || 'https://site-connect-three.vercel.app').replace(/\/$/, '');
+      data = { resetLink: appUrl + '/reset-password?email=' + encodeURIComponent(recipientEmail) + '&token=' + encodeURIComponent(resetToken), expiresIn: '1 hour' };
+    } else {
+      const { data: actor } = await backend.rpc('app_session', { p_token: req.headers.get('x-claims-token') || '' });
+      if (!actor) return jsonResponse(req, 401, { success: false, error: 'Sign in to send notifications' });
+      if (['user_created','welcome_user'].includes(type) && !['Admin','Super Admin'].includes(actor.role)) return jsonResponse(req, 403, { success: false, error: 'Administrator access required' });
+      const { data: recipient } = await backend.from('users').select('email').eq('email', recipientEmail).eq('active', true).maybeSingle();
+      if (!recipient) return jsonResponse(req, 400, { success: false, error: 'Recipient must be an active user' });
     }
 
     // Support explicit SMTP host/port via environment (useful for Gmail or relay)

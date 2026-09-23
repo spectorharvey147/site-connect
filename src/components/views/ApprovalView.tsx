@@ -1,3 +1,5 @@
+import ExpenseApprovalEditor from './ExpenseApprovalEditor';
+import { initialRowAmounts, approvedRows, type RowAmounts } from '@/lib/expense-approval';
 import { useState, useEffect, useMemo } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { getPendingManagerClaims, getPendingAdminClaims, getPendingSuperAdminClaims, approveClaimAsManager, approveClaimAsAdmin, approveClaimAsSuperAdmin, rejectClaim, getClaimById } from '@/lib/claims-api';
@@ -105,10 +107,13 @@ export default function ApprovalView({ type }: ApprovalViewProps) {
   const [rejectReason, setRejectReason] = useState('');
   const [approveModal, setApproveModal] = useState<{ claimId: string; internalId?: string } | null>(null);
   const [approveDescription, setApproveDescription] = useState('');
-  const [verifiedAmount, setVerifiedAmount] = useState('');
+  const [rowAmounts, setRowAmounts] = useState<RowAmounts>({});
+
   const [processing, setProcessing] = useState(false);
   const [viewClaim, setViewClaim] = useState<any>(null);
   const [approveDetails, setApproveDetails] = useState<any>(null);
+  let verifiedAmount = '';
+  try { verifiedAmount = approvedRows(approveDetails?.expenses || [], rowAmounts).total.toFixed(2); } catch { /* The expense editor displays validation errors; leave approval disabled. */ }
   const [search, setSearch] = useState('');
   const [sortBy, setSortBy] = useState('oldest');
   const [page, setPage] = useState(1);
@@ -172,14 +177,16 @@ export default function ApprovalView({ type }: ApprovalViewProps) {
     setProcessing(true);
     try {
       const internalId = approveModal.internalId || approveModal.claimId;
-      if (type === 'manager') await approveClaimAsManager(internalId, user!.email, approveDescription, amount);
-      else if (type === 'super-admin') await approveClaimAsSuperAdmin(internalId, user!.email, approveDescription, amount);
-      else await approveClaimAsAdmin(internalId, user!.email, approveDescription, amount);
+      const approved = approvedRows(approveDetails.expenses, rowAmounts);
+      const rows = Object.fromEntries(approved.rows.map(row => [row.id, row.amount]));
+      if (type === 'manager') await approveClaimAsManager(internalId, user!.email, approveDescription, amount, rows);
+      else if (type === 'super-admin') await approveClaimAsSuperAdmin(internalId, user!.email, approveDescription, amount, rows);
+      else await approveClaimAsAdmin(internalId, user!.email, approveDescription, amount, rows);
       toast.success(type === 'admin' ? 'Claim verified and forwarded' : type === 'super-admin' ? 'Claim sent for accounts verification' : 'Claim approved');
       setApproveModal(null);
       setApproveDetails(null);
       setApproveDescription('');
-      setVerifiedAmount('');
+      setRowAmounts({});
       loadClaims();
     } catch (e: any) {
       toast.error(e.message);
@@ -215,12 +222,13 @@ export default function ApprovalView({ type }: ApprovalViewProps) {
     setApproveModal({ claimId: claim.claimId, internalId: claim.claimIdInternal || claim.claimId });
     setApproveDetails(null);
     setApproveDescription('');
-    setVerifiedAmount(String((claim.verifiedAmount ?? claim.amount ?? 0).toFixed(2)));
+    setRowAmounts({});
     // Fetch full claim details so approver can review attachments and line items in the same modal
     void (async () => {
       try {
         const details = await getClaimById(claim.claimIdInternal || claim.claimId);
         setApproveDetails(details);
+        setRowAmounts(initialRowAmounts(details?.expenses || [], details?.verifiedAmount));
       } catch (e) {
         console.error('Failed to load claim details for approval', e);
         setApproveDetails(null);
@@ -278,7 +286,7 @@ export default function ApprovalView({ type }: ApprovalViewProps) {
       setApproveModal(null);
       setApproveDetails(null);
       setApproveDescription('');
-      setVerifiedAmount('');
+      setRowAmounts({});
     };
 
     return (
@@ -313,7 +321,7 @@ export default function ApprovalView({ type }: ApprovalViewProps) {
             <ClaimApprovalTimeline claim={approveDetails} />
             <section className="rounded-xl border border-border bg-card p-4 shadow-sm sm:p-5">
               <h3 className="mb-4 text-base font-semibold">Expense Details</h3>
-              <ClaimExpenseDetails claim={approveDetails} />
+              <ExpenseApprovalEditor expenses={approveDetails.expenses} amounts={rowAmounts} onChange={setRowAmounts} disabled={processing} />
             </section>
           </>
         )}
@@ -331,7 +339,7 @@ export default function ApprovalView({ type }: ApprovalViewProps) {
                 min="0"
                 step="0.01"
                 value={verifiedAmount}
-                onChange={(event) => setVerifiedAmount(event.target.value)}
+                readOnly
                 placeholder="Enter final approved amount"
                 className="mt-1"
               />
@@ -455,6 +463,7 @@ export default function ApprovalView({ type }: ApprovalViewProps) {
                     <p className="text-xs text-muted-foreground">Submitted Rs. {claim.submittedAmount.toFixed(2)}</p>
                   )}
                   <p className="text-sm text-muted-foreground">{claim.site}</p>
+                  {claim.workName && <p className="text-sm text-muted-foreground">Work: {claim.workName}</p>}
                   <p className="text-sm text-muted-foreground">{formatDate(claim.date)}</p>
                   <p className="text-xs text-muted-foreground">Submitted by {claim.submittedBy}</p>
                 </div>
@@ -516,7 +525,7 @@ export default function ApprovalView({ type }: ApprovalViewProps) {
                   <td className="p-3 font-mono text-xs">{claim.claimId}</td>
                   <td className="p-3">{formatDate(claim.date)}</td>
                   <td className="p-3 break-words">{claim.submittedBy}</td>
-                  <td className="p-3 break-words">{claim.site}</td>
+                  <td className="p-3 break-words">{claim.site}{claim.workName && <p className="text-xs text-muted-foreground">Work: {claim.workName}</p>}</td>
                   <td className="p-3 text-right">Rs. {(claim.totalWithBill ?? 0).toFixed(2)}</td>
                   <td className="p-3 text-right">Rs. {(claim.totalWithoutBill ?? 0).toFixed(2)}</td>
                   <td className="p-3 text-right text-base font-bold">
@@ -564,7 +573,7 @@ export default function ApprovalView({ type }: ApprovalViewProps) {
             setApproveModal(null);
             setApproveDetails(null);
             setApproveDescription('');
-            setVerifiedAmount('');
+            setRowAmounts({});
           }
         }}
         title={`${approveLabel} Claim - ${approveModal?.claimId || ''}`}
@@ -597,7 +606,7 @@ export default function ApprovalView({ type }: ApprovalViewProps) {
           {approveDetails?.expenses?.length > 0 && (
             <div className="rounded-lg border border-border bg-muted/20 p-3">
               <h4 className="mb-3 text-sm font-semibold">Expense Details</h4>
-              <ClaimExpenseDetails claim={approveDetails} />
+              <ExpenseApprovalEditor expenses={approveDetails.expenses} amounts={rowAmounts} onChange={setRowAmounts} disabled={processing} />
             </div>
           )}
           {(type === 'admin' || type === 'manager' || type === 'super-admin') && (
@@ -608,7 +617,7 @@ export default function ApprovalView({ type }: ApprovalViewProps) {
                 min="0"
                 step="0.01"
                 value={verifiedAmount}
-                onChange={e => setVerifiedAmount(e.target.value)}
+                readOnly
                 placeholder="Enter final approved amount"
               />
             </div>

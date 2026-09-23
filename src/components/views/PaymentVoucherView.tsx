@@ -469,11 +469,12 @@ export default function PaymentVoucherView() {
   };
 
   const fetchAttachment = async (fileId: string) => {
-    const { data } = supabase.storage.from('claim-attachments').getPublicUrl(fileId);
+    const { data, error } = await supabase.storage.from('claim-attachments').createSignedUrl(fileId,3600);
+    if (error) throw error;
     const controller = new AbortController();
     const timeout = window.setTimeout(() => controller.abort(), 60_000);
     try {
-      const response = await fetch(data.publicUrl, { signal: controller.signal });
+      const response = await fetch(data.signedUrl, { signal: controller.signal });
       if (!response.ok) throw new Error(`Unable to fetch attachment ${fileId}`);
       const contentType = response.headers.get('content-type') || '';
       const bytes = await response.arrayBuffer();
@@ -576,7 +577,7 @@ export default function PaymentVoucherView() {
 
       const bytes = await mergedPdf.save();
       await PDFDocument.load(bytes);
-      downloadBlob(new Blob([bytes], { type: 'application/pdf' }), `voucher-${voucher.fileName}-with-attachments.pdf`);
+      downloadBlob(new Blob([new Uint8Array(bytes)], { type: 'application/pdf' }), `voucher-${voucher.fileName}-with-attachments.pdf`);
       if (skippedCount > 0) {
         toast.warning(`Combined voucher downloaded: ${embeddedCount} attachments included, ${skippedCount} listed as separate originals.`);
       } else {

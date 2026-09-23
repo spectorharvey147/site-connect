@@ -12,6 +12,7 @@ import FileUpload, { FileUploadHandle } from '@/components/views/FileUpload';
 import RupeeIcon from '@/components/icons/RupeeIcon';
 import AttachmentPreview from '@/components/views/AttachmentPreview';
 import { localIsoDate } from '@/lib/claim-validation';
+import { getProjectWorks, resolveClaimWork, type ProjectWork } from '@/lib/accounting-api';
 
 interface ExpenseRow {
   id: string;
@@ -52,6 +53,9 @@ export default function SubmitClaimView() {
   const expenseCardRefs = useRef<Record<string, HTMLDivElement | null>>({});
   const pendingExpenseFocusRef = useRef<string | null>(null);
   const [site, setSite] = useState('');
+  const [workId, setWorkId] = useState('');
+  const [works, setWorks] = useState<ProjectWork[]>([]);
+  const [workError, setWorkError] = useState('');
   const [customerName, setCustomerName] = useState('');
   const [expenses, setExpenses] = useState<ExpenseRow[]>([emptyExpenseRow()]);
   const [activeExpenseId, setActiveExpenseId] = useState(() => expenses[0]?.id || '');
@@ -69,6 +73,7 @@ export default function SubmitClaimView() {
 
   useEffect(() => {
     getDropdownOptions().then(setDropdown);
+    getProjectWorks().then(setWorks).catch(error => setWorkError(error.message));
     if (user) getCurrentBalance(user.email).then(setBalance);
   }, [user]);
 
@@ -105,6 +110,7 @@ export default function SubmitClaimView() {
         const rowAttachmentIds = new Set(rows.flatMap((row) => row.attachmentIds || []));
         setEditingClaim(claim);
         setSite(claim.site || '');
+        setWorkId(claim.workId || '');
         setCustomerName(claim.customerName || '');
         setExpenses(rows);
         setActiveExpenseId(rows[0]?.id || '');
@@ -123,6 +129,9 @@ export default function SubmitClaimView() {
   }, [editClaimId, navigate, user]);
 
   const selectedProject = dropdown.projects.find((project: any) => project.name === site);
+  const projectWorks = works.filter(w => w.active && w.project_id === selectedProject?.id);
+  const selectedWork = projectWorks.find(w => w.id === workId);
+  const assignedManager = selectedWork?.manager_email || selectedProject?.defaultManagerEmail;
   const projectCustomers = selectedProject?.customerNames || [];
 
   const getFilteredProjectCodes = (category: string) => {
@@ -199,7 +208,7 @@ export default function SubmitClaimView() {
     && ((expense.amountWithBill || 0) > 0 || (expense.amountWithoutBill || 0) > 0)
   )).length;
   const requiredBillRows = expenses.filter((expense) => (expense.amountWithBill || 0) > 0).length;
-  const claimDetailsReady = Boolean(site) && completeExpenseRows === expenses.length && grandTotal > 0;
+  const claimDetailsReady = Boolean(site && selectedWork && assignedManager) && completeExpenseRows === expenses.length && grandTotal > 0;
 
   useEffect(() => {
     if (editingClaim) return;
@@ -227,6 +236,10 @@ export default function SubmitClaimView() {
       toast.error('Please select a project site');
       return;
     }
+    if (!selectedWork || !assignedManager) {
+      toast.error('Select a work with an assigned manager. Ask Admin to configure Work Allocation if none is available.');
+      return;
+    }
     if (expenses.some((expense) => !expense.category || !expense.projectCode || !expense.claimDate || (expense.amountWithBill === 0 && expense.amountWithoutBill === 0))) {
       toast.error('Every row needs a category, a matching cost code, a date, and an amount');
       return;
@@ -243,6 +256,7 @@ export default function SubmitClaimView() {
 
     setLoading(true);
     try {
+      await resolveClaimWork(site, workId);
       await validateClaimSubmissionRules(user!.email, expenses);
 
       let uploadedPaths: string[] = [];
@@ -273,6 +287,7 @@ export default function SubmitClaimView() {
 
       const payload = {
         site,
+        workId,
         customerName: customerName || expensesWithAttachments.find((expense) => expense.customerName)?.customerName || '',
         expenses: expensesWithAttachments,
         fileIds: allFileIds,
@@ -284,6 +299,7 @@ export default function SubmitClaimView() {
       if (result.ok) {
         toast.success(result.message);
         setSite('');
+        setWorkId('');
         setCustomerName('');
         const nextRow = emptyExpenseRow();
         setExpenses([nextRow]);
@@ -377,6 +393,16 @@ export default function SubmitClaimView() {
             </div>
           </div>
 
+          <div className="mb-5 grid gap-3 sm:grid-cols-2">
+            <label className="space-y-1 text-sm"><span>Work / activity *</span>
+              <select aria-label="Work / activity" className="h-10 w-full rounded-md border border-input bg-background px-3" value={selectedWork ? workId : ''} onChange={e => setWorkId(e.target.value)} required disabled={!site}>
+                <option value="">Select work</option>{projectWorks.map(w => <option key={w.id} value={w.id}>{w.name}</option>)}
+              </select>
+              {site && !projectWorks.length && <p className="text-xs text-destructive">No active work allocation. Contact Admin.</p>}
+              {workError && <p role="alert" className="text-xs text-destructive">{workError}</p>}
+            </label>
+            <div className="space-y-1 text-sm"><Label>Assigned manager</Label><Input readOnly value={selectedWork ? assignedManager || 'Manager not configured' : ''} placeholder="Select work first" /><p className="text-xs text-muted-foreground">Admin verifies first, then this manager approves. Use a separate claim for another work activity.</p></div>
+          </div>
           <div className="mb-3 flex items-center justify-between">
             <div className="flex items-center gap-3">
               <span className="flex h-7 w-7 items-center justify-center rounded-full bg-primary text-xs font-bold text-primary-foreground">2</span>

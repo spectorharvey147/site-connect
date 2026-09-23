@@ -19,6 +19,8 @@ const viewRoles: Record<string, string[]> = {
   'final-approval': ['Super Admin'],
   'accounts-processing': ['Accounts', 'Super Admin'],
   'accounts-sap-entry': ['Accounts', 'Super Admin'],
+  'accounting-setup': ['Accounts', 'Admin', 'Super Admin'],
+  'work-allocation': ['Admin', 'Super Admin'],
   voucher: ['Accounts', 'Admin', 'Super Admin'],
   users: ['Admin', 'Super Admin'],
   settings: ['Admin', 'Super Admin'],
@@ -57,6 +59,7 @@ export default function Index() {
   }
 
   if (!user) return <LoginPage />;
+  if (!canAccessView(activeView, user.role)) return null;
 
   return (
     <div className="min-h-screen bg-background">

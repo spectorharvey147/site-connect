@@ -28,6 +28,8 @@ const navGroups = [
   { label: 'Accounts', items: [
     { id: 'accounts-processing', icon: Receipt, iconClassName: 'text-emerald-200', label: 'Accounts Processing', roles: ['Accounts', 'Super Admin'] },
     { id: 'accounts-sap-entry', icon: FileSpreadsheet, label: 'Accounts SAP Entry', roles: ['Accounts', 'Super Admin'] },
+    { id: 'accounting-setup', icon: FileSpreadsheet, label: 'GL & Location Setup', roles: ['Accounts', 'Admin', 'Super Admin'] },
+    { id: 'work-allocation', icon: Users, label: 'Work Allocation', roles: ['Admin', 'Super Admin'] },
     { id: 'voucher', icon: Banknote, label: 'Payment Voucher', roles: ['Accounts', 'Admin', 'Super Admin'] },
   ] },
   { label: 'Administration', items: [

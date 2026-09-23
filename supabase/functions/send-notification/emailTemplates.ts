@@ -310,6 +310,7 @@ export function claimSubmittedUserTemplate(data: {
   submitted_by?: string;
   submission_date?: string;
   project_site?: string;
+  work_name?: string;
   primary_project_code?: string;
   status?: string;
   items?: ClaimEmailItem[];
@@ -330,6 +331,7 @@ export function claimSubmittedUserTemplate(data: {
       { label: 'Submitted By', value: data.submitted_by || data.employee_name || '' },
       { label: 'Submission Date', value: fmtDate(data.submission_date) },
       { label: 'Project Site', value: data.project_site || '' },
+      ...(data.work_name ? [{ label: 'Work / Activity', value: data.work_name }] : []),
       { label: 'Primary Project Code', value: data.primary_project_code || '' },
     ])}
     <div style="${softCardStyles}">
@@ -355,6 +357,7 @@ export function claimSubmittedManagerTemplate(data: {
   employee_name: string;
   employee_email?: string;
   project_site?: string;
+  work_name?: string;
   primary_project_code?: string;
   submission_date?: string;
   manager_status?: string;
@@ -378,6 +381,7 @@ export function claimSubmittedManagerTemplate(data: {
       { label: 'Submitted By', value: data.employee_name },
       { label: 'Submission Date', value: fmtDate(data.submission_date) },
       { label: 'Project Site', value: data.project_site || '' },
+      ...(data.work_name ? [{ label: 'Work / Activity', value: data.work_name }] : []),
       { label: 'Primary Project Code', value: data.primary_project_code || '' },
       { label: 'Manager Approval', value: data.manager_status || 'Pending' },
       { label: 'Admin Approval', value: data.admin_status || 'Pending' },

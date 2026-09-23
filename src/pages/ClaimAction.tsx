@@ -1,3 +1,5 @@
+import ExpenseApprovalEditor from '@/components/views/ExpenseApprovalEditor';
+import { initialRowAmounts, approvedRows, type RowAmounts } from '@/lib/expense-approval';
 import { useEffect, useMemo, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { approveClaimAsAdmin, approveClaimAsManager, approveClaimAsSuperAdmin, getClaimById, rejectClaim } from '@/lib/claims-api';
@@ -7,6 +9,8 @@ import { Textarea } from '@/components/ui/textarea';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Loader2, Paperclip } from 'lucide-react';
 import AttachmentPreview from '@/components/views/AttachmentPreview';
+import { useAuth } from '@/contexts/AuthContext';
+import LoginPage from '@/components/LoginPage';
 
 function collectAllAttachmentIdsForClaim(claim: any) {
   const top = Array.isArray(claim?.fileIds) ? claim.fileIds : [];
@@ -16,14 +20,17 @@ function collectAllAttachmentIdsForClaim(claim: any) {
 }
 
 export default function ClaimAction() {
+  const { user } = useAuth();
   const [searchParams] = useSearchParams();
   const [claim, setClaim] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [processing, setProcessing] = useState(false);
   const [message, setMessage] = useState('');
   const [rejectReason, setRejectReason] = useState('');
-  const [verifiedAmount, setVerifiedAmount] = useState('');
-  const [autoProcessed, setAutoProcessed] = useState(false);
+  const [rowAmounts, setRowAmounts] = useState<RowAmounts>({});
+  let verifiedAmount = '';
+  try { verifiedAmount = approvedRows(claim?.expenses || [], rowAmounts).total.toFixed(2); } catch { /* The expense editor displays validation errors; leave approval disabled. */ }
+
 
   const claimId = searchParams.get('claimId') || '';
   const role = (searchParams.get('role') || '').toLowerCase();
@@ -47,18 +54,13 @@ export default function ClaimAction() {
       }
       const data = await getClaimById(claimId);
       setClaim(data);
-      setVerifiedAmount(String((data?.verifiedAmount ?? data?.amount ?? 0).toFixed(2)));
+      setRowAmounts(initialRowAmounts(data?.expenses || [], data?.verifiedAmount));
       setLoading(false);
     }
 
     void loadClaim();
   }, [claimId]);
 
-  useEffect(() => {
-    if (loading || autoProcessed || message || !mode.isApprove || mode.isAdmin || !claimId || !approverEmail) return;
-    setAutoProcessed(true);
-    void processApprove();
-  }, [loading, autoProcessed, message, mode.isApprove, claimId, approverEmail]);
 
   const processApprove = async () => {
     if (!claimId || !approverEmail) return;
@@ -69,15 +71,16 @@ export default function ClaimAction() {
     }
     setProcessing(true);
     try {
+      const rows = Object.fromEntries(approvedRows(claim.expenses, rowAmounts).rows.map(row => [row.id, row.amount]));
       if (mode.isManager) {
-        await approveClaimAsManager(claimId, approverEmail, 'Approved from email link', amount);
+        await approveClaimAsManager(claimId, approverEmail, 'Approved from email link', amount, rows);
         setMessage('Claim approved by manager. Awaiting final approval.');
       } else if (mode.isSuperAdmin) {
         // super admin finalizes - pass verified amount
-        await approveClaimAsSuperAdmin(claimId, approverEmail, 'Approved from email link', amount);
+        await approveClaimAsSuperAdmin(claimId, approverEmail, 'Approved from email link', amount, rows);
         setMessage('Claim closed successfully.');
       } else if (mode.isAdmin) {
-        await approveClaimAsAdmin(claimId, approverEmail, 'Approved from email link', amount);
+        await approveClaimAsAdmin(claimId, approverEmail, 'Approved from email link', amount, rows);
         setMessage('Claim verified and forwarded successfully.');
       } else {
         throw new Error('Invalid approval role');
@@ -99,6 +102,9 @@ export default function ClaimAction() {
     }
     setProcessing(false);
   };
+
+  if (!user) return <LoginPage />;
+  if (user.email.toLowerCase() !== approverEmail.toLowerCase()) return <p className="p-6">Sign in with the approval link’s email address to review this claim.</p>;
 
   return (
     <div className="min-h-screen bg-background flex items-center justify-center px-4 py-8">
@@ -123,6 +129,7 @@ export default function ClaimAction() {
                   <div className="rounded-lg border border-border bg-muted/20 p-3 text-sm">
                     <div className="text-xs text-muted-foreground">Site</div>
                     <div className="break-words font-semibold">{claim?.site || '-'}</div>
+                    {claim?.workName && <div className="mt-1 text-sm">Work: {claim.workName}</div>}
                   </div>
                   <div className="rounded-lg border border-border bg-muted/20 p-3 text-sm">
                     <div className="text-xs text-muted-foreground">Submitted Amount</div>
@@ -133,13 +140,14 @@ export default function ClaimAction() {
 
               {(mode.isAdmin || mode.isManager || mode.isSuperAdmin) && mode.isApprove && !message && (
                 <div className="space-y-2">
+                  <ExpenseApprovalEditor expenses={claim?.expenses || []} amounts={rowAmounts} onChange={setRowAmounts} disabled={processing} />
                   <label className="text-sm font-medium">Final Approved Amount</label>
                   <Input
                     type="number"
                     min="0"
                     step="0.01"
                     value={verifiedAmount}
-                    onChange={(e) => setVerifiedAmount(e.target.value)}
+                    readOnly
                     placeholder="Enter final approved amount"
                   />
                 </div>
