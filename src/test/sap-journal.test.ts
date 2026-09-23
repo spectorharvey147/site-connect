@@ -26,6 +26,13 @@ function fixture() {
 }
 
 describe('SAP journal export', () => {
+  it('exports historical claims after their project, cost codes and categories become inactive', () => {
+    const { masters, claim, options } = fixture();
+    const before = buildSapJournal([claim], masters, options, [100001]);
+    masters.lists.forEach(row => { row.active = false; });
+    expect(buildSapJournal([claim], masters, options, [100001])).toEqual(before);
+  });
+
   it('matches both TXT layouts, confirmed travel GL, account identifiers and project location', () => {
     const { masters,claim,options } = fixture();
     const out = buildSapJournal([claim],masters,options,[5341]);

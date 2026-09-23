@@ -63,7 +63,9 @@ function sapDate(value: string): string {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(value) || Number.isNaN(Date.parse(value)) || new Date(value).toISOString().slice(0, 10) !== value) throw new Error(`Invalid SAP date: ${value}`);
   return value.replace(/-/g, '');
 }
-function only<T>(rows: T[], label: string): T | undefined {
+function only<T extends { active?: boolean }>(rows: T[], label: string): T | undefined {
+  const activeRows = rows.filter(row => row.active !== false);
+  if (activeRows.length) rows = activeRows;
   if (rows.length > 1) throw new Error(`Multiple mappings found for ${label}. Resolve duplicates before exporting.`);
   return rows[0];
 }
@@ -74,7 +76,8 @@ export function buildSapJournal(claims: SapClaim[], masters: SapMasters, options
   const posting = sapDate(options.postingDate), due = sapDate(options.dueDate);
   const transaction = required(options.transactionCode, 'Transaction code');
   const payload: JournalPayload = { version: 1, headers: [HEADER_COLUMNS, HEADER_ALIASES], details: [DETAIL_COLUMNS, DETAIL_ALIASES], claims: [], journalClaims: [], postingDate: options.postingDate };
-  const lists = masters.lists.filter(x => x.active);
+  // Existing claims retain access to mappings even after their project closes.
+  const lists = masters.lists;
   const usedIds = new Set<number>();
   for (const claim of [...claims].sort((a, b) => a.claim_id.localeCompare(b.claim_id))) {
     const ref = required(claim.claim_number || claim.claim_id, 'Claim reference');

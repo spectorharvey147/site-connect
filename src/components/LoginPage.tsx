@@ -1,13 +1,12 @@
 import { useState, useEffect } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
-import { getCompanySettings, checkAdminExists } from '@/lib/claims-api';
+import { getCompanySettings } from '@/lib/claims-api';
 import { requestPasswordReset } from '@/lib/auth';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Checkbox } from '@/components/ui/checkbox';
-import { LogIn, Loader2, UserPlus, KeyRound, Eye, EyeOff, ArrowLeft, ShieldCheck } from 'lucide-react';
-import AdminSignupForm from '@/components/AdminSignupForm';
+import { LogIn, Loader2, KeyRound, Eye, EyeOff, ArrowLeft, ShieldCheck } from 'lucide-react';
 
 interface LoginCompanySettings {
   logo_url?: string | null;
@@ -22,8 +21,6 @@ export default function LoginPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [companySettings, setCompanySettings] = useState<LoginCompanySettings | null>(null);
-  const [adminExists, setAdminExists] = useState<boolean | null>(null);
-  const [showSignup, setShowSignup] = useState(false);
   const [showForgotPassword, setShowForgotPassword] = useState(false);
   const [forgotEmail, setForgotEmail] = useState('');
   const [forgotLoading, setForgotLoading] = useState(false);
@@ -34,7 +31,6 @@ export default function LoginPage() {
 
   useEffect(() => {
     getCompanySettings().then(s => { if (s) setCompanySettings(s); }).catch(() => {});
-    checkAdminExists().then(setAdminExists).catch(() => setAdminExists(true));
     const savedEmail = localStorage.getItem('claimsSavedEmail');
     if (savedEmail) {
       setEmail(savedEmail);
@@ -102,10 +98,6 @@ export default function LoginPage() {
   const companyName = companySettings?.company_name || 'Claims Management';
   const subtitle = companySettings?.company_subtitle || 'Sign in to continue';
 
-  // Show signup form if no admin exists and user wants to sign up
-  if (showSignup && adminExists === false) {
-    return <AdminSignupForm onBack={() => setShowSignup(false)} onSuccess={() => { setShowSignup(false); setAdminExists(true); }} />;
-  }
 
   return (
     <div className="relative isolate flex min-h-[100dvh] items-center justify-center overflow-hidden p-4 gradient-primary sm:p-6">
@@ -217,18 +209,6 @@ export default function LoginPage() {
               Forgot Password?
             </button>
 
-            {/* Only show signup button if no admin exists */}
-            {adminExists === false && (
-              <Button 
-                type="button" 
-                variant="outline" 
-                className="w-full h-11 sm:h-10 text-base sm:text-sm"
-                onClick={() => setShowSignup(true)}
-              >
-                <UserPlus className="mr-2 h-4 w-4" />
-                Create Admin Account
-              </Button>
-            )}
           </div>
         ) : (
           <div className="p-6 sm:p-8 space-y-4 sm:space-y-5">

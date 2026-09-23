@@ -2579,6 +2579,7 @@ export async function getAppLists() {
 }
 
 export async function addAppListItem(item: {
+  active?: boolean;
   type: string;
   value: string;
   project_code?: string;
@@ -2589,11 +2590,12 @@ export async function addAppListItem(item: {
 }) {
   if (isDemoMode()) return;
 
-  const { error } = await supabase.from('app_lists').insert({ ...item, active: true });
+  const { error } = await supabase.from('app_lists').insert({ ...item, active: item.active ?? true });
   if (error) throw error;
 }
 
 export async function updateAppListItem(id: string, item: {
+  active?: boolean;
   value?: string;
   project_code?: string | null;
   project?: string | null;

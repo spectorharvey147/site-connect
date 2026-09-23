@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
-import { getCompanySettings, updateCompanySettings, getAppLists, addAppListItem, updateAppListItem, deleteAppListItem, getDropdownOptions, getAllUsers, createUser } from '@/lib/claims-api';
+import { Link } from 'react-router-dom';
+import { getCompanySettings, updateCompanySettings, getAppLists, addAppListItem, updateAppListItem, getDropdownOptions, getAllUsers, createUser } from '@/lib/claims-api';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -24,7 +25,7 @@ const emptyNewItem = {
 };
 
 const userCsvHeaders = ['name', 'email', 'password', 'role', 'advance', 'manager_email', 'employee_id', 'mobile_number', 'date_of_joining'];
-const masterCsvHeaders = ['type', 'value', 'project_code', 'project', 'customer_names', 'allows_all_categories', 'expense_categories'];
+const masterCsvHeaders = ['active', 'type', 'value', 'project_code', 'project', 'customer_names', 'allows_all_categories', 'expense_categories'];
 
 function parseCsv(text: string) {
   const rows: string[][] = [];
@@ -169,7 +170,7 @@ function CustomerNameEditor({
   );
 }
 
-export default function SettingsView() {
+export default function SettingsView({ section = 'company', onMastersChanged }: { section?: 'company' | 'masters'; onMastersChanged?: () => Promise<void> }) {
   const [settings, setSettings] = useState<any>({});
   const [savedSettings, setSavedSettings] = useState<Record<string, unknown>>({});
   const [loading, setLoading] = useState(true);
@@ -184,6 +185,8 @@ export default function SettingsView() {
   const [bulkProcessing, setBulkProcessing] = useState(false);
   const [masterSearch, setMasterSearch] = useState('');
   const [masterType, setMasterType] = useState('all');
+  const [masterStatus, setMasterStatus] = useState('all');
+  const [statusBusy, setStatusBusy] = useState<string | null>(null);
 
   const categories = [...new Set(
     lists
@@ -198,11 +201,12 @@ export default function SettingsView() {
     return lists.filter((item) => {
       const type = String(item.type || '').toLowerCase();
       if (masterType !== 'all' && type !== masterType) return false;
+      if (masterStatus !== 'all' && Boolean(item.active) !== (masterStatus === 'active')) return false;
       if (!query) return true;
       return [item.value, item.project_code, item.project, ...(item.customer_names || []), ...(item.expense_categories || [])]
         .some((value) => String(value || '').toLowerCase().includes(query));
     });
-  }, [lists, masterSearch, masterType]);
+  }, [lists, masterSearch, masterType, masterStatus]);
 
   const masterCounts = useMemo(() => ({
     category: lists.filter((item) => String(item.type || '').toLowerCase() === 'category').length,
@@ -232,6 +236,7 @@ export default function SettingsView() {
     const [nextLists, dropdowns] = await Promise.all([getAppLists(), getDropdownOptions()]);
     setLists(nextLists);
     setProjects(dropdowns.projects || []);
+    await onMastersChanged?.();
   };
 
   useEffect(() => { loadSettings(); }, []);
@@ -359,15 +364,11 @@ export default function SettingsView() {
     }
   };
 
-  const handleDeleteItem = async (id: string) => {
-    if (!confirm('Delete this item?')) return;
-    try {
-      await deleteAppListItem(id);
-      toast.success('Item deleted');
-      await loadMasterData();
-    } catch (err: any) {
-      toast.error(err.message);
-    }
+  const handleToggleActive = async (item: { id: string; active: boolean }) => {
+    setStatusBusy(item.id);
+    try { await updateAppListItem(item.id, { active: !item.active }); await loadMasterData(); toast.success(item.active ? 'Deactivated' : 'Activated'); }
+    catch (error) { toast.error(error instanceof Error ? error.message : 'Status update failed'); }
+    finally { setStatusBusy(null); }
   };
 
   const toggleExpenseCategory = (category: string, checked: boolean) => {
@@ -437,14 +438,15 @@ export default function SettingsView() {
 
   const handleDownloadMasterTemplate = () => {
     downloadCsv('master-data-import-template.csv', masterCsvHeaders, [
-      { type: 'category', value: 'Travel', project_code: '', project: '', allows_all_categories: '', expense_categories: '' },
-      { type: 'project', value: 'Site A', project_code: 'SA', project: '', customer_names: 'Customer A|Customer B', allows_all_categories: '', expense_categories: '' },
-      { type: 'projectcode', value: 'Material Purchase', project_code: 'SA-MAT', project: 'Site A', customer_names: 'Customer A', allows_all_categories: 'false', expense_categories: 'Travel|Material' },
+      { active: true, type: 'category', value: 'Travel', project_code: '', project: '', allows_all_categories: '', expense_categories: '' },
+      { active: true, type: 'project', value: 'Site A', project_code: 'SA', project: '', customer_names: 'Customer A|Customer B', allows_all_categories: '', expense_categories: '' },
+      { active: true, type: 'projectcode', value: 'Material Purchase', project_code: 'SA-MAT', project: 'Site A', customer_names: 'Customer A', allows_all_categories: 'false', expense_categories: 'Travel|Material' },
     ]);
   };
 
   const handleExportMasterData = () => {
     downloadCsv('master-data-export.csv', masterCsvHeaders, lists.map((item) => ({
+      active: item.active,
       type: item.type,
       value: item.value,
       project_code: item.project_code || '',
@@ -459,13 +461,15 @@ export default function SettingsView() {
     if (!file) return;
     setBulkProcessing(true);
     try {
-      const rows = parseCsv(await file.text());
+      const rows = parseCsv(await file.text()).sort((a, b) => (a.type === 'projectcode' ? 1 : 0) - (b.type === 'projectcode' ? 1 : 0));
       let added = 0;
       for (const row of rows) {
         const type = String(row.type || '').toLowerCase();
         if (!type || !row.value) continue;
+        if (row.active && !/^(true|false)$/i.test(row.active)) throw new Error('The active column must contain true or false.');
         await addAppListItem({
           type,
+          active: String(row.active || 'true').toLowerCase() !== 'false',
           value: row.value,
           project_code: row.project_code || undefined,
           project: type === 'projectcode' ? row.project || undefined : undefined,
@@ -497,6 +501,7 @@ export default function SettingsView() {
         </div>
       )}
 
+      {section === 'company' && <>
       <div className="sticky top-2 z-20 flex flex-col gap-3 rounded-xl border border-border bg-background/95 p-4 shadow-lg backdrop-blur sm:flex-row sm:items-center sm:justify-between">
         <div>
           <h1 className="flex items-center gap-2 text-xl font-bold"><Settings className="h-5 w-5 text-primary" /> Application Settings</h1>
@@ -611,9 +616,6 @@ export default function SettingsView() {
       </div>
 
       <div className="glass-card p-6">
-        <h2 className="mb-4 flex items-center gap-2 text-xl font-bold"><List className="h-5 w-5 text-primary" /> Dropdown Master Data</h2>
-
-        <div className="mb-5 grid gap-3 rounded-lg border border-border bg-muted/20 p-4 md:grid-cols-2">
           <div>
             <p className="font-medium text-foreground">Users CSV</p>
             <p className="text-sm text-muted-foreground">Import creates users with hashed passwords and sends the welcome email when notifications are enabled.</p>
@@ -626,6 +628,15 @@ export default function SettingsView() {
               </Label>
             </div>
           </div>
+      </div>
+      <div className="glass-card p-6"><h2 className="font-semibold">Projects, cost codes and categories</h2><p className="mt-2 text-sm text-muted-foreground">Manage these together with SAP mappings and project status in GL &amp; Location Setup.</p><Button asChild variant="outline" className="mt-3"><Link to="/accounting-setup?tab=masters">Open Projects &amp; Categories</Link></Button></div>
+      </>}
+      {section === 'masters' && <>
+      <div className="glass-card p-6">
+        <h2 className="mb-4 flex items-center gap-2 text-xl font-bold"><List className="h-5 w-5 text-primary" /> Projects, Cost Codes &amp; Categories</h2>
+        <p className="mb-4 text-sm text-muted-foreground">Inactive projects and their cost codes are unavailable for new claims. Existing claims and reports remain available. Reactivating a project restores only cost codes disabled with it.</p>
+
+        <div className="mb-5 grid gap-3 rounded-lg border border-border bg-muted/20 p-4 md:grid-cols-2">
           <div>
             <p className="font-medium text-foreground">Master Data CSV</p>
             <p className="text-sm text-muted-foreground">Import expense categories, projects, and project cost codes in one upload.</p>
@@ -797,6 +808,7 @@ export default function SettingsView() {
             <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
             <Input className="pl-9" placeholder="Search name, code, project or customer" value={masterSearch} onChange={(event) => setMasterSearch(event.target.value)} />
           </div>
+<select aria-label="Filter master status" className="h-10 rounded-md border border-input bg-background px-3 text-sm" value={masterStatus} onChange={e => setMasterStatus(e.target.value)}><option value="all">All statuses</option><option value="active">Active</option><option value="inactive">Inactive</option></select>
           <Select value={masterType} onValueChange={setMasterType}>
             <SelectTrigger className="w-full sm:w-52"><SelectValue /></SelectTrigger>
             <SelectContent>
@@ -819,12 +831,12 @@ export default function SettingsView() {
                 <th className="p-3 text-left">Project</th>
                 <th className="p-3 text-left">Customers</th>
                 <th className="p-3 text-left">Allowed Categories</th>
-                <th className="p-3 text-center">Actions</th>
+                <th className="p-3">Status</th><th className="p-3 text-center">Actions</th>
               </tr>
             </thead>
             <tbody>
               {filteredLists.length === 0 ? (
-                <tr><td colSpan={7} className="p-10 text-center text-muted-foreground">No master data matches this search and filter.</td></tr>
+                <tr><td colSpan={8} className="p-10 text-center text-muted-foreground">No master data matches this search and filter.</td></tr>
               ) : filteredLists.map((item) => (
                 <tr key={item.id} className="border-b border-border transition-colors hover:bg-muted/30">
                   <td className="p-3 capitalize">{item.type}</td>
@@ -839,12 +851,11 @@ export default function SettingsView() {
                         : (item.expense_categories?.length ? item.expense_categories.join(', ') : 'No categories'))
                       : '-'}
                   </td>
+                  <td className="p-3"><span className={item.active ? 'text-success' : 'text-muted-foreground'}>{item.active ? 'Active' : 'Inactive'}</span>{item.inactive_by_project && <p className="text-xs text-muted-foreground">Project inactive</p>}</td>
                   <td className="p-3 text-center">
+                    <Button variant="outline" size="sm" disabled={statusBusy !== null || (item.type === 'projectcode' && lists.some(parent => parent.type === 'project' && parent.value === item.project && !parent.active))} onClick={() => void handleToggleActive(item)} aria-label={(item.active ? 'Deactivate ' : 'Activate ') + item.value}>{statusBusy === item.id ? 'Saving…' : item.active ? 'Deactivate' : 'Activate'}</Button>
                     <Button variant="ghost" size="sm" onClick={() => openEditItem(item)}>
                       <Pencil className="h-4 w-4" />
-                    </Button>
-                    <Button variant="ghost" size="sm" className="text-destructive" onClick={() => handleDeleteItem(item.id)}>
-                      <Trash2 className="h-4 w-4" />
                     </Button>
                   </td>
                 </tr>
@@ -986,6 +997,7 @@ export default function SettingsView() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+      </>}
     </div>
   );
 }
