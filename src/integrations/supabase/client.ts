@@ -1,10 +1,11 @@
 import { createClient } from "@supabase/supabase-js";
+import { Capacitor } from "@capacitor/core";
 
 // import.meta.env is provided by Vite; cast to any to avoid TS issues in environments
 const env = (import.meta as any).env || {};
 const supabaseOriginUrl = env.VITE_SUPABASE_URL;
 const configuredProxyUrl = env.VITE_SUPABASE_PROXY_URL;
-const supabaseUrl = configuredProxyUrl
+const supabaseUrl = configuredProxyUrl && !Capacitor.isNativePlatform()
   ? new URL(configuredProxyUrl, window.location.origin).toString().replace(/\/$/, '')
   : supabaseOriginUrl;
 const supabaseKey = env.VITE_SUPABASE_ANON_KEY ?? env.VITE_SUPABASE_PUBLISHABLE_KEY;
