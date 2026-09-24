@@ -1083,8 +1083,8 @@ export async function approveClaimAsAdmin(claimId: string, approverEmail: string
   const settings = await getCompanySettings();
   const requireManager = settings?.require_manager_approval ?? true;
   const managerEmail = String(c.manager_email || '').trim().toLowerCase();
-  const skipManagerStage = !c.work_id && (!requireManager || !managerEmail || (await isManagerAlsoSuperAdmin(managerEmail)));
-  if (c.work_id) {
+  const skipManagerStage = !requireManager || !managerEmail || (await isManagerAlsoSuperAdmin(managerEmail));
+  if (!skipManagerStage) {
     const { data: assignedManager } = await supabase.from('users').select('active,role').eq('email', managerEmail).single();
     if (!assignedManager?.active || !['Manager', 'Super Admin'].includes(assignedManager.role)) {
       throw new Error('The assigned work manager is inactive. Restore the manager before forwarding this claim.');

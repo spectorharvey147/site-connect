@@ -35,9 +35,10 @@ export async function resolveClaimWork(site: string, workId?: string) {
   const { data: project, error: projectError } = await db.from('app_lists').select('value,default_manager_email').eq('id', work.project_id).eq('type', 'project').eq('active', true).single();
   if (projectError || project?.value !== site) throw new Error('The selected work does not belong to this project.');
   const managerEmail = work.manager_email || project.default_manager_email;
-  const { data: manager, error: managerError } = await db.from('users').select('email,role').eq('email', managerEmail || '').eq('active', true).single();
-  if (managerError || !manager || !['Manager', 'Super Admin'].includes(manager.role)) throw new Error('This work needs an active manager. Ask Admin to update Work Allocation.');
-  return { workId: work.id as string, workName: work.name as string, managerEmail: manager.email as string };
+  if (!managerEmail) return { workId: work.id as string, workName: work.name as string, managerEmail: '', managerName: '', managerRole: '' };
+  const { data: manager, error: managerError } = await db.from('users').select('email,name,role').eq('email', managerEmail).eq('active', true).single();
+  if (managerError || !manager || !['Manager', 'Super Admin'].includes(manager.role)) throw new Error('This work has an inactive manager. Ask Admin to update Work Allocation.');
+  return { workId: work.id as string, workName: work.name as string, managerEmail: manager.email as string, managerName: manager.name as string, managerRole: manager.role as string };
 }
 
 export async function getJournalExportClaims(ids: string[]): Promise<SapClaim[]> {

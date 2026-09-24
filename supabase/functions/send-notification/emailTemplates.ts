@@ -86,6 +86,14 @@ function absoluteUrl(url?: string, baseUrl = DEFAULT_APP_URL) {
   return `${base}${path}`;
 }
 
+function parseAppDate(value?: string) {
+  if (!value) return new Date();
+  const raw = String(value).trim();
+  const hasExplicitZone = /(?:Z|[+-]\d{2}:?\d{2})$/i.test(raw);
+  const normalized = hasExplicitZone ? raw : raw.replace(' ', 'T') + 'Z';
+  const date = new Date(normalized);
+  return Number.isNaN(date.getTime()) ? new Date(raw) : date;
+}
 function fmtAmount(value?: number, currency = DEFAULT_CURRENCY) {
   const symbol = currencySymbol(currency);
   const amount = new Intl.NumberFormat('en-IN', { maximumFractionDigits: 2, minimumFractionDigits: 2 }).format(Number(value || 0));
@@ -94,7 +102,7 @@ function fmtAmount(value?: number, currency = DEFAULT_CURRENCY) {
 
 function fmtDate(value?: string) {
   if (!value) return '';
-  const date = new Date(value);
+  const date = parseAppDate(value);
   if (Number.isNaN(date.getTime())) return escapeHtml(value);
   return escapeHtml(date.toLocaleString('en-IN', {
     timeZone: APP_TIME_ZONE,
@@ -108,7 +116,7 @@ function fmtDate(value?: string) {
 }
 
 function fmtGeneratedAt(value?: string) {
-  const date = value ? new Date(value) : new Date();
+  const date = value ? parseAppDate(value) : new Date();
   const safeDate = Number.isNaN(date.getTime()) ? new Date() : date;
   return safeDate.toLocaleString('en-IN', {
     timeZone: APP_TIME_ZONE,

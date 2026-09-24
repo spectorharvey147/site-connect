@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { useSearchParams, useNavigate } from 'react-router-dom';
-import { submitClaim, resubmitRejectedClaim, getDropdownOptions, getCurrentBalance, getClaimById, ProjectCodeOption, validateClaimSubmissionRules } from '@/lib/claims-api';
+import { submitClaim, resubmitRejectedClaim, getDropdownOptions, getCurrentBalance, getClaimById, getUsersDirectory, ProjectCodeOption, validateClaimSubmissionRules } from '@/lib/claims-api';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -61,6 +61,7 @@ export default function SubmitClaimView() {
   const [activeExpenseId, setActiveExpenseId] = useState(() => expenses[0]?.id || '');
   const [loading, setLoading] = useState(false);
   const [dropdown, setDropdown] = useState<any>({ projects: [], categories: [], projectCodes: [], byProject: {} });
+  const [users, setUsers] = useState<any[]>([]);
   const [tempClaimId, setTempClaimId] = useState(() => 'C-' + Date.now());
   const [balance, setBalance] = useState<number | null>(null);
   const [fileUploadKey, setFileUploadKey] = useState(0);
@@ -74,6 +75,7 @@ export default function SubmitClaimView() {
   useEffect(() => {
     getDropdownOptions().then(setDropdown);
     getProjectWorks().then(setWorks).catch(error => setWorkError(error.message));
+    getUsersDirectory().then(setUsers).catch(() => setUsers([]));
     if (user) getCurrentBalance(user.email).then(setBalance);
   }, [user]);
 
@@ -131,7 +133,13 @@ export default function SubmitClaimView() {
   const selectedProject = dropdown.projects.find((project: any) => project.name === site);
   const projectWorks = works.filter(w => w.active && w.project_id === selectedProject?.id);
   const selectedWork = projectWorks.find(w => w.id === workId);
-  const assignedManager = selectedWork?.manager_email || selectedProject?.defaultManagerEmail;
+  const assignedManager = selectedWork?.manager_email || selectedProject?.defaultManagerEmail || '';
+  const assignedManagerUser = users.find((entry) => String(entry.email || '').toLowerCase() === assignedManager.toLowerCase());
+  const assignedManagerLabel = selectedWork
+    ? assignedManager
+      ? (assignedManagerUser?.name || assignedManager)
+      : 'No manager assigned - manager stage will be skipped'
+    : '';
   const projectCustomers = selectedProject?.customerNames || [];
 
   const getFilteredProjectCodes = (category: string) => {
@@ -208,7 +216,7 @@ export default function SubmitClaimView() {
     && ((expense.amountWithBill || 0) > 0 || (expense.amountWithoutBill || 0) > 0)
   )).length;
   const requiredBillRows = expenses.filter((expense) => (expense.amountWithBill || 0) > 0).length;
-  const claimDetailsReady = Boolean(site && selectedWork && assignedManager) && completeExpenseRows === expenses.length && grandTotal > 0;
+  const claimDetailsReady = Boolean(site && selectedWork) && completeExpenseRows === expenses.length && grandTotal > 0;
 
   useEffect(() => {
     if (editingClaim) return;
@@ -236,8 +244,8 @@ export default function SubmitClaimView() {
       toast.error('Please select a project site');
       return;
     }
-    if (!selectedWork || !assignedManager) {
-      toast.error('Select a work with an assigned manager. Ask Admin to configure Work Allocation if none is available.');
+    if (!selectedWork) {
+      toast.error('Select a work activity before submitting this claim.');
       return;
     }
     if (expenses.some((expense) => !expense.category || !expense.projectCode || !expense.claimDate || (expense.amountWithBill === 0 && expense.amountWithoutBill === 0))) {
@@ -401,7 +409,7 @@ export default function SubmitClaimView() {
               {site && !projectWorks.length && <p className="text-xs text-destructive">No active work allocation. Contact Admin.</p>}
               {workError && <p role="alert" className="text-xs text-destructive">{workError}</p>}
             </label>
-            <div className="space-y-1 text-sm"><Label>Assigned manager</Label><Input readOnly value={selectedWork ? assignedManager || 'Manager not configured' : ''} placeholder="Select work first" /><p className="text-xs text-muted-foreground">Admin verifies first, then this manager approves. Use a separate claim for another work activity.</p></div>
+            <div className="space-y-1 text-sm"><Label>Assigned manager</Label><Input readOnly value={assignedManagerLabel} placeholder="Select work first" /><p className="text-xs text-muted-foreground">Admin verifies first. A normal work manager approves next; if no manager or a Super Admin is assigned, the manager stage is skipped.</p></div>
           </div>
           <div className="mb-3 flex items-center justify-between">
             <div className="flex items-center gap-3">

@@ -83,9 +83,17 @@ function formatAmount(value: unknown) {
   return Number(value || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
+function parseAppDate(value: unknown) {
+  if (!value) return new Date();
+  const raw = String(value).trim();
+  const hasExplicitZone = /(?:Z|[+-]\d{2}:?\d{2})$/i.test(raw);
+  const normalized = hasExplicitZone ? raw : raw.replace(' ', 'T') + 'Z';
+  const date = new Date(normalized);
+  return Number.isNaN(date.getTime()) ? new Date(raw) : date;
+}
 function formatClaimDate(value: unknown) {
   if (!value) return '-';
-  const date = new Date(String(value));
+  const date = parseAppDate(value);
   if (Number.isNaN(date.getTime())) return String(value);
   return date.toLocaleString('en-IN', {
     timeZone: 'Asia/Kolkata',
@@ -139,6 +147,8 @@ function wrapPdfText(text: string, font: any, size: number, maxWidth: number) {
 
 async function buildClaimReportPdf(data: any) {
   const claimNumber = data.claim_number || data.claim_id || 'claim';
+  const companyName = data.companyName || 'Irrigation Products International Pvt Ltd';
+  const companySubtitle = data.companySubtitle || 'Claims Management System';
   const pdfDoc = await PDFDocument.create();
   const regular = await pdfDoc.embedFont(StandardFonts.Helvetica);
   const bold = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
@@ -160,11 +170,13 @@ async function buildClaimReportPdf(data: any) {
     if (y - height < margin) addPage();
   };
 
-  page.drawRectangle({ x: 0, y: pageSize[1] - 86, width: pageSize[0], height: 86, color: rgb(0.03, 0.45, 0.42) });
-  drawText('Claim Report', margin, pageSize[1] - 42, 22, bold, rgb(1, 1, 1));
-  drawText(`Claim Number: ${claimNumber}`, margin, pageSize[1] - 64, 12, bold, rgb(0.9, 1, 0.98));
-  drawText(`Generated: ${formatClaimDate(data.generated_on || new Date().toISOString())}`, pageSize[0] - 285, pageSize[1] - 42, 9, regular, rgb(0.9, 1, 0.98));
-  y = pageSize[1] - 112;
+  page.drawRectangle({ x: 0, y: pageSize[1] - 96, width: pageSize[0], height: 96, color: rgb(0.03, 0.45, 0.42) });
+  drawText(companySubtitle, margin, pageSize[1] - 28, 9, bold, rgb(0.83, 1, 0.97));
+  drawText(companyName, margin, pageSize[1] - 50, 20, bold, rgb(1, 1, 1));
+  drawText('Claim Report', margin, pageSize[1] - 73, 13, bold, rgb(0.9, 1, 0.98));
+  drawText(`Claim Number: ${claimNumber}`, pageSize[0] - 286, pageSize[1] - 38, 12, bold, rgb(1, 1, 1));
+  drawText(`Generated: ${formatClaimDate(data.generated_on || new Date().toISOString())}`, pageSize[0] - 286, pageSize[1] - 58, 9, regular, rgb(0.9, 1, 0.98));
+  y = pageSize[1] - 122;
 
   const details = [
     ['Submitted By', data.submitted_by || data.employee_name || '-'],
@@ -248,6 +260,23 @@ async function buildClaimReportPdf(data: any) {
       x += tableWidths[index];
     });
     y -= rowHeight;
+  });
+
+  ensureSpace(98);
+  y -= 14;
+  page.drawRectangle({ x: margin, y: y - 42, width: pageSize[0] - margin * 2, height: 42, borderColor: rgb(0.13, 0.55, 0.49), borderWidth: 1, color: rgb(0.94, 0.98, 0.96) });
+  drawText(`Total With Bill: Rs. ${formatAmount(data.total_with_bill)}`, margin + 12, y - 16, 9, bold, rgb(0.02, 0.37, 0.34));
+  drawText(`Total Without Bill: Rs. ${formatAmount(data.total_without_bill)}`, margin + 250, y - 16, 9, bold, rgb(0.02, 0.37, 0.34));
+  drawText(`Grand Total: Rs. ${formatAmount(data.total_amount)}`, margin + 525, y - 16, 10, bold, rgb(0.02, 0.37, 0.34));
+  drawText(`Submitted: Rs. ${formatAmount(data.submitted_amount ?? data.total_amount)}    Verified: Rs. ${formatAmount(data.verified_amount ?? data.total_amount)}`, margin + 12, y - 32, 8, regular, rgb(0.15, 0.18, 0.23));
+  y -= 66;
+
+  ensureSpace(52);
+  const signWidth = (pageSize[0] - margin * 2 - 48) / 4;
+  ['Submitted By', 'Admin Verification', 'Manager Approval', 'Final Approval'].forEach((label, index) => {
+    const x = margin + index * (signWidth + 16);
+    page.drawLine({ start: { x, y: y - 24 }, end: { x: x + signWidth, y: y - 24 }, thickness: 0.8, color: rgb(0.2, 0.24, 0.3) });
+    drawText(label, x, y - 40, 8, bold, rgb(0.15, 0.18, 0.23));
   });
 
   const bytes = await pdfDoc.save();
