@@ -28,14 +28,13 @@ export default function UserManagementView() {
   const [editUser, setEditUser] = useState<any>(null);
   const [advanceModal, setAdvanceModal] = useState<{ email: string; name: string } | null>(null);
   const [advanceAmount, setAdvanceAmount] = useState('');
-  const [allUsers, setAllUsers] = useState<any[]>([]);
   const [processing, setProcessing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState('');
   const [roleFilter, setRoleFilter] = useState('all');
   const [statusFilter, setStatusFilter] = useState('all');
 
-  const [form, setForm] = useState({ name: '', email: '', password: '', role: 'User', advance: '0', manager: '', signatureUrl: '' });
+  const [form, setForm] = useState({ name: '', email: '', password: '', role: 'User', advance: '0', signatureUrl: '' });
 
   const loadUsers = async () => {
     setLoading(true);
@@ -43,7 +42,6 @@ export default function UserManagementView() {
     try {
       const data = await getAllUsers();
       setUsers(data);
-      setAllUsers(data);
     } catch (e) { 
       console.error('Error loading users:', e);
       setError((e as any).message || 'Failed to load users');
@@ -89,7 +87,7 @@ export default function UserManagementView() {
       await createUser({ ...form, advance: parseFloat(form.advance) || 0 });
       toast.success('User created');
       setShowCreate(false);
-      setForm({ name: '', email: '', password: '', role: 'User', advance: '0', manager: '', signatureUrl: '' });
+      setForm({ name: '', email: '', password: '', role: 'User', advance: '0', signatureUrl: '' });
       loadUsers();
     } catch (err: any) { toast.error(err.message); }
     setProcessing(false);
@@ -111,7 +109,6 @@ export default function UserManagementView() {
         email: editUser.email,
         role: editUser.role,
         password: editUser.password || undefined,
-        manager: editUser.manager,
         signatureUrl: editUser.signatureUrl || '',
       });
       toast.success('User updated');
@@ -149,7 +146,6 @@ export default function UserManagementView() {
 
       const applySignature = (entry: any) => entry.email === targetUser.email ? { ...entry, signatureUrl } : entry;
       setUsers(prev => prev.map(applySignature));
-      setAllUsers(prev => prev.map(applySignature));
       if (editUser?.email === targetUser.email) setEditUser({ ...editUser, signatureUrl });
       toast.success(signatureUrl ? 'Signature saved' : 'Signature removed');
     } catch (err: any) {
@@ -182,7 +178,7 @@ export default function UserManagementView() {
         <div className="p-3 sm:p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-border">
           <div>
             <h2 className="font-bold flex items-center gap-2"><Users className="h-5 w-5 text-primary" /> User Management</h2>
-            <p className="mt-1 text-sm text-muted-foreground">Manage access, roles, managers, signatures and employee advances.</p>
+            <p className="mt-1 text-sm text-muted-foreground">Manage access, roles, signatures and employee advances. Claim managers are assigned in Work Allocation.</p>
           </div>
           <div className="flex gap-2">
             <Button variant="outline" size="sm" onClick={loadUsers} disabled={loading} className="flex-1 sm:flex-none h-10 sm:h-9">
@@ -248,7 +244,6 @@ export default function UserManagementView() {
               </div>
               <div className="flex flex-wrap gap-2 text-sm">
                 <Badge variant="secondary">{u.role}</Badge>
-                {u.manager && <span className="text-muted-foreground">Manager: {u.manager}</span>}
               </div>
               <div className="rounded-lg border border-border bg-muted/20 p-3">
                 <Label className="mb-2 block text-xs">Signature</Label>
@@ -288,18 +283,18 @@ export default function UserManagementView() {
         {/* Desktop Table View */}
         <div className="hidden max-h-[720px] overflow-auto md:block">
           <table className="w-full min-w-[1080px] text-sm">
-            <thead className="sticky top-0 z-10 bg-card shadow-sm"><tr className="bg-muted/50"><th className="p-3 text-left">Name</th><th className="p-3 text-left">Email</th><th className="p-3 text-left">Role</th><th className="p-3 text-center">Actions</th><th className="p-3 text-center">Sign</th><th className="p-3 text-left">Manager</th><th className="p-3 text-center">Status</th><th className="p-3 text-right">Balance</th></tr></thead>
+            <thead className="sticky top-0 z-10 bg-card shadow-sm"><tr className="bg-muted/50"><th className="p-3 text-left">Name</th><th className="p-3 text-left">Email</th><th className="p-3 text-left">Role</th><th className="p-3 text-center">Actions</th><th className="p-3 text-center">Sign</th><th className="p-3 text-center">Status</th><th className="p-3 text-right">Balance</th></tr></thead>
             <tbody>
               {loading ? (
                 Array.from({ length: 3 }).map((_, i) => (
                   <tr key={i} className="border-b border-border">
-                    {Array.from({ length: 8 }).map((_, j) => (
+                    {Array.from({ length: 7 }).map((_, j) => (
                       <td key={j} className="p-3"><Skeleton className="h-4 w-full" /></td>
                     ))}
                   </tr>
                 ))
               ) : filteredUsers.length === 0 ? (
-                <tr><td colSpan={8} className="p-10 text-center text-muted-foreground">No users match these filters</td></tr>
+                <tr><td colSpan={7} className="p-10 text-center text-muted-foreground">No users match these filters</td></tr>
               ) : filteredUsers.map(u => (
                 <tr key={u.email} className="border-b border-border hover:bg-muted/30 transition-colors">
                   <td className="p-3 font-medium">{u.name}</td>
@@ -322,7 +317,6 @@ export default function UserManagementView() {
                       helperText="Shown on vouchers"
                     />
                   </td>
-                  <td className="p-3 text-sm text-muted-foreground">{u.manager || '—'}</td>
                   <td className="p-3 text-center">
                     <div className="flex items-center justify-center gap-2">
                       <Switch
@@ -379,18 +373,6 @@ export default function UserManagementView() {
                 <Input className="h-11 sm:h-10" type="number" min="0" value={form.advance} onChange={e => setForm({ ...form, advance: e.target.value })} placeholder="0" />
               </div>
             </div>
-            <div className="space-y-2">
-              <Label>Manager</Label>
-              <Select value={form.manager} onValueChange={v => setForm({ ...form, manager: v })}>
-                <SelectTrigger className="h-11 sm:h-10"><SelectValue placeholder="Select Manager (Optional)" /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="none">No Manager</SelectItem>
-                  {allUsers.filter(u => u.role === 'Manager' || u.role === 'Admin' || u.role === 'Super Admin').map(u => (
-                    <SelectItem key={u.email} value={u.email}>{u.name}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
             <div className="space-y-2 rounded-lg border border-border bg-muted/20 p-3">
               <Label>Signature</Label>
               <ImageUpload
@@ -443,18 +425,6 @@ export default function UserManagementView() {
                 <Label>Password (leave blank to keep current)</Label>
                 <Input className="h-11 sm:h-10" type="password" value={editUser.password} onChange={e => setEditUser({ ...editUser, password: e.target.value })} placeholder="Enter new password" />
                 <p className="text-xs text-muted-foreground">If changed, {PASSWORD_REQUIREMENTS.toLowerCase()}</p>
-              </div>
-              <div className="space-y-2">
-                <Label>Manager</Label>
-                <Select value={editUser.manager || 'none'} onValueChange={v => setEditUser({ ...editUser, manager: v === 'none' ? '' : v })}>
-                  <SelectTrigger className="h-11 sm:h-10"><SelectValue placeholder="Select Manager" /></SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="none">No Manager</SelectItem>
-                    {allUsers.filter(u => u.email !== editUser.originalEmail && ['Manager', 'Admin', 'Super Admin'].includes(u.role)).map(u => (
-                      <SelectItem key={u.email} value={u.email}>{u.name}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
               </div>
               <div className="space-y-2 rounded-lg border border-border bg-muted/20 p-3">
                 <Label>Signature</Label>

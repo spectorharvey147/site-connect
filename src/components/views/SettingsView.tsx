@@ -24,7 +24,7 @@ const emptyNewItem = {
   expense_categories: [] as string[],
 };
 
-const userCsvHeaders = ['name', 'email', 'password', 'role', 'advance', 'manager_email', 'employee_id', 'mobile_number', 'date_of_joining'];
+const userCsvHeaders = ['name', 'email', 'password', 'role', 'advance', 'employee_id', 'mobile_number', 'date_of_joining'];
 const masterCsvHeaders = ['active', 'type', 'value', 'project_code', 'project', 'customer_names', 'allows_all_categories', 'expense_categories'];
 
 function parseCsv(text: string) {
@@ -387,7 +387,6 @@ export default function SettingsView({ section = 'company', onMastersChanged }: 
       password: 'Temp@12345',
       role: 'User',
       advance: '0',
-      manager_email: 'manager@example.com',
       employee_id: 'EMP001',
       mobile_number: '9876543210',
       date_of_joining: '2026-05-15',
@@ -401,7 +400,6 @@ export default function SettingsView({ section = 'company', onMastersChanged }: 
       email: user.email,
       role: user.role,
       advance: user.advance,
-      manager_email: user.manager,
       employee_id: user.employee_id || '',
       mobile_number: user.mobile_number || '',
       date_of_joining: user.date_of_joining || '',
@@ -422,7 +420,6 @@ export default function SettingsView({ section = 'company', onMastersChanged }: 
           password: row.password,
           role: row.role || 'User',
           advance: parseFloat(row.advance || '0') || 0,
-          manager: row.manager_email || '',
           employee_id: row.employee_id || '',
           mobile_number: row.mobile_number || '',
           date_of_joining: row.date_of_joining || '',

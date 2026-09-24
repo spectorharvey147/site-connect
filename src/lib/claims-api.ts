@@ -2359,7 +2359,6 @@ export async function createUser(newUser: {
   name: string;
   role: string;
   advance: number;
-  manager: string;
   employee_id?: string;
   mobile_number?: string;
   date_of_joining?: string;
@@ -2375,19 +2374,12 @@ export async function createUser(newUser: {
   const { data: existing } = await supabase.from('users').select('email').eq('email', email).maybeSingle();
   if (existing) throw new Error('Email already exists.');
 
-  const managerEmail = newUser.manager?.trim().toLowerCase() || null;
-  if (managerEmail) {
-    const { data: mgr } = await supabase.from('users').select('email').eq('email', managerEmail).maybeSingle();
-    if (!mgr) throw new Error('Manager email not found.');
-  }
-
   const insertPayload: any = {
     email,
     password_hash: hashPassword(newUser.password),
     name: newUser.name.trim(),
     role: newUser.role || 'User',
     advance_amount: newUser.advance || 0,
-    manager_email: managerEmail,
     active: true,
     employee_id: newUser.employee_id?.trim() || null,
     mobile_number: newUser.mobile_number?.trim() || null,
@@ -2430,7 +2422,7 @@ export async function createUser(newUser: {
   return { ok: true, message: `User ${newUser.name} created successfully.` };
 }
 
-export async function updateUser(payload: { originalEmail: string; name?: string; email?: string; role?: string; password?: string; manager?: string; signatureUrl?: string }) {
+export async function updateUser(payload: { originalEmail: string; name?: string; email?: string; role?: string; password?: string; signatureUrl?: string }) {
   if (payload.password) {
     const passwordError = validatePassword(payload.password);
     if (passwordError) throw new Error(passwordError);
@@ -2442,7 +2434,6 @@ export async function updateUser(payload: { originalEmail: string; name?: string
   if (payload.name) updates.name = payload.name;
   if (payload.role) updates.role = payload.role;
   if (payload.password) updates.password_hash = hashPassword(payload.password);
-  if (payload.manager !== undefined) updates.manager_email = payload.manager || null;
   if (payload.signatureUrl !== undefined) updates.signature_url = payload.signatureUrl || null;
   if (payload.email && payload.email.toLowerCase() !== oldEmail) updates.email = payload.email.toLowerCase();
 
