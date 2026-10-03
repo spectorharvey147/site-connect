@@ -1,7 +1,7 @@
 import { useAuth } from '@/contexts/AuthContext';
 import { cn } from '@/lib/utils';
 import {
-  BarChart3, History, UserCheck, ShieldCheck, Users, Menu, UserCircle, Plus, ArrowLeftRight, Scale, Receipt, Settings, Shield, LogOut, FileUp, FileSpreadsheet, Crown, Banknote,
+  BarChart3, History, UserCheck, ShieldCheck, Users, Menu, UserCircle, Plus, ArrowLeftRight, Scale, Receipt, Settings, Shield, LogOut, FileUp, FileSpreadsheet, Crown, Banknote, FileBarChart, UserRoundCog,
 } from 'lucide-react';
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from '@/components/ui/sheet';
 import { useState } from 'react';
@@ -32,6 +32,8 @@ const allNavItems = [
   { id: 'accounting-setup', icon: FileSpreadsheet, label: 'GL & Location Setup', roles: ['Accounts', 'Admin', 'Super Admin'] },
   { id: 'work-allocation', icon: Users, label: 'Work Allocation', roles: ['Admin', 'Super Admin'] },
   { id: 'voucher', icon: Banknote, label: 'Payment Voucher', roles: ['Accounts', 'Admin', 'Super Admin'] },
+  { id: 'user-allocation', icon: UserRoundCog, label: 'User Allocation', roles: ['Admin', 'Super Admin'] },
+  { id: 'reports', icon: FileBarChart, label: 'Reports', roles: ['Admin', 'Super Admin'] },
   { id: 'users', icon: Users, label: 'User Management', roles: ['Admin', 'Super Admin'] },
   { id: 'audit', icon: Shield, label: 'Audit Trail', roles: ['Admin', 'Super Admin'] },
   { id: 'settings', icon: Settings, label: 'Settings', roles: ['Admin', 'Super Admin'] },

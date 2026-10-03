@@ -178,7 +178,7 @@ export default function UserManagementView() {
         <div className="p-3 sm:p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-border">
           <div>
             <h2 className="font-bold flex items-center gap-2"><Users className="h-5 w-5 text-primary" /> User Management</h2>
-            <p className="mt-1 text-sm text-muted-foreground">Manage access, roles, signatures and employee advances. Claim managers are assigned in Work Allocation.</p>
+            <p className="mt-1 text-sm text-muted-foreground">Manage access, roles, signatures and employee advances. Reporting managers are assigned in User Allocation.</p>
           </div>
           <div className="flex gap-2">
             <Button variant="outline" size="sm" onClick={loadUsers} disabled={loading} className="flex-1 sm:flex-none h-10 sm:h-9">

@@ -4,8 +4,50 @@ function uniqueFileIds(fileIds: string[]) {
 
 export type EmbeddableAttachmentFormat = 'pdf' | 'png' | 'jpeg' | 'unsupported';
 
-export function collectVoucherFileIds(claims: Array<{ fileIds?: string[] }> | null | undefined) {
-  return uniqueFileIds((claims || []).flatMap((claim) => claim.fileIds || []));
+export function isStorageFolderEntry(entry: { id?: string | null; metadata?: unknown }) {
+  return entry.id == null;
+}
+
+export function getAttachmentStorageRoots(fileIds: string[] | null | undefined) {
+  return uniqueFileIds((fileIds || []).map((fileId) => String(fileId || '').split('/')[0] || ''));
+}
+
+type ClaimAttachmentSource = {
+  fileIds?: string[];
+  expenses?: Array<{ attachmentIds?: string[] }>;
+};
+
+export function collectVoucherFileIds(claims: ClaimAttachmentSource[] | null | undefined) {
+  return uniqueFileIds((claims || []).flatMap((claim) => [
+    ...(claim.fileIds || []),
+    ...((claim.expenses || []).flatMap((expense) => expense.attachmentIds || [])),
+  ]));
+}
+
+export function assignStoredFilesToExpenseRows<T extends { attachmentIds?: string[] }>(
+  expenses: T[],
+  storedFileIds: string[] | null | undefined,
+): Array<T & { attachmentIds: string[] }> {
+  const filesByExpense = new Map<number, string[]>();
+
+  uniqueFileIds(storedFileIds || []).forEach((fileId) => {
+    const match = fileId.match(/(?:^|\/)expense[-_ ]?(\d+)(?:\/|$)/i);
+    if (!match) return;
+    const expenseIndex = Number(match[1]) - 1;
+    if (expenseIndex < 0 || expenseIndex >= expenses.length) return;
+    filesByExpense.set(expenseIndex, [
+      ...(filesByExpense.get(expenseIndex) || []),
+      fileId,
+    ]);
+  });
+
+  return expenses.map((expense, index) => ({
+    ...expense,
+    attachmentIds: uniqueFileIds([
+      ...(expense.attachmentIds || []),
+      ...(filesByExpense.get(index) || []),
+    ]),
+  }));
 }
 
 export function detectEmbeddableAttachmentFormat(input: ArrayBuffer | Uint8Array): EmbeddableAttachmentFormat {

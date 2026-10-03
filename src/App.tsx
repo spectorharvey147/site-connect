@@ -28,6 +28,8 @@ const AccountsProcessingView = lazy(() => import("@/components/views/AccountsPro
 const AccountsSapEntryView = lazy(() => import("@/components/views/AccountsSapEntryView"));
 const AccountingSetupView = lazy(() => import("@/components/views/AccountingSetupView"));
 const WorkAllocationView = lazy(() => import("@/components/views/WorkAllocationView"));
+const UserAllocationView = lazy(() => import("@/components/views/UserAllocationView"));
+const AdminReportsView = lazy(() => import("@/components/views/AdminReportsView"));
 const PaymentVoucherView = lazy(() => import("@/components/views/PaymentVoucherView"));
 const UserManagementView = lazy(() => import("@/components/views/UserManagementView"));
 const SettingsView = lazy(() => import("@/components/views/SettingsView"));
@@ -72,6 +74,8 @@ const App = () => (
               <Route path="accounts-sap-entry" element={withSuspense(<AccountsSapEntryView />)} />
               <Route path="accounting-setup" element={withSuspense(<AccountingSetupView />)} />
               <Route path="work-allocation" element={withSuspense(<WorkAllocationView />)} />
+              <Route path="user-allocation" element={withSuspense(<UserAllocationView />)} />
+              <Route path="reports" element={withSuspense(<AdminReportsView />)} />
               <Route path="voucher" element={withSuspense(<PaymentVoucherView />)} />
               <Route path="users" element={withSuspense(<UserManagementView />)} />
               <Route path="settings" element={withSuspense(<SettingsView />)} />

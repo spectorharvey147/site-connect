@@ -14,6 +14,7 @@ const TEMPLATE_TYPES: EmailTemplateType[] = [
   'claim_submitted_user',
   'claim_submitted_manager',
   'claim_approved',
+  'claim_ready_accounts',
   'claim_accounts_verified',
   'claim_paid',
   'claim_rejected',

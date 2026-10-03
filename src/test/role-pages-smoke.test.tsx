@@ -12,6 +12,8 @@ import AccountsProcessingView from '@/components/views/AccountsProcessingView';
 import AccountsSapEntryView from '@/components/views/AccountsSapEntryView';
 import AccountingSetupView from '@/components/views/AccountingSetupView';
 import WorkAllocationView from '@/components/views/WorkAllocationView';
+import UserAllocationView from '@/components/views/UserAllocationView';
+import AdminReportsView from '@/components/views/AdminReportsView';
 import PaymentVoucherView from '@/components/views/PaymentVoucherView';
 import UserManagementView from '@/components/views/UserManagementView';
 import SettingsView from '@/components/views/SettingsView';
@@ -48,6 +50,9 @@ vi.mock('@/lib/claims-api', () => ({
   getTransactions: vi.fn(async () => []),
   getUsersDirectory: vi.fn(async () => []),
   getAllUsers: vi.fn(async () => []),
+  getUserAllocationData: vi.fn(async () => []),
+  assignUsersToManager: vi.fn(async () => 0),
+  getAdminReportData: vi.fn(async () => ({ claims: [], users: [] })),
   getAuditLogs: vi.fn(async () => []),
   getUserBalanceSummary: vi.fn(async () => []),
   getManagerAssignedUsersWithBalances: vi.fn(async () => []),
@@ -117,6 +122,8 @@ describe('role page smoke checks', () => {
     ['accounts SAP entry', AccountsSapEntryView],
     ['accounting setup', AccountingSetupView],
     ['work allocation', WorkAllocationView],
+    ['user allocation', UserAllocationView],
+    ['reports', AdminReportsView],
     ['payment voucher', PaymentVoucherView],
     ['user management', UserManagementView],
     ['settings', SettingsView],
@@ -141,9 +148,9 @@ describe('role page smoke checks', () => {
   it.each([
     ['User', ['Dashboard', 'Submit Claim', 'Claim History', 'Ledger Statement', 'User Balances', 'My Profile']],
     ['Manager', ['Dashboard', 'Submit Claim', 'Claim History', 'Ledger Statement', 'User Balances', 'Manager Approval', 'My Profile']],
-    ['Admin', ['Dashboard', 'Submit Claim', 'Claim History', 'Ledger Statement', 'User Balances', 'Admin Verification', 'GL & Location Setup', 'Work Allocation', 'Payment Voucher', 'User Management', 'Audit Trail', 'Settings', 'My Profile']],
+    ['Admin', ['Dashboard', 'Submit Claim', 'Claim History', 'Ledger Statement', 'User Balances', 'Admin Verification', 'GL & Location Setup', 'Work Allocation', 'Payment Voucher', 'User Allocation', 'Reports', 'User Management', 'Audit Trail', 'Settings', 'My Profile']],
     ['Accounts', ['Dashboard', 'Claim History', 'Ledger Statement', 'User Balances', 'Accounts Processing', 'Accounts SAP Entry', 'GL & Location Setup', 'Payment Voucher', 'My Profile']],
-    ['Super Admin', ['Dashboard', 'Submit Claim', 'Claim History', 'Ledger Statement', 'User Balances', 'Manager Approval', 'Admin Verification', 'Final Approval', 'Accounts Processing', 'Accounts SAP Entry', 'GL & Location Setup', 'Work Allocation', 'Payment Voucher', 'User Management', 'Audit Trail', 'Settings', 'My Profile']],
+    ['Super Admin', ['Dashboard', 'Submit Claim', 'Claim History', 'Ledger Statement', 'User Balances', 'Manager Approval', 'Admin Verification', 'Final Approval', 'Accounts Processing', 'Accounts SAP Entry', 'GL & Location Setup', 'Work Allocation', 'Payment Voucher', 'User Allocation', 'Reports', 'User Management', 'Audit Trail', 'Settings', 'My Profile']],
   ] as const)('shows the correct modules for the %s role', (role, expectedLabels) => {
     authState.user.role = role;
     const { getByRole } = render(<AppSidebar activeView="dashboard" onNavigate={vi.fn()} />);

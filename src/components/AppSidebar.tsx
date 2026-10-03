@@ -4,7 +4,7 @@ import { cn } from '@/lib/utils';
 import {
   ArrowLeftRight, Banknote, BarChart3, ChevronLeft, Crown, FileSpreadsheet,
   FileUp, History, LogOut, Menu, Receipt, Scale, Settings, Shield, ShieldCheck,
-  UserCheck, UserCircle, Users,
+  FileBarChart, UserCheck, UserCircle, UserRoundCog, Users,
 } from 'lucide-react';
 
 interface SidebarProps {
@@ -33,6 +33,8 @@ const navGroups = [
     { id: 'voucher', icon: Banknote, label: 'Payment Voucher', roles: ['Accounts', 'Admin', 'Super Admin'] },
   ] },
   { label: 'Administration', items: [
+    { id: 'user-allocation', icon: UserRoundCog, label: 'User Allocation', roles: ['Admin', 'Super Admin'] },
+    { id: 'reports', icon: FileBarChart, label: 'Reports', roles: ['Admin', 'Super Admin'] },
     { id: 'users', icon: Users, label: 'User Management', roles: ['Admin', 'Super Admin'] },
     { id: 'audit', icon: Shield, label: 'Audit Trail', roles: ['Admin', 'Super Admin'] },
     { id: 'settings', icon: Settings, label: 'Settings', roles: ['Admin', 'Super Admin'] },

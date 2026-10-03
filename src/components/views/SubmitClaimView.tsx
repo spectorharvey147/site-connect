@@ -49,7 +49,8 @@ export default function SubmitClaimView() {
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
   const fileUploadRef = useRef<FileUploadHandle>(null);
-  const rowFileUploadRefs = useRef<Record<string, FileUploadHandle | null>>({});
+  const mobileRowFileUploadRefs = useRef<Record<string, FileUploadHandle | null>>({});
+  const desktopRowFileUploadRefs = useRef<Record<string, FileUploadHandle | null>>({});
   const expenseCardRefs = useRef<Record<string, HTMLDivElement | null>>({});
   const pendingExpenseFocusRef = useRef<string | null>(null);
   const [site, setSite] = useState('');
@@ -117,7 +118,7 @@ export default function SubmitClaimView() {
         setExpenses(rows);
         setActiveExpenseId(rows[0]?.id || '');
         setExistingFileIds((claim.fileIds || []).filter((fileId: string) => !rowAttachmentIds.has(fileId)));
-        setTempClaimId(claim.claimIdInternal || claim.claimId || `C-${Date.now()}`);
+        setTempClaimId(`C-${Date.now()}`);
       })
       .catch((error) => {
         toast.error(error.message || 'Could not load claim for editing');
@@ -254,7 +255,9 @@ export default function SubmitClaimView() {
     }
     const hasClaimLevelAttachments = ((fileUploadRef.current?.getFileCount() || 0) + existingFileIds.length) > 0;
     const firstMissingBillRow = expenses.findIndex((expense) => {
-      const rowCount = (expense.attachmentIds?.length || 0) + (rowFileUploadRefs.current[expense.id]?.getFileCount() || 0);
+      const rowCount = (expense.attachmentIds?.length || 0)
+        + (mobileRowFileUploadRefs.current[expense.id]?.getFileCount() || 0)
+        + (desktopRowFileUploadRefs.current[expense.id]?.getFileCount() || 0);
       return expense.amountWithBill > 0 && rowCount === 0 && !hasClaimLevelAttachments;
     });
     if (firstMissingBillRow >= 0) {
@@ -272,7 +275,11 @@ export default function SubmitClaimView() {
         uploadedPaths = await fileUploadRef.current.uploadAll();
       }
       const expensesWithAttachments = await Promise.all(expenses.map(async (expense) => {
-        const uploadedRowPaths = await (rowFileUploadRefs.current[expense.id]?.uploadAll() || Promise.resolve([]));
+        const uploadHandles = [
+          mobileRowFileUploadRefs.current[expense.id],
+          desktopRowFileUploadRefs.current[expense.id],
+        ].filter((handle): handle is FileUploadHandle => Boolean(handle));
+        const uploadedRowPaths = (await Promise.all(uploadHandles.map((handle) => handle.uploadAll()))).flat();
         return {
           category: expense.category,
           projectCode: expense.projectCode,
@@ -294,6 +301,7 @@ export default function SubmitClaimView() {
       }
 
       const payload = {
+        claimId: tempClaimId,
         site,
         workId,
         customerName: customerName || expensesWithAttachments.find((expense) => expense.customerName)?.customerName || '',
@@ -533,7 +541,7 @@ export default function SubmitClaimView() {
                             {expense.attachmentIds.length > 0 && <p className="text-xs text-muted-foreground">{expense.attachmentIds.length} saved</p>}
                           </div>
                           <FileUpload
-                            ref={(node) => { rowFileUploadRefs.current[expense.id] = node; }}
+                            ref={(node) => { mobileRowFileUploadRefs.current[expense.id] = node; }}
                             claimId={`${tempClaimId}/expense-${idx + 1}`}
                             maxFiles={5}
                             maxSizeMB={5}
@@ -652,7 +660,7 @@ export default function SubmitClaimView() {
                       <td className="w-16 p-2 text-center">
                         <div className="flex justify-center">
                           <FileUpload
-                            ref={(node) => { rowFileUploadRefs.current[expense.id] = node; }}
+                            ref={(node) => { desktopRowFileUploadRefs.current[expense.id] = node; }}
                             claimId={`${tempClaimId}/expense-${idx + 1}`}
                             maxFiles={5}
                             maxSizeMB={5}

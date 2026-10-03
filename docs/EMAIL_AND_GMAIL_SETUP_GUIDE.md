@@ -32,6 +32,7 @@ Templates are defined in:
 ```powershell
 supabase secrets set GMAIL_USER=newsender@gmail.com
 supabase secrets set GMAIL_APP_PASSWORD=xxxxxxxxxxxxxxxx
+supabase secrets set APP_URL=https://claims.example.com
 ```
 
 If the project is already linked:
@@ -45,7 +46,7 @@ supabase functions deploy send-notification --project-ref YOUR_PROJECT_REF
 Open Settings and verify:
 
 - `support_email`
-- `website`
+- `website` (set to the deployed application URL)
 - `email_notifications_enabled = true`
 
 `support_email` controls the email footer shown to users.
@@ -79,7 +80,7 @@ Check:
 - `GMAIL_USER` secret exists
 - `GMAIL_APP_PASSWORD` secret exists
 - Gmail account has app passwords enabled
-- support email and website are set correctly
+- support email and application URL are set correctly
 - latest `send-notification` function is deployed
 
 ## 9. If Amount Symbol Is Broken

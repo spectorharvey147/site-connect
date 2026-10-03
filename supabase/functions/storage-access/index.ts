@@ -42,6 +42,10 @@ Deno.serve(async req => {
       }
       if (!prefix) return json(403, 'Choose a claim before listing files');
       let { data: claim } = await db.from('claims').select('user_email,manager_email,status').eq('claim_id',prefix).maybeSingle();
+      if (!claim && /^CLM-\d+$/i.test(prefix)) {
+        const { data: numberedClaim } = await db.from('claims').select('user_email,manager_email,status').eq('claim_number',prefix).maybeSingle();
+        claim = numberedClaim;
+      }
       // Upload folders are created before the claim gets its final ID.
       if (!claim && operation !== 'list') {
         const { data: linked } = await db.from('claims').select('user_email,manager_email,status').contains('drive_file_ids', [path]).limit(1).maybeSingle();

@@ -2,7 +2,7 @@ import { attachmentLink } from './private-files';
 import { supabase } from '@/integrations/supabase/client';
 import { hashPassword, isDemoEmail } from '@/lib/auth';
 import { validatePassword } from '@/lib/password-validation';
-import { resolveClaimAttachments } from '@/lib/claim-attachments';
+import { assignStoredFilesToExpenseRows, getAttachmentStorageRoots, isStorageFolderEntry, resolveClaimAttachments } from '@/lib/claim-attachments';
 import { resolveClaimWork } from '@/lib/accounting-api';
 import {
   expenseFingerprint,
@@ -330,22 +330,39 @@ async function sendEmailNotification(type: string, recipientEmail: string, data?
     if (!normalizedRecipientEmail) return;
     const settings = await getCompanySettings();
     if (settings?.email_notifications_enabled === false) return;
+    const notificationData = {
+      ...data,
+      companyName: settings?.company_name || 'Irrigation Products International Pvt Ltd',
+      companySubtitle: settings?.company_subtitle || 'Claims Management System',
+      supportEmail: settings?.support_email || 'projects@ipi-india.com',
+      logoUrl: settings?.logo_url || '/ipi-logo.jpg',
+      appUrl: getAppUrl(settings),
+      loginUrl: getAppUrl(settings),
+      currency: settings?.currency_symbol || data?.currency || '₹',
+    };
     const { error } = await supabase.functions.invoke('send-notification', {
       body: {
         type,
         recipientEmail: normalizedRecipientEmail,
-        data: {
-          ...data,
-          companyName: settings?.company_name || 'Irrigation Products International Pvt Ltd',
-          companySubtitle: settings?.company_subtitle || 'Claims Management System',
-          supportEmail: settings?.support_email || 'projects@ipi-india.com',
-          logoUrl: settings?.logo_url || '/ipi-logo.jpg',
-          appUrl: getAppUrl(settings),
-          loginUrl: getAppUrl(settings),
-          currency: settings?.currency_symbol || data?.currency || '₹',
-        },
+        data: notificationData,
       },
     });
+    if (error && type === 'claim_ready_accounts') {
+      const { error: fallbackError } = await supabase.functions.invoke('send-notification', {
+        body: {
+          type: 'claim_approved',
+          recipientEmail: normalizedRecipientEmail,
+          data: {
+            ...notificationData,
+            employee_name: 'Accounts Team',
+            total: data?.verified_amount ?? data?.submitted_amount ?? 0,
+            status: STATUS_ACCOUNTS_VERIFICATION,
+          },
+        },
+      });
+      if (fallbackError) console.warn('Accounts email notification failed:', fallbackError);
+      return;
+    }
     if (error) console.warn('Email notification failed:', error);
   } catch (e) {
     console.warn('Email notification error:', e);
@@ -361,9 +378,21 @@ function normalizeAppUrl(url?: string | null) {
   return (url || '').trim().replace(/\/+$/, '');
 }
 
+function isLocalAppUrl(url: string) {
+  try {
+    const host = new URL(url).hostname.toLowerCase();
+    return host === 'localhost' || host === '127.0.0.1' || host === '::1';
+  } catch {
+    return true;
+  }
+}
+
 function getAppUrl(settings?: { website?: string | null } | null) {
-  return normalizeAppUrl(settings?.website)
-    || (typeof window !== 'undefined' ? normalizeAppUrl(window.location.origin) : '')
+  const configuredUrl = normalizeAppUrl(import.meta.env.VITE_PUBLIC_APP_URL);
+  const settingsUrl = normalizeAppUrl(settings?.website);
+  const browserUrl = typeof window !== 'undefined' ? normalizeAppUrl(window.location.origin) : '';
+  return [configuredUrl, settingsUrl, browserUrl]
+    .find((url) => url && !isLocalAppUrl(url))
     || DEFAULT_APP_URL;
 }
 
@@ -379,14 +408,14 @@ function buildClaimActionLink(appUrl: string, claimId: string, action: 'approve'
   return `${baseUrl}/claim-action?${params.toString()}`;
 }
 
-function mapAttachmentEmailData(fileIds?: string[]) {
+function mapAttachmentEmailData(fileIds: string[] | undefined, appUrl: string) {
   return (fileIds || []).map((fileId) => {
     const parts = fileId.split('/');
     const name = parts[parts.length - 1] || fileId;
 
     return {
       name,
-      url: attachmentLink(fileId),
+      url: attachmentLink(fileId, 'claim-attachments', appUrl),
     };
   });
 }
@@ -762,6 +791,7 @@ export async function validateClaimSubmissionRules(userEmail: string, expenses: 
 }
 
 export async function submitClaim(claim: {
+  claimId?: string;
   site: string;
   workId?: string;
   customerName?: string;
@@ -774,7 +804,9 @@ export async function submitClaim(claim: {
     return { ok: true, message: `Demo claim submitted for ${userName}. Supabase was not changed.` };
   }
 
-  const claimID = 'C-' + Date.now();
+  const claimID = claim.claimId && /^C-\d+$/.test(claim.claimId)
+    ? claim.claimId
+    : 'C-' + Date.now();
   
   let totalWithBill = 0, totalWithoutBill = 0;
   const allFileIds = collectClaimFileIds(claim);
@@ -821,10 +853,10 @@ export async function submitClaim(claim: {
     .maybeSingle();
   const submittedAt = (submittedClaim as any)?.created_at || new Date().toISOString();
 
-  const attachmentsForEmail = mapAttachmentEmailData(allFileIds);
   const primaryProjectCode = claim.expenses.find((expense) => expense.projectCode)?.projectCode || '';
   const expenseItemsForEmail = claim.expenses.map(mapSubmittedExpenseForEmail);
   const appUrl = getAppUrl(companySettings);
+  const attachmentsForEmail = mapAttachmentEmailData(allFileIds, appUrl);
 
   // Notifications & audit
   await logAudit('claim_submitted', userEmail, 'claim', claimID, `Amount: ₹${grandTotal}`);
@@ -1060,7 +1092,7 @@ export async function approveClaimAsManager(claimId: string, approverEmail: stri
         verified_amount: verifiedAmt,
         currency: '₹',
         items: emailSummary.items,
-        attachments: mapAttachmentEmailData(claimData.drive_file_ids || []),
+        attachments: mapAttachmentEmailData(claimData.drive_file_ids || [], appUrl),
         approve_link: buildClaimActionLink(appUrl, claimId, 'approve', 'super-admin', email),
         reject_link: buildClaimActionLink(appUrl, claimId, 'reject', 'super-admin', email),
       })
@@ -1141,7 +1173,7 @@ export async function approveClaimAsAdmin(claimId: string, approverEmail: string
         verified_amount: verifiedAmount,
         currency: 'Rs.',
         items: emailSummary.items,
-        attachments: mapAttachmentEmailData(c.drive_file_ids || []),
+        attachments: mapAttachmentEmailData(c.drive_file_ids || [], appUrl),
         approve_link: buildClaimActionLink(appUrl, claimId, 'approve', 'super-admin', email),
         reject_link: buildClaimActionLink(appUrl, claimId, 'reject', 'super-admin', email),
       })
@@ -1166,7 +1198,7 @@ export async function approveClaimAsAdmin(claimId: string, approverEmail: string
       verified_amount: verifiedAmount,
       currency: 'Rs.',
       items: emailSummary.items,
-      attachments: mapAttachmentEmailData(c.drive_file_ids || []),
+      attachments: mapAttachmentEmailData(c.drive_file_ids || [], appUrl),
       approve_link: buildClaimActionLink(appUrl, claimId, 'approve', 'manager', managerEmail),
       reject_link: buildClaimActionLink(appUrl, claimId, 'reject', 'manager', managerEmail),
     });
@@ -1211,9 +1243,26 @@ export async function approveClaimAsSuperAdmin(claimId: string, approverEmail: s
     await logAudit('claim_final_approved', approverEmail, 'claim', claimId, description ? `Amount: Rs. ${approvedAmount} | ${description}` : `Amount: Rs. ${approvedAmount}`);
     await createNotification(c.user_email, 'Claim Sent for Accounts Verification', `Your claim ${claimId} has final approval and is now with accounts verification.`, 'success', claimId);
     const accountsUsers = await getAccountsUserEmails();
-    await Promise.all(accountsUsers.map((email) =>
-      createNotification(email, 'Claim Ready for Accounts', `${c.submitted_by} claim ${c.claim_number || claimId} is ready for payment processing.`, 'info', claimId)
-    ));
+    const appUrl = getAppUrl(await getCompanySettings());
+    await Promise.all(accountsUsers.map((email) => Promise.all([
+      createNotification(email, 'Claim Ready for Accounts', `${c.submitted_by} claim ${c.claim_number || claimId} is ready for payment processing.`, 'info', claimId),
+      sendEmailNotification('claim_ready_accounts', email, {
+        claim_no: c.claim_number || claimId,
+        employee_name: c.submitted_by,
+        employee_email: c.user_email,
+        project_site: c.site_name,
+        work_name: c.work_name || '',
+        approved_by: approverEmail,
+        submitted_amount: submittedAmount,
+        verified_amount: approvedAmount,
+        total_with_bill: emailSummary.totalWithBill,
+        total_without_bill: emailSummary.totalWithoutBill,
+        currency: 'Rs.',
+        items: emailSummary.items,
+        attachments: mapAttachmentEmailData(c.drive_file_ids || [], appUrl),
+        accounts_link: `${appUrl.replace(/\/+$/, '')}/accounts-processing`,
+      }),
+    ])));
   await sendEmailNotification('claim_approved', c.user_email, {
       claim_no: c.claim_number || claimId,
       total: approvedAmount,
@@ -1896,6 +1945,7 @@ export async function rejectClaim(claimId: string, reason: string, rejectorEmail
 }
 
 export async function resubmitRejectedClaim(claimId: string, claim: {
+  claimId?: string;
   site: string;
   workId?: string;
   customerName?: string;
@@ -1952,7 +2002,7 @@ export async function getClaimsHistory(userEmail: string, userRole: string, filt
   query = query.order('created_at', { ascending: false });
   const result = await query;
   return (result.data || []).map((c: any) => {
-    const expenses = (c.expense_items || []).map((e: any) => ({
+    const rawExpenses = (c.expense_items || []).map((e: any) => ({
       category: e.category,
       projectCode: e.project_code,
       customerName: e.customer_name || c.customer_name || '',
@@ -1963,6 +2013,8 @@ export async function getClaimsHistory(userEmail: string, userRole: string, filt
       amount: parseFloat(e.amount_with_bill || 0) + parseFloat(e.amount_without_bill || 0),
       attachmentIds: e.attachment_ids || [],
     }));
+
+    const expenses = assignStoredFilesToExpenseRows(rawExpenses, c.drive_file_ids || []);
 
     return {
       claimId: c.claim_number || c.claim_id,
@@ -1980,6 +2032,7 @@ export async function getClaimsHistory(userEmail: string, userRole: string, filt
       totalWithBill: parseFloat(c.total_with_bill || 0),
       totalWithoutBill: parseFloat(c.total_without_bill || 0),
       status: c.status,
+      managerEmail: c.manager_email || '',
       rejectionReason: c.rejection_reason,
       paymentVoucherCode: c.payment_voucher_code,
       paymentVoucherGeneratedAt: c.payment_voucher_generated_at,
@@ -2004,13 +2057,19 @@ async function listClaimStorageFileIds(claimId: string) {
     data.forEach((entry) => {
       if (!entry?.name) return;
       const entryPath = `${currentPath}/${entry.name}`;
-      const isFolder = entry.id == null && entry.metadata == null;
+      const isFolder = isStorageFolderEntry(entry);
       if (isFolder) queue.push(entryPath);
       else results.push(entryPath);
     });
   }
 
   return results;
+}
+
+async function listClaimStorageFileIdsForRoots(roots: Array<string | null | undefined>) {
+  const uniqueRoots = [...new Set(roots.map((root) => String(root || '').trim()).filter(Boolean))];
+  const fileLists = await Promise.all(uniqueRoots.map((root) => listClaimStorageFileIds(root)));
+  return [...new Set(fileLists.flat())];
 }
 
 export async function getClaimById(claimId: string) {
@@ -2023,7 +2082,7 @@ export async function getClaimById(claimId: string) {
   if (!c) return null;
   // load expense items
   const { data: items } = await supabase.from('expense_items').select('*').eq('claim_id', c.claim_id);
-  const expenses = (items || []).map((e: any) => ({
+  const rawExpenses = (items || []).map((e: any) => ({
     id: e.id,
     approvedAmount: e.approved_amount == null ? null : Number(e.approved_amount),
     category: e.category,
@@ -2039,12 +2098,19 @@ export async function getClaimById(claimId: string) {
   const approvalTrail = (await getClaimApprovalTrail([c.claim_id]))[c.claim_id] || {};
   let storageFileIds: string[] = [];
   try {
-    storageFileIds = await listClaimStorageFileIds(c.claim_id);
+    storageFileIds = await listClaimStorageFileIdsForRoots([
+      c.claim_id,
+      c.claim_number,
+      claimId,
+      ...getAttachmentStorageRoots(c.drive_file_ids || []),
+    ]);
   } catch (error) {
     console.warn('Unable to list claim storage attachments:', error);
   }
+  const storedFileIds = [...(c.drive_file_ids || []), ...storageFileIds];
+  const expenses = assignStoredFilesToExpenseRows(rawExpenses, storedFileIds);
   const attachments = resolveClaimAttachments(
-    [...(c.drive_file_ids || []), ...storageFileIds],
+    storedFileIds,
     expenses,
   );
 
@@ -2314,6 +2380,168 @@ export async function getTransactions(userEmail: string, userRole: string, filte
 }
 
 // ============= USER MANAGEMENT =============
+export interface UserAllocationRecord {
+  email: string;
+  name: string;
+  role: string;
+  managerEmail: string;
+  active: boolean;
+}
+
+export interface AdminReportClaim {
+  claimId: string;
+  date: string;
+  submittedBy: string;
+  userEmail: string;
+  site: string;
+  status: string;
+  managerEmail: string;
+  amount: number;
+}
+
+export interface AdminReportUser {
+  email: string;
+  name: string;
+  role: string;
+  managerEmail: string;
+  active: boolean;
+}
+
+export async function getUserAllocationData(): Promise<UserAllocationRecord[]> {
+  if (isDemoMode()) {
+    return demoUsersDirectory.map((user) => ({
+      email: user.email,
+      name: user.name,
+      role: user.role,
+      managerEmail: user.manager_email || '',
+      active: user.active,
+    }));
+  }
+
+  const { data, error } = await supabase
+    .from('users')
+    .select('email,name,role,manager_email,active')
+    .order('name');
+  if (error) throw error;
+
+  return (data || []).map((entry: any) => ({
+    email: entry.email,
+    name: entry.name,
+    role: entry.role,
+    managerEmail: entry.manager_email || '',
+    active: entry.active !== false,
+  }));
+}
+
+export async function assignUsersToManager(userEmails: string[], managerEmail: string | null, performedBy: string) {
+  const emails = [...new Set(userEmails.map((email) => email.trim().toLowerCase()).filter(Boolean))];
+  if (!emails.length) throw new Error('Select at least one user.');
+  if (isDemoMode()) return emails.length;
+
+  const normalizedManager = String(managerEmail || '').trim().toLowerCase() || null;
+  const token = localStorage.getItem('claimsToken') || '';
+  const { data, error } = await supabase.rpc('assign_users_to_manager', {
+    p_token: token,
+    p_user_emails: emails,
+    p_manager_email: normalizedManager,
+  });
+
+  if (!error) return Number(data ?? emails.length);
+
+  const errorText = String(error.message || error.details || '');
+  const isMissingRpc = errorText.includes('assign_users_to_manager')
+    && (errorText.includes('schema cache') || errorText.includes('Could not find the function') || error.code === 'PGRST202');
+  if (!isMissingRpc) throw error;
+
+  if (normalizedManager) {
+    const { data: manager, error: managerError } = await supabase
+      .from('users')
+      .select('email')
+      .eq('email', normalizedManager)
+      .eq('active', true)
+      .in('role', ['Manager', 'Super Admin'])
+      .maybeSingle();
+    if (managerError) throw managerError;
+    if (!manager) throw new Error('Choose an active manager.');
+  }
+
+  const { error: updateError } = await supabase
+    .from('users')
+    .update({ manager_email: normalizedManager } as any)
+    .in('email', emails)
+    .eq('role', 'User')
+    .eq('active', true);
+  if (updateError) throw updateError;
+
+  await logAudit(
+    normalizedManager ? 'users_assigned_to_manager' : 'users_unassigned_from_manager',
+    performedBy,
+    'user_allocation',
+    normalizedManager || 'unassigned',
+    `${emails.length} user(s): ${emails.join(', ')}`,
+  );
+  return emails.length;
+}
+
+export async function getAdminReportData(): Promise<{ claims: AdminReportClaim[]; users: AdminReportUser[] }> {
+  if (isDemoMode()) {
+    return {
+      claims: demoClaims.map((claim) => ({
+        claimId: claim.claimId,
+        date: claim.date,
+        submittedBy: claim.submittedBy,
+        userEmail: claim.userEmail,
+        site: claim.site,
+        status: claim.status,
+        managerEmail: claim.managerEmail || '',
+        amount: claim.amount,
+      })),
+      users: demoUsersDirectory.map((entry) => ({
+        email: entry.email,
+        name: entry.name,
+        role: entry.role,
+        managerEmail: entry.manager_email || '',
+        active: entry.active,
+      })),
+    };
+  }
+
+  const [claimsResult, usersResult] = await Promise.all([
+    supabase
+      .from('claims')
+      .select('claim_id,claim_number,user_email,submitted_by,site_name,status,manager_email,total_with_bill,total_without_bill,verified_amount,created_at')
+      .order('created_at', { ascending: false }),
+    supabase
+      .from('users')
+      .select('email,name,role,manager_email,active')
+      .order('name'),
+  ]);
+  if (claimsResult.error) throw claimsResult.error;
+  if (usersResult.error) throw usersResult.error;
+
+  return {
+    claims: (claimsResult.data || []).map((claim: any) => ({
+      claimId: claim.claim_number || claim.claim_id,
+      date: claim.created_at,
+      submittedBy: claim.submitted_by,
+      userEmail: claim.user_email,
+      site: claim.site_name,
+      status: claim.status || 'Unknown',
+      managerEmail: claim.manager_email || '',
+      amount: claim.verified_amount == null
+        ? Number(claim.total_with_bill || 0) + Number(claim.total_without_bill || 0)
+        : Number(claim.verified_amount || 0),
+    })),
+    users: (usersResult.data || []).map((entry: any) => ({
+      email: entry.email,
+      name: entry.name,
+      role: entry.role,
+      managerEmail: entry.manager_email || '',
+      active: entry.active !== false,
+    })),
+  };
+}
+
 export async function getAllUsers() {
   if (isDemoMode()) {
     return demoUsersDirectory.map((user) => ({
@@ -2627,9 +2855,18 @@ export async function getManagerAssignedUsersWithBalances(managerEmail: string) 
       }));
   }
 
-  const { data: managedUsers } = await supabase.from('users').select('id,email,name,role,manager_email,advance_amount,active,created_at,profile_picture_url,signature_url,employee_id,mobile_number,date_of_joining,sap_gl_code,sap_location_code').eq('manager_email', managerEmail).order('name');
+  const { data: managedUsers } = await supabase.from('users')
+    .select('id,email,name,role,manager_email,advance_amount,active,created_at,profile_picture_url,signature_url,employee_id,mobile_number,date_of_joining,sap_gl_code,sap_location_code')
+    .eq('manager_email', managerEmail)
+    .eq('active', true)
+    .order('name');
   
-  if (!managedUsers) return [];
+  if (!managedUsers?.length) return [];
+  const managedEmails = managedUsers.map((entry: any) => entry.email);
+  const { data: managedClaims } = await supabase
+    .from('claims')
+    .select('user_email,status')
+    .in('user_email', managedEmails);
   
   const usersWithBalance = [];
   for (const u of (managedUsers || []) as any[]) {
@@ -2646,6 +2883,11 @@ export async function getManagerAssignedUsersWithBalances(managerEmail: string) 
       email: u.email,
       balance,
       lastTransactionDate: (lastTx as any)?.created_at || null,
+      employeeId: u.employee_id || '',
+      mobileNumber: u.mobile_number || '',
+      dateOfJoining: u.date_of_joining || '',
+      claimCount: (managedClaims || []).filter((claim: any) => claim.user_email === u.email).length,
+      pendingClaimCount: (managedClaims || []).filter((claim: any) => claim.user_email === u.email && !isSettledStatus(claim.status) && !normalizeStatus(claim.status).includes('reject')).length,
     });
   }
   return usersWithBalance;

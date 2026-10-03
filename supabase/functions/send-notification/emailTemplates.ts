@@ -477,6 +477,51 @@ export function claimApprovedTemplate(data: {
   };
 }
 
+export function claimReadyAccountsTemplate(data: {
+  claim_no: string;
+  employee_name?: string;
+  employee_email?: string;
+  project_site?: string;
+  work_name?: string;
+  approved_by: string;
+  submitted_amount?: number;
+  verified_amount?: number;
+  total_with_bill?: number;
+  total_without_bill?: number;
+  items?: ClaimEmailItem[];
+  attachments?: Attachment[];
+  accounts_link?: string;
+} & BrandData): { subject: string; html: string } {
+  const info = brand(data);
+  const items = Array.isArray(data.items) ? data.items : [];
+  const body = `
+    <p style="margin-top: 0;">Dear Accounts Team,</p>
+    <p>A claim has received final approval and is ready for accounts verification and payment processing.</p>
+    ${infoGrid([
+      { label: 'Claim ID', value: data.claim_no },
+      { label: 'Employee', value: data.employee_name || data.employee_email || '' },
+      { label: 'Project Site', value: data.project_site || '' },
+      { label: 'Work', value: data.work_name || '' },
+      { label: 'Final Approved By', value: data.approved_by },
+      { label: 'Verified Payable', value: fmtAmount(data.verified_amount, info.currency), html: true },
+    ])}
+    ${renderClaimItems(items, info.currency)}
+    ${infoGrid([
+      { label: 'Total With Bill', value: fmtAmount(data.total_with_bill, info.currency), html: true },
+      { label: 'Total Without Bill', value: fmtAmount(data.total_without_bill, info.currency), html: true },
+      { label: 'Submitted Total', value: fmtAmount(data.submitted_amount, info.currency), html: true },
+    ])}
+    ${renderAttachments(data.attachments)}
+    ${renderButtons([
+      { href: safeLink(data.accounts_link), label: 'Open Accounts Processing', tone: 'success' },
+    ])}
+  `;
+  return {
+    subject: `Accounts Action Required - ${data.claim_no}`,
+    html: wrapEmail('Claim Ready for Accounts', body, info),
+  };
+}
+
 export function claimAccountsVerifiedTemplate(data: {
   claim_no: string;
   total: number;
@@ -640,6 +685,7 @@ export type EmailTemplateType =
   | 'claim_submitted_user'
   | 'claim_submitted_manager'
   | 'claim_approved'
+  | 'claim_ready_accounts'
   | 'claim_accounts_verified'
   | 'claim_paid'
   | 'claim_rejected'
@@ -657,6 +703,8 @@ export function getTemplate(type: EmailTemplateType, data: any): { subject: stri
       return claimSubmittedManagerTemplate(data);
     case 'claim_approved':
       return claimApprovedTemplate(data);
+    case 'claim_ready_accounts':
+      return claimReadyAccountsTemplate(data);
     case 'claim_accounts_verified':
       return claimAccountsVerifiedTemplate(data);
     case 'claim_paid':

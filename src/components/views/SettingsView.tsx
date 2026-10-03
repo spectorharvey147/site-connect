@@ -536,7 +536,7 @@ export default function SettingsView({ section = 'company', onMastersChanged }: 
           <div><Label>Support Email</Label><Input type="email" value={settings.support_email || ''} onChange={e => setSettings({ ...settings, support_email: e.target.value })} /></div>
           <div><Label>Currency Symbol</Label><Input value={settings.currency_symbol || ''} onChange={e => setSettings({ ...settings, currency_symbol: e.target.value })} /></div>
           <div><Label>Phone</Label><Input value={settings.phone || ''} onChange={e => setSettings({ ...settings, phone: e.target.value })} /></div>
-          <div><Label>Website</Label><Input value={settings.website || ''} onChange={e => setSettings({ ...settings, website: e.target.value })} /></div>
+          <div><Label>Application URL</Label><Input type="url" placeholder="https://claims.example.com" value={settings.website || ''} onChange={e => setSettings({ ...settings, website: e.target.value })} /></div>
           <div className="md:col-span-2"><Label>Address</Label><Textarea value={settings.address || ''} onChange={e => setSettings({ ...settings, address: e.target.value })} rows={2} /></div>
         </div>
       </div>

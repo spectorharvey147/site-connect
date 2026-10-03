@@ -14,6 +14,7 @@ This rewrite is required so `/claim-action` works as an SPA route.
 
 - `VITE_SUPABASE_URL`
 - `VITE_SUPABASE_ANON_KEY`
+- `VITE_PUBLIC_APP_URL` (the deployed application origin, never `localhost`)
 
 ## 3. Web Build
 

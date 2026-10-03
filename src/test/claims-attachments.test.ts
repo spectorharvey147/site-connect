@@ -1,12 +1,53 @@
 import { describe, expect, it } from 'vitest';
 import {
+  assignStoredFilesToExpenseRows,
   collectVoucherFileIds,
   detectEmbeddableAttachmentFormat,
+  getAttachmentStorageRoots,
+  isStorageFolderEntry,
   resolveClaimAttachments,
 } from '@/lib/claim-attachments';
 import { findDuplicateExpensePair, findFutureExpenseIndex } from '@/lib/claim-validation';
 
 describe('resolveClaimAttachments', () => {
+  it('derives a legacy temporary storage root from a saved general attachment', () => {
+    expect(getAttachmentStorageRoots([
+      'C-1791027724116/1791028722749-0.jpg',
+      'C-1791027724116/expense-1/bill.pdf',
+    ])).toEqual(['C-1791027724116']);
+  });
+
+  it('treats a storage entry without an object id as a folder even when metadata is present', () => {
+    expect(isStorageFolderEntry({ id: null })).toBe(true);
+    expect(isStorageFolderEntry({ id: null, metadata: { size: 0 } })).toBe(true);
+    expect(isStorageFolderEntry({ id: 'object-id' })).toBe(false);
+  });
+
+  it('recovers row attachments from expense1 and expense-1 storage folders', () => {
+    expect(assignStoredFilesToExpenseRows(
+      [{ attachmentIds: [] }, { attachmentIds: ['claim/expense-2/saved.jpg'] }],
+      [
+        'claim/expense1/bill.pdf',
+        'claim/expense-2/saved.jpg',
+        'claim/expense_2/receipt.jpg',
+        'claim/general.jpg',
+      ],
+    )).toEqual([
+      { attachmentIds: ['claim/expense1/bill.pdf'] },
+      { attachmentIds: ['claim/expense-2/saved.jpg', 'claim/expense_2/receipt.jpg'] },
+    ]);
+  });
+
+  it('recovers files stored below a display claim number folder', () => {
+    expect(assignStoredFilesToExpenseRows(
+      [{ attachmentIds: [] }, { attachmentIds: [] }],
+      ['CLM-0528/expense1/bill.pdf', 'CLM-0528/expense2/receipt.jpg'],
+    )).toEqual([
+      { attachmentIds: ['CLM-0528/expense1/bill.pdf'] },
+      { attachmentIds: ['CLM-0528/expense2/receipt.jpg'] },
+    ]);
+  });
+
   it('combines legacy claim files and row files without duplicates', () => {
     expect(resolveClaimAttachments(
       ['claim/main.jpg', 'claim/expense-1/bill.pdf'],
@@ -79,6 +120,13 @@ describe('payment voucher attachment handling', () => {
       'claim/expense-1/receipt.pdf',
       'claim/expense-2/receipt.jpg',
     ]);
+  });
+
+  it('includes row-level files even when the claim-level list is incomplete', () => {
+    expect(collectVoucherFileIds([{
+      fileIds: ['claim/main.jpg'],
+      expenses: [{ attachmentIds: ['claim/expense1/bill.pdf'] }],
+    }])).toEqual(['claim/main.jpg', 'claim/expense1/bill.pdf']);
   });
 
   it('detects embeddable formats from file bytes instead of misleading names', () => {

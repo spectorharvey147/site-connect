@@ -64,6 +64,11 @@ interface ManagerAssignedUser {
   email: string;
   balance: number;
   lastTransactionDate: string | null;
+  employeeId?: string;
+  mobileNumber?: string;
+  dateOfJoining?: string;
+  claimCount?: number;
+  pendingClaimCount?: number;
 }
 
 interface StatCardProps {
@@ -142,7 +147,9 @@ function ManagerAssignedUsersTable({ managerUsers }: { managerUsers: ManagerAssi
         <table className="w-full text-sm">
           <thead className="bg-muted/50 border-b border-border">
             <tr>
-              <th className="h-10 px-4 text-left font-medium text-muted-foreground">Employee Name</th>
+              <th className="h-10 px-4 text-left font-medium text-muted-foreground">Employee</th>
+              <th className="h-10 px-4 text-right font-medium text-muted-foreground">Claims</th>
+              <th className="h-10 px-4 text-right font-medium text-muted-foreground">Pending</th>
               <th className="h-10 px-4 text-right font-medium text-muted-foreground">Current Balance</th>
               <th className="h-10 px-4 text-right font-medium text-muted-foreground">Last Transaction</th>
             </tr>
@@ -150,7 +157,9 @@ function ManagerAssignedUsersTable({ managerUsers }: { managerUsers: ManagerAssi
           <tbody className="divide-y divide-border">
             {managerUsers.map((employee) => (
               <tr key={employee.email} className="hover:bg-muted/30 transition-colors">
-                <td className="p-4 font-medium text-foreground">{employee.name}</td>
+                <td className="p-4"><p className="font-medium text-foreground">{employee.name}</p><p className="text-xs text-muted-foreground">{employee.email}</p>{employee.employeeId ? <p className="text-xs text-muted-foreground">ID: {employee.employeeId}</p> : null}</td>
+                <td className="p-4 text-right font-medium">{employee.claimCount ?? 0}</td>
+                <td className="p-4 text-right font-semibold text-warning">{employee.pendingClaimCount ?? 0}</td>
                 <td className="p-4 text-right font-bold text-primary">{formatCurrency(employee.balance)}</td>
                 <td className="p-4 text-right text-muted-foreground">
                   {employee.lastTransactionDate ? new Date(employee.lastTransactionDate).toLocaleDateString('en-IN') : 'Never'}

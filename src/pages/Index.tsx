@@ -22,6 +22,8 @@ const viewRoles: Record<string, string[]> = {
   'accounts-sap-entry': ['Accounts', 'Super Admin'],
   'accounting-setup': ['Accounts', 'Admin', 'Super Admin'],
   'work-allocation': ['Admin', 'Super Admin'],
+  'user-allocation': ['Admin', 'Super Admin'],
+  reports: ['Admin', 'Super Admin'],
   voucher: ['Accounts', 'Admin', 'Super Admin'],
   users: ['Admin', 'Super Admin'],
   settings: ['Admin', 'Super Admin'],

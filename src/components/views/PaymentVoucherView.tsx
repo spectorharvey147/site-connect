@@ -1,6 +1,6 @@
 import { Fragment, useEffect, useMemo, useState } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
-import { ensurePaymentVoucherCode, getClaimsHistory, getCompanySettings, getAllUsers, getClaimApprovalTrail } from '@/lib/claims-api';
+import { ensurePaymentVoucherCode, getClaimsHistory, getCompanySettings, getAllUsers, getClaimApprovalTrail, getClaimById } from '@/lib/claims-api';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
@@ -309,7 +309,18 @@ export default function PaymentVoucherView() {
 
   const openVoucher = async (claimsForVoucher: any[]) => {
     if (claimsForVoucher.length === 0) return;
-    let hydratedClaimsForVoucher = claimsForVoucher;
+    let hydratedClaimsForVoucher: any[];
+    try {
+      hydratedClaimsForVoucher = await Promise.all(claimsForVoucher.map(async (claim) => {
+        const details = await getClaimById(claim.claimIdInternal || claim.claimId);
+        if (!details) throw new Error(`Claim ${claim.claimId} could not be loaded`);
+        return { ...claim, ...details };
+      }));
+    } catch (error) {
+      console.error('Could not load complete voucher claims', error);
+      toast.error('Could not load the complete claim attachments. Please refresh and try again.');
+      return;
+    }
     const claimsNeedingVoucherCodes = claimsForVoucher.filter(
   (claim) => !claim.paymentVoucherCode && claim.claimIdInternal
 );
@@ -469,24 +480,15 @@ export default function PaymentVoucherView() {
   };
 
   const fetchAttachment = async (fileId: string) => {
-    const { data, error } = await supabase.storage.from('claim-attachments').createSignedUrl(fileId,3600);
+    const { data, error } = await supabase.storage.from('claim-attachments').download(fileId);
     if (error) throw error;
-    const controller = new AbortController();
-    const timeout = window.setTimeout(() => controller.abort(), 60_000);
-    try {
-      const response = await fetch(data.signedUrl, { signal: controller.signal });
-      if (!response.ok) throw new Error(`Unable to fetch attachment ${fileId}`);
-      const contentType = response.headers.get('content-type') || '';
-      const bytes = await response.arrayBuffer();
-      if (bytes.byteLength === 0) throw new Error(`Attachment ${fileId} is empty`);
-      return {
-        bytes,
-        contentType,
-        name: fileId.split('/').pop() || fileId,
-      };
-    } finally {
-      window.clearTimeout(timeout);
-    }
+    const bytes = await data.arrayBuffer();
+    if (bytes.byteLength === 0) throw new Error(`Attachment ${fileId} is empty`);
+    return {
+      bytes,
+      contentType: data.type || '',
+      name: fileId.split('/').pop() || fileId,
+    };
   };
 
   const downloadCombinedVoucherPDF = async () => {
@@ -503,25 +505,7 @@ export default function PaymentVoucherView() {
       const pageSize: [number, number] = [595.28, 841.89];
       const margin = 36;
       let embeddedCount = 0;
-      let skippedCount = 0;
-
-      const printableText = (value: string) => value.replace(/[^\x20-\x7e]/g, '?').slice(0, 110);
-
-      const addTextPage = (title: string, lines: string[]) => {
-        const page = mergedPdf.addPage(pageSize);
-        const { width, height } = page.getSize();
-        page.drawText(printableText(title), { x: margin, y: height - margin, size: 16, font, color: rgb(0.02, 0.23, 0.35) });
-        lines.slice(0, 28).forEach((line, index) => {
-          page.drawText(printableText(line), { x: margin, y: height - margin - 32 - (index * 18), size: 10, font, color: rgb(0.17, 0.24, 0.31) });
-        });
-        page.drawText('Open the original attachment from ClaimFlow if this page could not be embedded.', {
-          x: margin,
-          y: margin,
-          size: 9,
-          font,
-          color: rgb(0.39, 0.45, 0.55),
-        });
-      };
+      const failures: string[] = [];
 
       for (const fileId of voucherFileIds) {
         try {
@@ -559,33 +543,25 @@ export default function PaymentVoucherView() {
             continue;
           }
 
-          skippedCount += 1;
-          addTextPage(`Attachment: ${attachment.name}`, [
-            `This file is not a supported PDF, PNG, or JPEG (${attachment.contentType || 'unknown type'}).`,
-            'The original stored attachment has not been modified.',
-          ]);
+          throw new Error(`Unsupported file type ${attachment.contentType || 'unknown'}`);
         } catch (error) {
           console.warn('Could not append attachment to combined voucher PDF:', error);
-          skippedCount += 1;
           const message = String(error instanceof Error ? error.message : error);
-          const reason = message.toLowerCase().includes('encrypted')
-            ? 'This source PDF is encrypted and cannot be merged. Open the original attachment separately.'
-            : 'This attachment could not be safely embedded. Open the original attachment separately.';
-          addTextPage(`Attachment: ${fileId}`, [reason, 'The original stored attachment has not been modified.']);
+          failures.push(`${fileId.split('/').pop() || fileId}: ${message}`);
         }
+      }
+
+      if (failures.length > 0) {
+        throw new Error(`${failures.length} attachment(s) could not be embedded: ${failures.slice(0, 3).join('; ')}`);
       }
 
       const bytes = await mergedPdf.save();
       await PDFDocument.load(bytes);
       downloadBlob(new Blob([new Uint8Array(bytes)], { type: 'application/pdf' }), `voucher-${voucher.fileName}-with-attachments.pdf`);
-      if (skippedCount > 0) {
-        toast.warning(`Combined voucher downloaded: ${embeddedCount} attachments included, ${skippedCount} listed as separate originals.`);
-      } else {
-        toast.success(`Combined voucher PDF downloaded with ${embeddedCount} attachments`);
-      }
+      toast.success(`Combined voucher PDF downloaded with ${embeddedCount} attachments`);
     } catch (error) {
       console.error(error);
-      toast.error('Could not generate combined PDF. Please try the regular PDF or print option.');
+      toast.error(error instanceof Error ? error.message : 'Could not generate combined PDF. Please try again.');
     } finally {
       setExportingCombinedPdf(false);
     }
