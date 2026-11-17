@@ -20,6 +20,6 @@ Voucher rendering waits for logo and signature images, inlines remote image data
 
 ## Migration and verification
 
-Apply the new migration `20261117103000_claim_duplicate_and_self_approval.sql` after the existing schema migrations. This workspace has no linked Supabase project, so the migration has not been applied to a live database. Review generated RPC behavior in a staging database before deployment.
+Apply the new migration `20261117055612_claim_duplicate_self_approval.sql` after the existing schema migrations. The duplicate-check and manager self-approval migration has been applied to the configured Supabase project. It adds database enforcement without updating historical expense rows.
 
 The app type check passed. The full suite passed with 106 tests across 12 files. The Vite production build completed. Browser-based end-to-end PDF export and live database migration validation remain unavailable in this workspace.

@@ -32,7 +32,7 @@ Vendor unavailable, taxable value Rs. 10,000 and IGST Rs. 1,800 uses the existin
 
 ## Migration and deployment
 
-The additive migrations are `supabase/migrations/20261117041231_vendor_gst_approval_identity.sql` and `supabase/migrations/20261117103000_claim_duplicate_and_self_approval.sql`. The first creates the two accounting master tables and approval event table, adds tax fields to `expense_items`, and installs session-checked master and accounting verification RPCs. The second installs manager self-approval routing and database duplicate-expense enforcement. They do not seed/invent vendors or GST account numbers and do not modify historical SAP exports.
+The additive migrations are `supabase/migrations/20261117054647_vendor_gst_approval_identity.sql` and `supabase/migrations/20261117055612_claim_duplicate_self_approval.sql`. The first creates the two accounting master tables and approval event table, adds tax fields to `expense_items`, and installs session-checked master and accounting verification RPCs. The second installs manager self-approval routing and database duplicate-expense enforcement. They do not seed/invent vendors or GST account numbers and do not modify historical SAP exports.
 
 From a machine with the Supabase CLI, Docker and the intended local Supabase project available:
 
