@@ -34,6 +34,23 @@ function money(value: number) {
   return `Rs. ${Number(value || 0).toFixed(2)}`;
 }
 
+function voucherImageSource(source: string | undefined) {
+  const env = (import.meta as any).env || {};
+  if (!source || !env.VITE_SUPABASE_URL || !env.VITE_SUPABASE_PROXY_URL) return source || '';
+
+  try {
+    const imageUrl = new URL(source, window.location.origin);
+    const supabaseOrigin = new URL(env.VITE_SUPABASE_URL).origin;
+    if (imageUrl.origin !== supabaseOrigin || !imageUrl.pathname.startsWith('/storage/v1/')) return source;
+
+    const proxyUrl = new URL(env.VITE_SUPABASE_PROXY_URL, window.location.origin);
+    const proxyPath = proxyUrl.pathname.replace(/\/$/, '');
+    return `${proxyUrl.origin}${proxyPath}${imageUrl.pathname}${imageUrl.search}${imageUrl.hash}`;
+  } catch {
+    return source;
+  }
+}
+
 async function normalizeImageForPdf(bytes: ArrayBuffer, format: 'png' | 'jpeg', fileName: string) {
   const blob = new Blob([bytes], { type: format === 'png' ? 'image/png' : 'image/jpeg' });
   const url = URL.createObjectURL(blob);
@@ -230,7 +247,7 @@ function SignatureBlock({ title, approval }: { title: string; approval: any }) {
       <div className="voucher-signature-image-wrap flex h-[46px] items-end justify-center mb-1">
         {approval?.signatureUrl && (
           <img
-            src={approval.signatureUrl}
+            src={voucherImageSource(approval.signatureUrl)}
             alt={`${title} signature`}
             className="voucher-signature-image max-h-[42px] max-w-[150px] object-contain"
             style={{ maxWidth: '150px', maxHeight: '42px', width: 'auto', height: 'auto', objectFit: 'contain' }}
@@ -254,7 +271,7 @@ function PayeeSignatureBlock({ entry }: { entry: any }) {
       <div className="voucher-signature-image-wrap flex h-[46px] items-end justify-center mb-1">
         {entry?.signatureUrl && (
           <img
-            src={entry.signatureUrl}
+            src={voucherImageSource(entry.signatureUrl)}
             alt={`${entry.name} signature`}
             className="voucher-signature-image max-h-[42px] max-w-[150px] object-contain"
             style={{ maxWidth: '150px', maxHeight: '42px', width: 'auto', height: 'auto', objectFit: 'contain' }}
