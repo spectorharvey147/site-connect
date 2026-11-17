@@ -1,5 +1,7 @@
 export interface ClaimExpenseRuleInput {
   claimDate: string;
+  category?: string;
+  projectCode?: string;
   amountWithBill: number;
   amountWithoutBill: number;
 }
@@ -20,7 +22,9 @@ export function expenseAmountInCents(expense: Pick<ClaimExpenseRuleInput, 'amoun
 }
 
 export function expenseFingerprint(expense: ClaimExpenseRuleInput) {
-  return `${normalizeExpenseDate(expense.claimDate)}|${expenseAmountInCents(expense)}`;
+  const category = String(expense.category || '').trim().toLocaleLowerCase('en-IN');
+  const projectCode = String(expense.projectCode || '').trim().toLocaleLowerCase('en-IN');
+  return `${normalizeExpenseDate(expense.claimDate)}|${category}|${projectCode}|${expenseAmountInCents(expense)}`;
 }
 
 export function findFutureExpenseIndex(expenses: ClaimExpenseRuleInput[], today = localIsoDate()) {

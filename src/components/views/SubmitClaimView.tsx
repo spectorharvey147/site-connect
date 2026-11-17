@@ -13,6 +13,8 @@ import RupeeIcon from '@/components/icons/RupeeIcon';
 import AttachmentPreview from '@/components/views/AttachmentPreview';
 import { localIsoDate } from '@/lib/claim-validation';
 import { getProjectWorks, resolveClaimWork, type ProjectWork } from '@/lib/accounting-api';
+import { supabase } from '@/integrations/supabase/client';
+import { sha256ContentFingerprint } from '@/lib/claim-attachments';
 
 interface ExpenseRow {
   id: string;
@@ -253,15 +255,14 @@ export default function SubmitClaimView() {
       toast.error('Every row needs a category, a matching cost code, a date, and an amount');
       return;
     }
-    const hasClaimLevelAttachments = ((fileUploadRef.current?.getFileCount() || 0) + existingFileIds.length) > 0;
     const firstMissingBillRow = expenses.findIndex((expense) => {
       const rowCount = (expense.attachmentIds?.length || 0)
         + (mobileRowFileUploadRefs.current[expense.id]?.getFileCount() || 0)
         + (desktopRowFileUploadRefs.current[expense.id]?.getFileCount() || 0);
-      return expense.amountWithBill > 0 && rowCount === 0 && !hasClaimLevelAttachments;
+      return expense.amountWithBill > 0 && rowCount === 0;
     });
     if (firstMissingBillRow >= 0) {
-      toast.error(`Attach a bill to expense #${firstMissingBillRow + 1} or use the bottom attachment area`);
+      toast.error(`Attach a bill directly to expense #${firstMissingBillRow + 1}. Additional claim attachments do not replace row bills.`);
       return;
     }
 
@@ -270,17 +271,40 @@ export default function SubmitClaimView() {
       await resolveClaimWork(site, workId);
       await validateClaimSubmissionRules(user!.email, expenses);
 
-      let uploadedPaths: string[] = [];
-      if (fileUploadRef.current) {
-        uploadedPaths = await fileUploadRef.current.uploadAll();
+      const canonicalFiles = new Map<string, string>();
+      const alreadyAttachedPaths = uniqueFileIds([
+        ...expenses.flatMap((expense) => expense.attachmentIds || []),
+        ...existingFileIds,
+      ]);
+      for (const path of alreadyAttachedPaths) {
+        try {
+          const { data, error } = await supabase.storage.from('claim-attachments').download(path);
+          if (!error && data?.size) {
+            const fingerprint = await sha256ContentFingerprint(data);
+            if (!canonicalFiles.has(fingerprint)) canonicalFiles.set(fingerprint, path);
+          }
+        } catch {
+          // Existing paths remain valid references even when their contents cannot be hashed.
+        }
       }
-      const expensesWithAttachments = await Promise.all(expenses.map(async (expense) => {
+      const expensesWithAttachments = [] as Array<{
+        category: string; projectCode: string; customerName: string; claimDate: string; description: string;
+        amountWithBill: number; amountWithoutBill: number; attachmentIds: string[];
+      }>;
+      for (const expense of expenses) {
         const uploadHandles = [
           mobileRowFileUploadRefs.current[expense.id],
           desktopRowFileUploadRefs.current[expense.id],
         ].filter((handle): handle is FileUploadHandle => Boolean(handle));
-        const uploadedRowPaths = (await Promise.all(uploadHandles.map((handle) => handle.uploadAll()))).flat();
-        return {
+        const uploadedRowPaths: string[] = [];
+        for (const handle of uploadHandles) uploadedRowPaths.push(...await handle.uploadAll(canonicalFiles));
+        const expectedUploads = uploadHandles.reduce((count, handle) => count + handle.getFileCount(), 0);
+        if (uploadedRowPaths.length < expectedUploads) throw new Error(`One or more bills for expense #${expenses.indexOf(expense) + 1} did not upload. Please retry.`);
+        const rowAttachmentIds = uniqueFileIds([...(expense.attachmentIds || []), ...uploadedRowPaths]);
+        if (expense.amountWithBill > 0 && rowAttachmentIds.length === 0) {
+          throw new Error(`Attach at least one bill to expense #${expenses.indexOf(expense) + 1}.`);
+        }
+        expensesWithAttachments.push({
           category: expense.category,
           projectCode: expense.projectCode,
           customerName: resolveExpenseCustomerName(expense.projectCode),
@@ -288,13 +312,19 @@ export default function SubmitClaimView() {
           description: expense.description,
           amountWithBill: expense.amountWithBill || 0,
           amountWithoutBill: expense.amountWithoutBill || 0,
-          attachmentIds: uniqueFileIds([...(expense.attachmentIds || []), ...uploadedRowPaths]),
-        };
-      }));
+          attachmentIds: rowAttachmentIds,
+        });
+      }
+      const uploadedPaths = fileUploadRef.current ? await fileUploadRef.current.uploadAll(canonicalFiles) : [];
+      if (fileUploadRef.current && uploadedPaths.length < fileUploadRef.current.getFileCount()) {
+        throw new Error('One or more additional claim attachments did not upload. Please retry.');
+      }
+      const rowAttachmentSet = new Set(expensesWithAttachments.flatMap((expense) => expense.attachmentIds));
+      const uniqueGeneralPaths = uploadedPaths.filter((path) => !rowAttachmentSet.has(path));
       const allFileIds = uniqueFileIds([
         ...existingFileIds,
-        ...uploadedPaths,
         ...expensesWithAttachments.flatMap((expense) => expense.attachmentIds),
+        ...uniqueGeneralPaths,
       ]);
       if (expenses.some((expense) => expense.amountWithBill > 0) && allFileIds.length === 0) {
         throw new Error('Please upload bill attachments before submitting this claim.');
@@ -550,7 +580,7 @@ export default function SubmitClaimView() {
                         </div>
                         {expense.attachmentIds.length > 0 && (
                           <div className="mt-3 rounded-md border border-border bg-background p-2">
-                            <AttachmentPreview fileIds={expense.attachmentIds} claimId={editingClaim?.claimId || tempClaimId} compact />
+                            <AttachmentPreview fileIds={expense.attachmentIds} claimId={editingClaim?.claimId || tempClaimId} compact onRemove={(fileId) => setExpenses((prev) => prev.map((row) => row.id === expense.id ? { ...row, attachmentIds: row.attachmentIds.filter((id) => id !== fileId) } : row))} />
                           </div>
                         )}
                       </div>
@@ -671,7 +701,7 @@ export default function SubmitClaimView() {
                           {expense.attachmentIds.length > 0 && (
                             <div className="rounded-md border border-border bg-background p-2">
                               <p className="mb-1 text-[11px] font-medium text-muted-foreground">{expense.attachmentIds.length} saved file(s)</p>
-                              <AttachmentPreview fileIds={expense.attachmentIds} claimId={editingClaim?.claimId || tempClaimId} compact />
+                              <AttachmentPreview fileIds={expense.attachmentIds} claimId={editingClaim?.claimId || tempClaimId} compact onRemove={(fileId) => setExpenses((prev) => prev.map((row) => row.id === expense.id ? { ...row, attachmentIds: row.attachmentIds.filter((id) => id !== fileId) } : row))} />
                             </div>
                           )}
                         </div>
@@ -714,7 +744,7 @@ export default function SubmitClaimView() {
                     Clear Existing
                   </Button>
                 </div>
-                <AttachmentPreview fileIds={existingFileIds} claimId={editingClaim?.claimId || tempClaimId} compact />
+                <AttachmentPreview fileIds={existingFileIds} claimId={editingClaim?.claimId || tempClaimId} compact onRemove={(fileId) => setExistingFileIds((prev) => prev.filter((id) => id !== fileId))} />
               </div>
             )}
             <FileUpload

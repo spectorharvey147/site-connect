@@ -1,8 +1,10 @@
 // SAP import layout follows the supplied TXT files, including both header rows.
 export const HEADER_COLUMNS = ['JdtNum', 'ReferenceDate', 'Memo', 'Reference', 'Reference2', 'Reference3', 'TransactionCode', 'ProjectCode', 'TaxDate', 'Indicator', 'DueDate', 'LocationCode', 'U_REMARKS', 'U_Month'];
 export const HEADER_ALIASES = ['JDT_NUM', 'RefDate', 'Memo', 'Ref1', 'Ref2', 'Ref3', 'TransCode', 'Project', 'TaxDate', 'Indicator', 'DueDate', 'Location', 'CIG', 'CUP'];
-export const DETAIL_COLUMNS = ['ParentKey', 'LineNum', 'Line_ID', 'AccountCode', 'Debit', 'Credit', 'CostingCode'];
-export const DETAIL_ALIASES = ['JDT_NUM', 'LineNum', 'Line_ID', 'Account', 'Debit', 'Credit', 'ProfitCode'];
+export const DETAIL_COLUMNS = ['ParentKey', 'LineNum', 'Line_ID', 'AccountCode', 'ShortName', 'Debit', 'Credit', 'CostingCode'];
+export const DETAIL_ALIASES = ['JDT_NUM', 'LineNum', 'Line_ID', 'Account', 'ShortName', 'Debit', 'Credit', 'ProfitCode'];
+const PAYLOAD_DETAIL_COLUMNS = ['ParentKey', 'LineNum', 'Line_ID', 'AccountCode', 'Debit', 'Credit', 'CostingCode'];
+const PAYLOAD_DETAIL_ALIASES = ['JDT_NUM', 'LineNum', 'Line_ID', 'Account', 'Debit', 'Credit', 'ProfitCode'];
 export type SapRow = (string | number)[];
 // Normalize saved batches as well as new exports to the confirmed CSV layout.
 export function sapImportRows(payload: JournalPayload): { headers: SapRow[]; details: SapRow[] } {
@@ -13,7 +15,16 @@ export function sapImportRows(payload: JournalPayload): { headers: SapRow[]; det
       if (index > 1) copy[9] = String(copy[9]).trim();
       return copy;
     }),
-    details: payload.details.map((row, index) => index > 1 ? row.map((value, column) => column === 2 ? '' : column === 3 ? String(value).replace(/^'+/, '') : value) : [...row]),
+    details: payload.details.map((row, index) => {
+      if (index === 0) return [...DETAIL_COLUMNS];
+      if (index === 1) return [...DETAIL_ALIASES];
+      const copy = row.length === 7
+        ? [...row.slice(0, 4), payload.detailShortNames?.[String(index)] || '', ...row.slice(4)]
+        : [...row];
+      copy[2] = '';
+      copy[3] = String(copy[3]).replace(/^'+/, '');
+      return copy;
+    }),
   };
 }
 
@@ -41,11 +52,18 @@ export interface SapLocation { code: string; name: string; costing_code: string 
 export interface SapExpenseGroup { code: SapGroup; name: string; gl_code: string; line_number: number }
 export interface SapMaster { id: string; type: string; value: string; project?: string; project_code?: string; sap_project_code?: string; sap_location_code?: string; sap_expense_group?: SapGroup; default_manager_email?: string; active: boolean }
 export interface SapEmployee { email: string; name: string; role: string; active: boolean; sap_gl_code?: string; sap_location_code?: string }
-export interface SapExpense { approved_amount?: number | null; id: string; category: string; project_code: string; customer_name?: string; expense_date: string; amount_with_bill: number; amount_without_bill: number }
+export interface SapExpense {
+  approved_amount?: number | null; id: string; category: string; project_code: string; customer_name?: string; expense_date: string; amount_with_bill: number; amount_without_bill: number;
+  has_tax_invoice?: boolean | null; vendor_available?: boolean | null; vendor_id?: string | null;
+  vendor_account_code_snapshot?: string | null; vendor_short_form_snapshot?: string | null;
+  taxable_amount?: number | null; cgst_amount?: number | null; sgst_amount?: number | null; igst_amount?: number | null;
+}
 export interface SapClaim { claim_id: string; claim_number?: string; site_name: string; customer_name?: string; user_email: string; work_name?: string; verified_amount?: number; grand_total: number; expense_items: SapExpense[] }
-export interface SapMasters { locations: SapLocation[]; groups: SapExpenseGroup[]; lists: SapMaster[]; users: SapEmployee[] }
+export interface SapVendor { id: string; vendor_name: string; short_form: string; vendor_account_code: string; active: boolean }
+export interface SapGstAccount { id: string; gst_type: 'CGST' | 'SGST' | 'IGST'; gl_code: string; active: boolean }
+export interface SapMasters { locations: SapLocation[]; groups: SapExpenseGroup[]; lists: SapMaster[]; users: SapEmployee[]; vendors?: SapVendor[]; gst_accounts?: SapGstAccount[] }
 export interface JournalOptions { postingDate: string; dueDate: string; transactionCode: string; allocations?: Record<string, number> }
-export interface JournalPayload { version: 1; headers: SapRow[]; details: SapRow[]; claims: { claimId: string; reference: string; employeeName: string; amount: number }[]; journalClaims: string[]; postingDate: string }
+export interface JournalPayload { version: 1; headers: SapRow[]; details: SapRow[]; detailShortNames?: Record<string, string>; claims: { claimId: string; reference: string; employeeName: string; amount: number }[]; journalClaims: string[]; postingDate: string }
 
 export function moneyCents(value: unknown): number {
   const n = Number(value);
@@ -63,6 +81,11 @@ function sapDate(value: string): string {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(value) || Number.isNaN(Date.parse(value)) || new Date(value).toISOString().slice(0, 10) !== value) throw new Error(`Invalid SAP date: ${value}`);
   return value.replace(/-/g, '');
 }
+function sapAmount(cents: number): string {
+  const whole = Math.trunc(cents / 100);
+  const fraction = cents % 100;
+  return fraction === 0 ? String(whole) : `${whole}.${String(fraction).padStart(2, '0')}`;
+}
 function only<T extends { active?: boolean }>(rows: T[], label: string): T | undefined {
   const activeRows = rows.filter(row => row.active !== false);
   if (activeRows.length) rows = activeRows;
@@ -75,7 +98,7 @@ export function buildSapJournal(claims: SapClaim[], masters: SapMasters, options
   if (new Set(claims.map(c => c.claim_id)).size !== claims.length) throw new Error('Duplicate claims in export.');
   const posting = sapDate(options.postingDate), due = sapDate(options.dueDate);
   const transaction = required(options.transactionCode, 'Transaction code');
-  const payload: JournalPayload = { version: 1, headers: [HEADER_COLUMNS, HEADER_ALIASES], details: [DETAIL_COLUMNS, DETAIL_ALIASES], claims: [], journalClaims: [], postingDate: options.postingDate };
+  const payload: JournalPayload = { version: 1, headers: [HEADER_COLUMNS, HEADER_ALIASES], details: [PAYLOAD_DETAIL_COLUMNS, PAYLOAD_DETAIL_ALIASES], detailShortNames: {}, claims: [], journalClaims: [], postingDate: options.postingDate };
   // Existing claims retain access to mappings even after their project closes.
   const lists = masters.lists;
   const usedIds = new Set<number>();
@@ -85,7 +108,7 @@ export function buildSapJournal(claims: SapClaim[], masters: SapMasters, options
     const employeeGl = required(employee?.sap_gl_code, `${ref}: employee GL`);
     const project = only(lists.filter(x => x.type === 'project' && x.value === claim.site_name), claim.site_name);
     if (!project) throw new Error(`${ref}: project mapping is missing.`);
-    const groups = new Map<string, { project: string; customer: string; date: string; location: SapLocation; amounts: Map<SapGroup, number> }>();
+    const groups = new Map<string, { project: string; customer: string; date: string; location: SapLocation; amounts: Map<string, { code: string; shortName?: string; line: number; amount: number }> }>();
     let claimCents = 0;
     for (const item of [...claim.expense_items].sort((a, b) => a.id.localeCompare(b.id))) {
       const submittedCents = moneyCents(item.amount_with_bill) + moneyCents(item.amount_without_bill);
@@ -96,6 +119,29 @@ export function buildSapJournal(claims: SapClaim[], masters: SapMasters, options
       const expenseGroup = masters.groups.find(g => g.code === category?.sap_expense_group);
       if (!expenseGroup) throw new Error(`${ref}: map expense category "${item.category}" to a SAP expense group.`);
       required(expenseGroup.gl_code, `${item.category} GL`);
+      const debitLines: { code: string; shortName?: string; line: number; amount: number }[] = [];
+      if (item.has_tax_invoice === true && item.vendor_available === true) {
+        const vendorCode = required(item.vendor_account_code_snapshot, `${ref}: selected vendor SAP account code`);
+        if (!item.vendor_id) throw new Error(`${ref}: tax invoice vendor selection is missing.`);
+        if (!masters.vendors?.some(vendor => vendor.id === item.vendor_id && vendor.active)) throw new Error(`${ref}: selected SAP vendor is inactive or missing.`);
+        debitLines.push({ code: vendorCode, shortName: item.vendor_short_form_snapshot || '', line: 6, amount });
+      } else if (item.has_tax_invoice === true && item.vendor_available === false) {
+        const taxable = moneyCents(item.taxable_amount);
+        const cgst = moneyCents(item.cgst_amount ?? 0), sgst = moneyCents(item.sgst_amount ?? 0), igst = moneyCents(item.igst_amount ?? 0);
+        if (igst > 0 && (cgst > 0 || sgst > 0)) throw new Error(`${ref}: IGST cannot be combined with CGST or SGST.`);
+        if (taxable + cgst + sgst + igst !== amount) throw new Error(`${ref}: taxable value plus GST must equal the approved expense row amount.`);
+        debitLines.push({ code: expenseGroup.gl_code, line: expenseGroup.line_number, amount: taxable });
+        for (const [type, cents, line] of [['CGST', cgst, 7], ['SGST', sgst, 8], ['IGST', igst, 9]] as const) {
+          if (!cents) continue;
+          const gst = (masters.gst_accounts || []).filter(a => a.gst_type === type && a.active);
+          if (gst.length !== 1) throw new Error(`${ref}: configure exactly one active Input ${type} GL account before export.`);
+          debitLines.push({ code: required(gst[0].gl_code, `Input ${type} GL`), line, amount: cents });
+        }
+      } else if (item.has_tax_invoice === true) {
+        throw new Error(`${ref}: tax invoice vendor availability has not been verified.`);
+      } else {
+        debitLines.push({ code: expenseGroup.gl_code, line: expenseGroup.line_number, amount });
+      }
       const matchingCodes = lists.filter(x => x.type === 'projectcode' && x.project_code === item.project_code);
       const code = only(matchingCodes.filter(x => x.project === claim.site_name), item.project_code)
         || only(matchingCodes.filter(x => !x.project), item.project_code);
@@ -112,7 +158,12 @@ export function buildSapJournal(claims: SapClaim[], masters: SapMasters, options
       const key = JSON.stringify([item.project_code, sapProject, customer, date, location.code]);
       let group = groups.get(key);
       if (!group) { group = { project: sapProject, customer, date, location, amounts: new Map() }; groups.set(key, group); }
-      group.amounts.set(expenseGroup.code, (group.amounts.get(expenseGroup.code) || 0) + amount);
+      for (const debit of debitLines) {
+        if (!debit.amount) continue;
+        const accountKey = `${debit.line}:${debit.code}:${debit.shortName || ''}`;
+        const existing = group.amounts.get(accountKey);
+        group.amounts.set(accountKey, { code: debit.code, shortName: debit.shortName || '', line: debit.line, amount: (existing?.amount || 0) + debit.amount });
+      }
       claimCents += amount;
     }
     const approved = moneyCents(claim.verified_amount ?? claim.grand_total);
@@ -128,13 +179,14 @@ export function buildSapJournal(claims: SapClaim[], masters: SapMasters, options
       const subRef = `${ref}/${String(++part).padStart(3, '0')}`;
       payload.headers.push([id, posting, group.customer, ref, subRef, work, transaction, group.project, group.date, ' ', due, group.location.code, `${work} ${group.customer}`, '']);
       let total = 0;
-      for (const mapping of [...masters.groups].sort((a, b) => a.line_number - b.line_number)) {
-        const cents = group.amounts.get(mapping.code) || 0;
-        if (!cents) continue;
-        payload.details.push([id, mapping.line_number, mapping.line_number, mapping.gl_code, (cents / 100).toFixed(2), '', group.location.costing_code]);
-        total += cents;
+      for (const debit of [...group.amounts.values()].sort((a, b) => a.line - b.line || a.code.localeCompare(b.code) || String(a.shortName || '').localeCompare(String(b.shortName || '')))) {
+        const detailIndex = payload.details.length;
+        payload.details.push([id, debit.line, debit.line, debit.code, sapAmount(debit.amount), '', group.location.costing_code]);
+        if (debit.shortName) payload.detailShortNames[String(detailIndex)] = debit.shortName;
+        total += debit.amount;
       }
-      payload.details.push([id, 5, 5, employeeGl, '', (total / 100).toFixed(2), group.location.costing_code]);
+      const creditLine = Math.max(5, ...[...group.amounts.values()].map(debit => debit.line + 1));
+      payload.details.push([id, creditLine, creditLine, employeeGl, '', sapAmount(total), group.location.costing_code]);
       payload.journalClaims.push(claim.claim_id);
     }
   }

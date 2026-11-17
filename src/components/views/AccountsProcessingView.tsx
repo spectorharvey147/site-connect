@@ -1,10 +1,12 @@
-import ExpenseApprovalEditor from './ExpenseApprovalEditor';
-import { initialRowAmounts, approvedRows, type RowAmounts } from '@/lib/expense-approval';
+import ExpenseApprovalEditor, { type AccountingRowForm } from './ExpenseApprovalEditor';
+import { initialRowAmounts, approvedRows, type ApprovalExpense, type RowAmounts } from '@/lib/expense-approval';
 import { useEffect, useMemo, useState } from 'react';
 import { CheckCircle2, CreditCard, Eye, Loader2, RefreshCw, WalletCards } from 'lucide-react';
 import { toast } from 'sonner';
 import { useAuth } from '@/contexts/AuthContext';
 import { approveClaimAsAccounts, getAccountsClaims, getClaimById, markClaimPaid } from '@/lib/claims-api';
+import { getActiveVendors } from '@/lib/accounting-api';
+import type { SapVendor } from '@/lib/sap-journal';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
@@ -24,6 +26,16 @@ function formatCurrency(value: number) {
 function formatDate(date?: string) {
   return date ? new Date(date).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) : '-';
 }
+
+type AccountingExpense = ApprovalExpense & {
+  hasTaxInvoice?: boolean | null;
+  vendorAvailable?: boolean | null;
+  vendorId?: string | null;
+  taxableAmount?: number | null;
+  cgstAmount?: number | null;
+  sgstAmount?: number | null;
+  igstAmount?: number | null;
+};
 
 function StatusBadge({ status }: { status: string }) {
   const normalized = status.toLowerCase();
@@ -134,6 +146,8 @@ export default function AccountsProcessingView() {
   const [payClaim, setPayClaim] = useState<any>(null);
   const [amount, setAmount] = useState('');
   const [rowAmounts, setRowAmounts] = useState<RowAmounts>({});
+  const [accountingRows, setAccountingRows] = useState<Record<string, AccountingRowForm>>({});
+  const [vendors, setVendors] = useState<SapVendor[]>([]);
   const [reference, setReference] = useState('');
   const [note, setNote] = useState('');
   const [selectedPayIds, setSelectedPayIds] = useState<string[]>([]);
@@ -180,11 +194,21 @@ export default function AccountsProcessingView() {
     const fallbackClaim = { ...claim, status: claim.status || 'Accounts Verification' };
     setVerifyClaim(fallbackClaim);
     setRowAmounts({});
+    setAccountingRows({});
     setAmount(String((claim.verifiedAmount ?? claim.amount ?? 0).toFixed(2)));
     setNote('');
     try {
-      const details = await getClaimById(claim.claimIdInternal || claim.claimId);
-      if (details) { setVerifyClaim(details); setRowAmounts(initialRowAmounts(details.expenses || [], details.verifiedAmount)); }
+      const [details, activeVendors] = await Promise.all([getClaimById(claim.claimIdInternal || claim.claimId), getActiveVendors()]);
+      setVendors(activeVendors);
+      if (details) {
+        const expenses = (details.expenses || []) as unknown as AccountingExpense[];
+        setVerifyClaim(details); setRowAmounts(initialRowAmounts(expenses, details.verifiedAmount));
+        setAccountingRows(Object.fromEntries(expenses.map((expense) => [expense.id, {
+          has_tax_invoice: expense.hasTaxInvoice === true, vendor_available: expense.vendorAvailable ?? null, vendor_id: expense.vendorId || '',
+          taxable_amount: expense.taxableAmount == null ? '' : String(expense.taxableAmount), cgst_amount: expense.cgstAmount == null ? '' : String(expense.cgstAmount),
+          sgst_amount: expense.sgstAmount == null ? '' : String(expense.sgstAmount), igst_amount: expense.igstAmount == null ? '' : String(expense.igstAmount),
+        }])));
+      }
     } catch (error: any) {
       toast.error(error.message || 'Unable to load claim details');
     }
@@ -221,9 +245,33 @@ export default function AccountsProcessingView() {
       toast.error('Enter a valid accounts verified amount');
       return;
     }
+    let accountingPayload: Array<AccountingRowForm & { id: string }>;
+    try {
+      accountingPayload = (verifyClaim.expenses as AccountingExpense[] || []).map((expense) => {
+        const row = accountingRows[expense.id] || { has_tax_invoice: false, vendor_available: null, vendor_id: '', taxable_amount: '', cgst_amount: '', sgst_amount: '', igst_amount: '' };
+        if (row.has_tax_invoice && !expense.attachmentIds?.length) throw new Error(`${expense.category}: attach the invoice or receipt before verification.`);
+        if (row.has_tax_invoice && row.vendor_available == null) throw new Error(`${expense.category}: choose whether the vendor is available in SAP.`);
+        if (row.has_tax_invoice && row.vendor_available && !row.vendor_id) throw new Error(`${expense.category}: select an active vendor.`);
+        if (row.has_tax_invoice && row.vendor_available === false) {
+          const cents = (input: string, label: string, optional = false) => {
+            if (!input.trim() && optional) return 0;
+            if (!input.trim()) throw new Error(`${expense.category}: enter ${label}.`);
+            const number = Number(input);
+            if (!Number.isFinite(number) || number < 0 || Math.abs(number * 100 - Math.round(number * 100)) > 0.000001) throw new Error(`${expense.category}: ${label} must be a non-negative amount with at most two decimals.`);
+            return Math.round(number * 100);
+          };
+          const taxable = cents(row.taxable_amount,'taxable value');
+          const cgst = cents(row.cgst_amount,'CGST',true), sgst = cents(row.sgst_amount,'SGST',true), igst = cents(row.igst_amount,'IGST',true);
+          if (igst > 0 && (cgst > 0 || sgst > 0)) throw new Error(`${expense.category}: IGST cannot be combined with CGST or SGST.`);
+          const approvedCents = Math.round(Number(approved.rows.find((item) => item.id === expense.id)?.amount || 0) * 100);
+          if (taxable + cgst + sgst + igst !== approvedCents) throw new Error(`${expense.category}: taxable value plus GST must equal the approved amount.`);
+        }
+        return { id: expense.id, ...row };
+      });
+    } catch (error) { toast.error(error instanceof Error ? error.message : String(error)); return; }
     setProcessing(true);
     try {
-      await approveClaimAsAccounts(verifyClaim.claimIdInternal || verifyClaim.claimId, user.email, note, value, Object.fromEntries(approved.rows.map(row => [row.id, row.amount])));
+      await approveClaimAsAccounts(verifyClaim.claimIdInternal || verifyClaim.claimId, user.email, note, value, Object.fromEntries(approved.rows.map(row => [row.id, row.amount])), accountingPayload);
       toast.success('Claim moved to payment processing');
       setVerifyClaim(null);
       await loadClaims();
@@ -391,7 +439,7 @@ export default function AccountsProcessingView() {
       >
         <div className="space-y-3">
           <ClaimDetailsPanel claim={verifyClaim} />
-          <ExpenseApprovalEditor expenses={verifyClaim?.expenses || []} amounts={rowAmounts} onChange={setRowAmounts} disabled={processing} />
+          <ExpenseApprovalEditor expenses={verifyClaim?.expenses || []} amounts={rowAmounts} onChange={setRowAmounts} disabled={processing} vendors={vendors} accounting={accountingRows} onAccountingChange={setAccountingRows} />
           <div><Label>Accounts Note</Label><Textarea rows={4} value={note} onChange={(event) => setNote(event.target.value)} placeholder="Optional verification note" /></div>
         </div>
       </ResponsiveOverlay>

@@ -143,6 +143,11 @@ export default function ClaimApprovalTimeline({ claim }: { claim: TimelineClaim 
                   <div className="mt-1.5 space-y-1 text-xs text-muted-foreground">
                     <p>{stage.stamp.name}{stage.stamp.email ? ` · ${stage.stamp.email}` : ''}</p>
                     {timestamp && <p>{timestamp}</p>}
+                    <p>IP address: {stage.stamp.ipAddress || 'Not Available'}</p>
+                    <p>Device: {stage.stamp.deviceType || 'Not Available'}</p>
+                    <p>Browser: {stage.stamp.browserName || 'Not Available'}</p>
+                    <p>Operating system: {stage.stamp.operatingSystem || 'Not Available'}</p>
+                    {stage.stamp.signatureUrl && <img src={stage.stamp.signatureUrl} alt={`${stage.stamp.name} approval signature`} className="mt-2 max-h-12 max-w-40 object-contain" />}
                     {stage.stamp.remarks && <p className="rounded bg-muted/60 px-2 py-1.5 text-foreground">{stage.stamp.remarks}</p>}
                   </div>
                 ) : stage.state === 'complete' ? (

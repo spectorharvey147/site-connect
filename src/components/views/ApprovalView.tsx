@@ -1,5 +1,5 @@
 import ExpenseApprovalEditor from './ExpenseApprovalEditor';
-import { initialRowAmounts, approvedRows, type RowAmounts } from '@/lib/expense-approval';
+import { initialRowAmounts, approvedRows, type ApprovalExpense, type RowAmounts } from '@/lib/expense-approval';
 import { useState, useEffect, useMemo } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { getPendingManagerClaims, getPendingAdminClaims, getPendingSuperAdminClaims, approveClaimAsManager, approveClaimAsAdmin, approveClaimAsSuperAdmin, rejectClaim, getClaimById } from '@/lib/claims-api';
@@ -228,7 +228,7 @@ export default function ApprovalView({ type }: ApprovalViewProps) {
       try {
         const details = await getClaimById(claim.claimIdInternal || claim.claimId);
         setApproveDetails(details);
-        setRowAmounts(initialRowAmounts(details?.expenses || [], details?.verifiedAmount));
+        setRowAmounts(initialRowAmounts((details?.expenses || []) as unknown as ApprovalExpense[], details?.verifiedAmount));
       } catch (e) {
         console.error('Failed to load claim details for approval', e);
         setApproveDetails(null);

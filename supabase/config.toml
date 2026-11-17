@@ -5,3 +5,7 @@ verify_jwt = false
 
 [functions.storage-access]
 verify_jwt = false
+
+[functions.claim-approval]
+# This endpoint authenticates the app's custom claimsToken session internally.
+verify_jwt = false

@@ -5,9 +5,10 @@ import { Button } from '@/components/ui/button';
 import { Camera, ImagePlus, X, FileText, Loader2 } from 'lucide-react';
 import { supabase } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
+import { sha256ContentFingerprint } from '@/lib/claim-attachments';
 
-const ACCEPTED_TYPES = ['image/jpeg', 'image/jpg', 'application/pdf'];
-const ACCEPTED_EXT = '.jpg,.jpeg,.pdf';
+const ACCEPTED_TYPES = ['image/jpeg', 'image/jpg', 'image/png', 'application/pdf'];
+const ACCEPTED_EXT = '.jpg,.jpeg,.png,.pdf';
 const TOTAL_UPLOAD_LIMIT_BYTES = 50 * 1024 * 1024;
 const IMAGE_COMPRESSION_QUALITIES = [0.96, 0.94, 0.92, 0.9, 0.88, 0.86, 0.84, 0.82];
 const IMAGE_COMPRESSION_SCALES = [1, 0.95, 0.9, 0.85, 0.8, 0.75, 0.7, 0.65, 0.6];
@@ -21,7 +22,7 @@ interface FileUploadProps {
 }
 
 export interface FileUploadHandle {
-  uploadAll: () => Promise<string[]>;
+  uploadAll: (canonicalFiles?: Map<string, string>) => Promise<string[]>;
   getFileCount: () => number;
 }
 
@@ -44,7 +45,7 @@ const FileUpload = forwardRef<FileUploadHandle, FileUploadProps>(
     const maxSizeBytes = maxSizeMB * 1024 * 1024;
 
     const validateFile = (file: File): string | null => {
-      if (!ACCEPTED_TYPES.includes(file.type)) return `${file.name}: Only PDF and JPEG files are allowed`;
+      if (!ACCEPTED_TYPES.includes(file.type)) return `${file.name}: Only PDF, PNG and JPEG files are allowed`;
       if (file.size > maxSizeBytes) return `${file.name}: File size exceeds ${maxSizeMB}MB limit`;
       return null;
     };
@@ -209,20 +210,28 @@ const FileUpload = forwardRef<FileUploadHandle, FileUploadProps>(
       }
     };
 
-    const uploadAll = async (): Promise<string[]> => {
+    const uploadAll = async (canonicalFiles = new Map<string, string>()): Promise<string[]> => {
       if (files.length === 0) return [];
       setUploading(true);
       const uploadedPaths: string[] = [];
 
       for (let i = 0; i < files.length; i++) {
+        const fingerprint = await sha256ContentFingerprint(files[i].file);
+        const existingPath = canonicalFiles.get(fingerprint);
         if (files[i].uploaded && files[i].path) {
-          uploadedPaths.push(files[i].path!);
+          if (!existingPath) canonicalFiles.set(fingerprint, files[i].path!);
+          uploadedPaths.push(existingPath || files[i].path!);
           continue;
         }
         setFiles(prev => prev.map((f, idx) => idx === i ? { ...f, uploading: true } : f));
+        if (existingPath) {
+          uploadedPaths.push(existingPath);
+          setFiles(prev => prev.map((f, idx) => idx === i ? { ...f, uploading: false, uploaded: true, path: existingPath } : f));
+          continue;
+        }
 
         const ext = files[i].file.name.split('.').pop()?.toLowerCase() || 'jpg';
-        const path = `${claimId}/${Date.now()}-${i}.${ext}`;
+        const path = `${claimId}/${Date.now()}-${crypto.randomUUID()}-${i}-${fingerprint.slice(0, 12)}.${ext}`;
 
         const { error } = await supabase.storage.from('claim-attachments').upload(path, files[i].file, {
           contentType: files[i].file.type,
@@ -232,6 +241,7 @@ const FileUpload = forwardRef<FileUploadHandle, FileUploadProps>(
           toast.error(`Failed to upload ${files[i].file.name}`);
           setFiles(prev => prev.map((f, idx) => idx === i ? { ...f, uploading: false } : f));
         } else {
+          canonicalFiles.set(fingerprint, path);
           uploadedPaths.push(path);
           setFiles(prev => prev.map((f, idx) => idx === i ? { ...f, uploading: false, uploaded: true, path } : f));
         }
@@ -257,7 +267,7 @@ const FileUpload = forwardRef<FileUploadHandle, FileUploadProps>(
             {processing ? <Loader2 className="mr-1 h-4 w-4 animate-spin" /> : <Camera className="mr-1 h-4 w-4" />}
             Camera
           </Button>
-          <span className="text-xs text-muted-foreground">PDF, JPEG - Max {maxSizeMB}MB each</span>
+          <span className="text-xs text-muted-foreground">PDF, PNG, JPEG - Max {maxSizeMB}MB each</span>
         </div>
 
         <input ref={fileInputRef} type="file" accept={ACCEPTED_EXT} multiple className="hidden" onChange={e => { void handleFiles(e.target.files); e.target.value = ''; }} />
@@ -296,7 +306,7 @@ const FileUpload = forwardRef<FileUploadHandle, FileUploadProps>(
     );
 
     const uploadButton = files.length > 0 && !files.every(f => f.uploaded) && (
-      <Button type="button" variant="outline" size="sm" onClick={uploadAll} disabled={uploading || processing}>
+      <Button type="button" variant="outline" size="sm" onClick={() => void uploadAll()} disabled={uploading || processing}>
         {uploading ? <Loader2 className="mr-1 h-4 w-4 animate-spin" /> : null}
         Upload {files.filter(f => !f.uploaded).length} file(s)
       </Button>

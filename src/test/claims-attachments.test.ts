@@ -6,8 +6,10 @@ import {
   getAttachmentStorageRoots,
   isStorageFolderEntry,
   resolveClaimAttachments,
+  sha256ContentFingerprint,
 } from '@/lib/claim-attachments';
-import { findDuplicateExpensePair, findFutureExpenseIndex } from '@/lib/claim-validation';
+import { expenseFingerprint, findDuplicateExpensePair, findFutureExpenseIndex } from '@/lib/claim-validation';
+import { isActiveAssignedManagerSubmitter } from '@/lib/claim-approval-routing';
 
 describe('resolveClaimAttachments', () => {
   it('derives a legacy temporary storage root from a saved general attachment', () => {
@@ -57,9 +59,9 @@ describe('resolveClaimAttachments', () => {
       ],
     )).toEqual({
       fileIds: [
-        'claim/main.jpg',
         'claim/expense-1/bill.pdf',
         'claim/expense-1/receipt.jpg',
+        'claim/main.jpg',
       ],
       generalFileIds: ['claim/main.jpg'],
     });
@@ -78,9 +80,9 @@ describe('resolveClaimAttachments', () => {
       [{ attachmentIds: ['claim/expense-1/bill-1.jpg', 'claim/expense-1/bill-2.jpg'] }],
     )).toEqual({
       fileIds: [
-        'claim/final-attachment.jpg',
         'claim/expense-1/bill-1.jpg',
         'claim/expense-1/bill-2.jpg',
+        'claim/final-attachment.jpg',
       ],
       generalFileIds: ['claim/final-attachment.jpg'],
     });
@@ -88,6 +90,13 @@ describe('resolveClaimAttachments', () => {
 });
 
 describe('claim submission rules', () => {
+  it('skips the manager stage only when the active assigned manager submitted the claim', () => {
+    expect(isActiveAssignedManagerSubmitter({ submitterEmail: 'MANAGER@example.com', managerEmail: 'manager@example.com', managerRole: 'Manager', managerActive: true })).toBe(true);
+    expect(isActiveAssignedManagerSubmitter({ submitterEmail: 'manager@example.com', managerEmail: 'other@example.com', managerRole: 'Manager', managerActive: true })).toBe(false);
+    expect(isActiveAssignedManagerSubmitter({ submitterEmail: 'manager@example.com', managerEmail: 'manager@example.com', managerRole: 'Manager', managerActive: false })).toBe(false);
+    expect(isActiveAssignedManagerSubmitter({ submitterEmail: 'admin@example.com', managerEmail: 'admin@example.com', managerRole: 'Super Admin', managerActive: true })).toBe(false);
+  });
+
   it('rejects future expense dates', () => {
     expect(findFutureExpenseIndex([
       { claimDate: '2026-07-14', amountWithBill: 100, amountWithoutBill: 0 },
@@ -95,29 +104,58 @@ describe('claim submission rules', () => {
     ], '2026-07-14')).toBe(1);
   });
 
-  it('detects the same date and total even when bill allocation differs', () => {
+  it('detects a same-date, same-category, same-project duplicate even when bill allocation differs', () => {
     expect(findDuplicateExpensePair([
-      { claimDate: '2026-07-14', amountWithBill: 100, amountWithoutBill: 50 },
-      { claimDate: '2026-07-14', amountWithBill: 0, amountWithoutBill: 150 },
+      { claimDate: '2026-07-14', category: 'Fuel', projectCode: 'P-1', amountWithBill: 100, amountWithoutBill: 50 },
+      { claimDate: '2026-07-14', category: ' fuel ', projectCode: 'p-1', amountWithBill: 0, amountWithoutBill: 150 },
     ])).toEqual({ firstIndex: 0, duplicateIndex: 1 });
   });
 
-  it('allows the same amount on different dates', () => {
+  it('allows the same amount on the same date under different categories', () => {
     expect(findDuplicateExpensePair([
-      { claimDate: '2026-07-13', amountWithBill: 150, amountWithoutBill: 0 },
-      { claimDate: '2026-07-14', amountWithBill: 150, amountWithoutBill: 0 },
+      { claimDate: '2026-07-14', category: 'Fuel', amountWithBill: 1000, amountWithoutBill: 0 },
+      { claimDate: '2026-07-14', category: 'Staff Welfare', amountWithBill: 1000, amountWithoutBill: 0 },
+      { claimDate: '2026-07-14', category: 'Material Purchase', amountWithBill: 1000, amountWithoutBill: 0 },
     ])).toBeNull();
+  });
+
+  it('allows matching category and amount on different dates or project codes', () => {
+    expect(findDuplicateExpensePair([
+      { claimDate: '2026-07-13', category: 'Fuel', projectCode: 'P-1', amountWithBill: 150, amountWithoutBill: 0 },
+      { claimDate: '2026-07-14', category: 'Fuel', projectCode: 'P-1', amountWithBill: 150, amountWithoutBill: 0 },
+      { claimDate: '2026-07-14', category: 'Fuel', projectCode: 'P-2', amountWithBill: 150, amountWithoutBill: 0 },
+    ])).toBeNull();
+  });
+
+  it('allows different amounts in the same category on the same date', () => {
+    expect(findDuplicateExpensePair([
+      { claimDate: '2026-07-14', category: 'Fuel', amountWithBill: 1000, amountWithoutBill: 0 },
+      { claimDate: '2026-07-14', category: 'Fuel', amountWithBill: 1200, amountWithoutBill: 0 },
+    ])).toBeNull();
+  });
+
+  it('normalizes category and compares amounts in integer paise', () => {
+    expect(expenseFingerprint({ claimDate: '2026-07-14T10:00:00Z', category: '  FUEL ', projectCode: ' P-1 ', amountWithBill: 10.1, amountWithoutBill: 0 }))
+      .toBe('2026-07-14|fuel|p-1|1010');
   });
 });
 
 describe('payment voucher attachment handling', () => {
-  it('includes row-level files already resolved onto each claim and removes duplicates', () => {
+  it('uses SHA-256 content fingerprints instead of filenames to identify identical uploads', async () => {
+    const first = new Uint8Array([1, 2, 3, 4]);
+    const sameContent = new Uint8Array([1, 2, 3, 4]);
+    const differentContent = new Uint8Array([1, 2, 3, 5]);
+    expect(await sha256ContentFingerprint(first)).toBe(await sha256ContentFingerprint(sameContent));
+    expect(await sha256ContentFingerprint(first)).not.toBe(await sha256ContentFingerprint(differentContent));
+  });
+
+  it('orders row attachments before additional claim files and removes duplicate references', () => {
     expect(collectVoucherFileIds([
-      { fileIds: ['claim/main.jpg', 'claim/expense-1/receipt.pdf'] },
-      { fileIds: ['claim/expense-1/receipt.pdf', 'claim/expense-2/receipt.jpg'] },
+      { fileIds: ['claim/main.jpg', 'claim/expense-1/receipt.pdf'], expenses: [{ attachmentIds: ['claim/expense-1/receipt.pdf'] }] },
+      { fileIds: ['claim/expense-1/receipt.pdf', 'claim/expense-2/receipt.jpg'], expenses: [{ attachmentIds: ['claim/expense-2/receipt.jpg'] }] },
     ])).toEqual([
-      'claim/main.jpg',
       'claim/expense-1/receipt.pdf',
+      'claim/main.jpg',
       'claim/expense-2/receipt.jpg',
     ]);
   });
@@ -126,7 +164,7 @@ describe('payment voucher attachment handling', () => {
     expect(collectVoucherFileIds([{
       fileIds: ['claim/main.jpg'],
       expenses: [{ attachmentIds: ['claim/expense1/bill.pdf'] }],
-    }])).toEqual(['claim/main.jpg', 'claim/expense1/bill.pdf']);
+    }])).toEqual(['claim/expense1/bill.pdf', 'claim/main.jpg']);
   });
 
   it('detects embeddable formats from file bytes instead of misleading names', () => {
