@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { Button } from '@/components/ui/button';
 import { ResponsiveOverlay } from '@/components/ui/responsive-overlay';
-import { Image, FileText, Download, ExternalLink } from 'lucide-react';
+import { Image, FileText, Download, ExternalLink, X } from 'lucide-react';
 import { supabase } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
 
@@ -9,6 +9,7 @@ interface AttachmentPreviewProps {
   fileIds: string[];
   claimId: string;
   compact?: boolean;
+  onRemove?: (fileId: string) => void;
 }
 
 
@@ -26,7 +27,7 @@ function getFileName(fileId: string) {
   return parts[parts.length - 1] || fileId;
 }
 
-export default function AttachmentPreview({ fileIds, compact = false }: AttachmentPreviewProps) {
+export default function AttachmentPreview({ fileIds, compact = false, onRemove }: AttachmentPreviewProps) {
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [previewFileId, setPreviewFileId] = useState<string | null>(null);
   const [previewType, setPreviewType] = useState<'image' | 'pdf' | 'other'>('other');
@@ -125,7 +126,7 @@ export default function AttachmentPreview({ fileIds, compact = false }: Attachme
                   </div>
                 )}
               </div>
-              <div className="absolute bottom-0 left-0 right-0 flex justify-center gap-1 bg-gradient-to-t from-black/70 to-transparent p-1 opacity-0 transition-opacity group-hover:opacity-100">
+              <div className={`absolute bottom-0 left-0 right-0 flex justify-center gap-1 bg-gradient-to-t from-black/70 to-transparent p-1 transition-opacity ${onRemove ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`}>
                 <Button
                   variant="secondary"
                   size="icon"
@@ -138,6 +139,17 @@ export default function AttachmentPreview({ fileIds, compact = false }: Attachme
                 >
                   <Download className="h-3.5 w-3.5" />
                 </Button>
+                {onRemove && (
+                  <Button
+                    variant="destructive"
+                    size="icon"
+                    className="h-10 w-10 md:h-7 md:w-7"
+                    onClick={(e) => { e.stopPropagation(); onRemove(fileId); }}
+                    title="Remove attachment from this claim"
+                  >
+                    <X className="h-3.5 w-3.5" />
+                  </Button>
+                )}
               </div>
             </div>
           );

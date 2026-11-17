@@ -12,7 +12,7 @@ import { amountToWords } from '@/lib/amount-to-words';
 import AttachmentPreview from '@/components/views/AttachmentPreview';
 import { toast } from 'sonner';
 import { supabase } from '@/integrations/supabase/client';
-import { collectVoucherFileIds, detectEmbeddableAttachmentFormat } from '@/lib/claim-attachments';
+import { collectVoucherFileIds, detectEmbeddableAttachmentFormat, sha256ContentFingerprint } from '@/lib/claim-attachments';
 
 function formatDate(d: string) {
   if (!d) return '';
@@ -32,6 +32,36 @@ function formatDateTime(d: string) {
 
 function money(value: number) {
   return `Rs. ${Number(value || 0).toFixed(2)}`;
+}
+
+async function normalizeImageForPdf(bytes: ArrayBuffer, format: 'png' | 'jpeg', fileName: string) {
+  const blob = new Blob([bytes], { type: format === 'png' ? 'image/png' : 'image/jpeg' });
+  const url = URL.createObjectURL(blob);
+  try {
+    const image = new Image();
+    image.src = url;
+    if (typeof image.decode === 'function') await image.decode();
+    else await new Promise<void>((resolve, reject) => {
+      image.onload = () => resolve();
+      image.onerror = () => reject(new Error(`${fileName} could not be decoded.`));
+    });
+    if (!image.naturalWidth || !image.naturalHeight) throw new Error(`${fileName} is empty or corrupt.`);
+    const canvas = document.createElement('canvas');
+    canvas.width = image.naturalWidth;
+    canvas.height = image.naturalHeight;
+    const context = canvas.getContext('2d');
+    if (!context) throw new Error(`Could not prepare ${fileName} for PDF.`);
+    context.drawImage(image, 0, 0);
+    const png = await new Promise<Blob>((resolve, reject) => canvas.toBlob(
+      (value) => value ? resolve(value) : reject(new Error(`${fileName} could not be converted for PDF.`)),
+      'image/png',
+    ));
+    return png.arrayBuffer();
+  } catch (error) {
+    throw new Error(`${fileName}: ${error instanceof Error ? error.message : String(error)}`);
+  } finally {
+    URL.revokeObjectURL(url);
+  }
 }
 
 function formatInputDate(d: string) {
@@ -187,6 +217,10 @@ function summarizeApproval(voucher: any, stage: 'admin' | 'manager' | 'final' | 
     name: names.length ? names.join(', ') : 'Not available',
     date: latestDate ? formatDateTime(latestDate) : 'Not available',
     signatureUrl: stamps.find((stamp: any) => stamp.signatureUrl)?.signatureUrl || '',
+    ipAddress: [...new Set(stamps.map((stamp: any) => stamp.ipAddress).filter(Boolean))].join(', ') || 'Not Available',
+    deviceType: [...new Set(stamps.map((stamp: any) => stamp.deviceType).filter(Boolean))].join(', ') || 'Not Available',
+    browserName: [...new Set(stamps.map((stamp: any) => stamp.browserName).filter(Boolean))].join(', ') || 'Not Available',
+    operatingSystem: [...new Set(stamps.map((stamp: any) => stamp.operatingSystem).filter(Boolean))].join(', ') || 'Not Available',
   };
 }
 
@@ -206,6 +240,10 @@ function SignatureBlock({ title, approval }: { title: string; approval: any }) {
       <strong className="block border-t border-foreground pt-2">{title}</strong>
       <span className="mt-1 block text-muted-foreground">{approval?.name}</span>
       <span className="mt-1 block text-muted-foreground">Approved: {approval?.date}</span>
+      <span className="mt-1 block break-words text-muted-foreground">IP Address: {approval?.ipAddress || 'Not Available'}</span>
+      <span className="mt-1 block text-muted-foreground">Device: {approval?.deviceType || 'Not Available'}</span>
+      <span className="mt-1 block break-words text-muted-foreground">Browser: {approval?.browserName || 'Not Available'}</span>
+      <span className="mt-1 block break-words text-muted-foreground">Operating system: {approval?.operatingSystem || 'Not Available'}</span>
     </div>
   );
 }
@@ -417,15 +455,61 @@ export default function PaymentVoucherView() {
     const content = document.getElementById('voucher-content');
     if (!content) return;
 
+    await Promise.all([...content.querySelectorAll('img')].map(async (img) => {
+      const name = img.alt || img.getAttribute('src')?.split('/').pop() || 'voucher image';
+      if (!img.complete) await new Promise<void>((resolve, reject) => {
+        img.addEventListener('load', () => resolve(), { once: true });
+        img.addEventListener('error', () => reject(new Error(`${name} did not load for the voucher PDF.`)), { once: true });
+      });
+      if (!img.naturalWidth || !img.naturalHeight) throw new Error(`${name} did not load for the voucher PDF.`);
+      if (typeof img.decode === 'function') await img.decode().catch(() => { throw new Error(`${name} could not be decoded for the voucher PDF.`); });
+    }));
+
     const [{ default: html2canvas }, { jsPDF }] = await Promise.all([
       import('html2canvas'),
       import('jspdf'),
     ]);
-    const canvas = await html2canvas(content, {
+    const clone = content.cloneNode(true) as HTMLElement;
+    clone.style.position = 'fixed';
+    clone.style.left = '-100000px';
+    clone.style.top = '0';
+    clone.style.width = `${content.getBoundingClientRect().width}px`;
+    clone.style.backgroundColor = '#ffffff';
+    if (!content.getBoundingClientRect().width || !content.getBoundingClientRect().height) {
+      throw new Error('The voucher is not visible, so it cannot be captured. Open the voucher and try again.');
+    }
+    document.body.appendChild(clone);
+    try {
+      const sourceImages = [...content.querySelectorAll('img')];
+      const clonedImages = [...clone.querySelectorAll('img')];
+      for (let index = 0; index < sourceImages.length; index += 1) {
+        const source = sourceImages[index];
+        const imageName = source.alt || source.currentSrc.split('/').pop() || `voucher image ${index + 1}`;
+        if (source.currentSrc.startsWith('data:')) {
+          clonedImages[index].src = source.currentSrc;
+          continue;
+        }
+        try {
+          const response = await fetch(source.currentSrc, { mode: 'cors', credentials: 'omit' });
+          if (!response.ok) throw new Error(`request returned ${response.status}`);
+          const blob = await response.blob();
+          if (blob.size === 0) throw new Error('image response was empty');
+          clonedImages[index].src = await new Promise<string>((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onload = () => typeof reader.result === 'string' ? resolve(reader.result) : reject(new Error('could not inline image'));
+            reader.onerror = () => reject(new Error('could not read image data'));
+            reader.readAsDataURL(blob);
+          });
+          if (typeof clonedImages[index].decode === 'function') await clonedImages[index].decode();
+        } catch (error) {
+          throw new Error(`${imageName} could not be loaded into the voucher PDF: ${error instanceof Error ? error.message : String(error)}`);
+        }
+      }
+      const canvas = await html2canvas(clone, {
       scale: 2,
-      useCORS: true,
+      useCORS: false,
       backgroundColor: '#ffffff',
-    });
+      });
     const pdf = new jsPDF('p', 'mm', 'a4');
     const pageWidth = pdf.internal.pageSize.getWidth();
     const pageHeight = pdf.internal.pageSize.getHeight();
@@ -447,7 +531,10 @@ export default function PaymentVoucherView() {
       heightLeft -= pageBodyHeight;
     }
 
-    return pdf;
+      return pdf;
+    } finally {
+      clone.remove();
+    }
   };
 
   const downloadVoucherPDF = async () => {
@@ -505,11 +592,16 @@ export default function PaymentVoucherView() {
       const pageSize: [number, number] = [595.28, 841.89];
       const margin = 36;
       let embeddedCount = 0;
+      let expectedPageCount = voucherPdf.getNumberOfPages();
       const failures: string[] = [];
+      const seenAttachmentHashes = new Set<string>();
 
       for (const fileId of voucherFileIds) {
         try {
           const attachment = await fetchAttachment(fileId);
+          const fingerprint = await sha256ContentFingerprint(attachment.bytes);
+          if (seenAttachmentHashes.has(fingerprint)) continue;
+          seenAttachmentHashes.add(fingerprint);
           const format = detectEmbeddableAttachmentFormat(attachment.bytes);
 
           if (format === 'pdf') {
@@ -517,14 +609,14 @@ export default function PaymentVoucherView() {
             if (sourcePdf.getPageCount() === 0) throw new Error('PDF contains no pages');
             const copiedPages = await mergedPdf.copyPages(sourcePdf, sourcePdf.getPageIndices());
             copiedPages.forEach((page) => mergedPdf.addPage(page));
+            expectedPageCount += copiedPages.length;
             embeddedCount += 1;
             continue;
           }
 
           if (format === 'png' || format === 'jpeg') {
-            const image = format === 'png'
-              ? await mergedPdf.embedPng(attachment.bytes)
-              : await mergedPdf.embedJpg(attachment.bytes);
+            const imageBytes = await normalizeImageForPdf(attachment.bytes, format, attachment.name);
+            const image = await mergedPdf.embedPng(imageBytes);
             const page = mergedPdf.addPage(pageSize);
             const { width, height } = page.getSize();
             page.drawText(`Attachment: ${attachment.name}`, { x: margin, y: height - 28, size: 10, font, color: rgb(0.17, 0.24, 0.31) });
@@ -540,6 +632,7 @@ export default function PaymentVoucherView() {
               height: drawHeight,
             });
             embeddedCount += 1;
+            expectedPageCount += 1;
             continue;
           }
 
@@ -556,7 +649,10 @@ export default function PaymentVoucherView() {
       }
 
       const bytes = await mergedPdf.save();
-      await PDFDocument.load(bytes);
+      const reopenedPdf = await PDFDocument.load(bytes);
+      if (reopenedPdf.getPageCount() !== expectedPageCount) {
+        throw new Error(`Combined PDF validation failed: expected ${expectedPageCount} pages but found ${reopenedPdf.getPageCount()}.`);
+      }
       downloadBlob(new Blob([new Uint8Array(bytes)], { type: 'application/pdf' }), `voucher-${voucher.fileName}-with-attachments.pdf`);
       toast.success(`Combined voucher PDF downloaded with ${embeddedCount} attachments`);
     } catch (error) {

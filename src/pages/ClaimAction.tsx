@@ -1,5 +1,5 @@
 import ExpenseApprovalEditor from '@/components/views/ExpenseApprovalEditor';
-import { initialRowAmounts, approvedRows, type RowAmounts } from '@/lib/expense-approval';
+import { initialRowAmounts, approvedRows, type ApprovalExpense, type RowAmounts } from '@/lib/expense-approval';
 import { useEffect, useMemo, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { approveClaimAsAdmin, approveClaimAsManager, approveClaimAsSuperAdmin, getClaimById, rejectClaim } from '@/lib/claims-api';
@@ -54,7 +54,7 @@ export default function ClaimAction() {
       }
       const data = await getClaimById(claimId);
       setClaim(data);
-      setRowAmounts(initialRowAmounts(data?.expenses || [], data?.verifiedAmount));
+      setRowAmounts(initialRowAmounts((data?.expenses || []) as unknown as ApprovalExpense[], data?.verifiedAmount));
       setLoading(false);
     }
 

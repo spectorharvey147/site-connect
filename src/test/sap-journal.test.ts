@@ -16,6 +16,7 @@ function fixture() {
       ...(['travel','da','other','boarding'] as const).map(code => ({ id: code,type: 'category',value: code,sap_expense_group: code,active: true })),
     ],
     users: [{ email: 'engineer@example.test',name: 'Engineer',role: 'User',active: true,sap_gl_code: '001214422433',sap_location_code: '3' }],
+    vendors: [{ id:'v-1',vendor_name:'Example Supplier',short_form:'ES',vendor_account_code:'VEND-100',active:true }],
   };
   const claim: SapClaim = { claim_id: 'C-1',claim_number: 'CLM-0001',site_name: 'AMC',user_email: 'engineer@example.test',customer_name: 'Customer',work_name: 'Maintenance',grand_total: 200,expense_items: [
     { id: 'e1',category: 'travel',project_code: 'P1',expense_date: '2026-09-19',amount_with_bill: 100,amount_without_bill: 0 },
@@ -99,6 +100,63 @@ describe('SAP journal export', () => {
   it('handles decimal amounts without floating point balance errors', () => {
     const { masters,claim,options }=fixture(); claim.grand_total=.3; claim.expense_items[0].amount_with_bill=.1;claim.expense_items[1].amount_without_bill=.2;
     expect(buildSapJournal([claim],masters,options).details.at(-1)?.[5]).toBe('0.30');
+  });
+  it('debits a vendor GL for the complete vendor-available tax invoice and keeps employee GL as credit', () => {
+    const { masters,claim,options }=fixture();
+    claim.expense_items=[{ id:'vendor-row',category:'travel',project_code:'P1',expense_date:'2026-09-19',amount_with_bill:118,amount_without_bill:0,has_tax_invoice:true,vendor_available:true,vendor_id:'v-1',vendor_account_code_snapshot:'VEND-100' }];
+    claim.grand_total=118;
+    const rows=buildSapJournal([claim],masters,options,[100001]).details.slice(2);
+    expect(rows).toEqual([[100001,6,6,'VEND-100','118.00','','Bangalor'],[100001,7,7,'001214422433','','118.00','Bangalor']]);
+  });
+  it('debits taxable value and configured CGST and SGST GLs when the vendor is unavailable', () => {
+    const { masters,claim,options }=fixture();
+    masters.gst_accounts=[{id:'g1',gst_type:'CGST',gl_code:'GST-C',active:true},{id:'g2',gst_type:'SGST',gl_code:'GST-S',active:true}];
+    claim.expense_items=[{ id:'gst-row',category:'other',project_code:'P1',expense_date:'2026-09-19',amount_with_bill:118,amount_without_bill:0,has_tax_invoice:true,vendor_available:false,taxable_amount:100,cgst_amount:9,sgst_amount:9,igst_amount:0 }];
+    claim.grand_total=118;
+    expect(buildSapJournal([claim],masters,options,[100002]).details.slice(2)).toEqual([
+      [100002,3,3,'4332000016','100.00','','Bangalor'],[100002,7,7,'GST-C','9.00','','Bangalor'],[100002,8,8,'GST-S','9.00','','Bangalor'],[100002,9,9,'001214422433','','118.00','Bangalor'],
+    ]);
+  });
+  it('debits taxable value and configured IGST GL when the vendor is unavailable', () => {
+    const { masters,claim,options }=fixture();
+    masters.gst_accounts=[{id:'g3',gst_type:'IGST',gl_code:'GST-I',active:true}];
+    claim.expense_items=[{ id:'igst-row',category:'other',project_code:'P1',expense_date:'2026-09-19',amount_with_bill:118,amount_without_bill:0,has_tax_invoice:true,vendor_available:false,taxable_amount:100,cgst_amount:0,sgst_amount:0,igst_amount:18 }];
+    claim.grand_total=118;
+    expect(buildSapJournal([claim],masters,options,[100003]).details.slice(2)).toEqual([
+      [100003,3,3,'4332000016','100.00','','Bangalor'],[100003,9,9,'GST-I','18.00','','Bangalor'],[100003,10,10,'001214422433','','118.00','Bangalor'],
+    ]);
+  });
+  it('rejects unbalanced invoice tax, missing vendor details and missing GST configuration', () => {
+    const { masters,claim,options }=fixture();
+    claim.expense_items=[{ id:'tax',category:'travel',project_code:'P1',expense_date:'2026-09-19',amount_with_bill:118,amount_without_bill:0,has_tax_invoice:true,vendor_available:false,taxable_amount:100,cgst_amount:9,sgst_amount:8,igst_amount:0 }]; claim.grand_total=118;
+    expect(()=>buildSapJournal([claim],masters,options)).toThrow('must equal the approved expense row amount');
+    claim.expense_items[0]={...claim.expense_items[0],vendor_available:true};
+    expect(()=>buildSapJournal([claim],masters,options)).toThrow('vendor SAP account code');
+    claim.expense_items[0]={...claim.expense_items[0],vendor_available:false,cgst_amount:18,sgst_amount:0};
+    expect(()=>buildSapJournal([claim],masters,options)).toThrow('Input CGST GL');
+  });
+  it('rejects an inactive vendor even if its old account snapshot is present', () => {
+    const { masters,claim,options }=fixture();
+    masters.vendors![0].active=false;
+    claim.expense_items=[{ id:'vendor-row',category:'travel',project_code:'P1',expense_date:'2026-09-19',amount_with_bill:118,amount_without_bill:0,has_tax_invoice:true,vendor_available:true,vendor_id:'v-1',vendor_account_code_snapshot:'VEND-100' }]; claim.grand_total=118;
+    expect(()=>buildSapJournal([claim],masters,options)).toThrow('inactive or missing');
+  });
+  it('balances normal, multiple vendor and IGST rows together in one claim journal', () => {
+    const { masters,claim,options }=fixture();
+    masters.vendors!.push({ id:'v-2',vendor_name:'Second Supplier',short_form:'SS',vendor_account_code:'VEND-200',active:true });
+    masters.gst_accounts=[{id:'g3',gst_type:'IGST',gl_code:'GST-I',active:true}];
+    claim.expense_items=[
+      { id:'a-normal',category:'travel',project_code:'P1',expense_date:'2026-09-19',amount_with_bill:10,amount_without_bill:0 },
+      { id:'b-vendor-1',category:'travel',project_code:'P1',expense_date:'2026-09-19',amount_with_bill:118,amount_without_bill:0,has_tax_invoice:true,vendor_available:true,vendor_id:'v-1',vendor_account_code_snapshot:'VEND-100' },
+      { id:'c-vendor-2',category:'other',project_code:'P1',expense_date:'2026-09-19',amount_with_bill:118,amount_without_bill:0,has_tax_invoice:true,vendor_available:false,taxable_amount:100,cgst_amount:0,sgst_amount:0,igst_amount:18 },
+    ];
+    claim.grand_total=246;
+    const rows=buildSapJournal([claim],masters,options,[100004]).details.slice(2);
+    expect(rows.filter(row=>row[4]).map(row=>[row[3],row[4]])).toEqual([
+      ['4330900007','10.00'],['4332000016','100.00'],['VEND-100','118.00'],['GST-I','18.00'],
+    ]);
+    expect(rows.filter(row=>row[5]).map(row=>[row[3],row[5]])).toEqual([['001214422433','246.00']]);
+    expect(rows.reduce((sum,row)=>sum+Number(row[4]||0)-Number(row[5]||0),0)).toBe(0);
   });
   it.each(['gl','category','location','project','customer'])('blocks a missing %s mapping', key => {
     const { masters,claim,options }=fixture();

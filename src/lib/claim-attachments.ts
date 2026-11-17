@@ -2,6 +2,20 @@ function uniqueFileIds(fileIds: string[]) {
   return [...new Set(fileIds.map((fileId) => String(fileId || '').trim()).filter(Boolean))];
 }
 
+export async function sha256ContentFingerprint(input: Blob | ArrayBuffer | Uint8Array) {
+  let bytes: ArrayBuffer;
+  if (input instanceof Blob) {
+    bytes = await input.arrayBuffer();
+  } else if (input instanceof Uint8Array) {
+    bytes = new ArrayBuffer(input.byteLength);
+    new Uint8Array(bytes).set(input);
+  } else {
+    bytes = input;
+  }
+  const digest = await crypto.subtle.digest('SHA-256', bytes);
+  return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, '0')).join('');
+}
+
 export type EmbeddableAttachmentFormat = 'pdf' | 'png' | 'jpeg' | 'unsupported';
 
 export function isStorageFolderEntry(entry: { id?: string | null; metadata?: unknown }) {
@@ -14,14 +28,17 @@ export function getAttachmentStorageRoots(fileIds: string[] | null | undefined) 
 
 type ClaimAttachmentSource = {
   fileIds?: string[];
+  generalFileIds?: string[];
   expenses?: Array<{ attachmentIds?: string[] }>;
 };
 
 export function collectVoucherFileIds(claims: ClaimAttachmentSource[] | null | undefined) {
-  return uniqueFileIds((claims || []).flatMap((claim) => [
-    ...(claim.fileIds || []),
-    ...((claim.expenses || []).flatMap((expense) => expense.attachmentIds || [])),
-  ]));
+  return uniqueFileIds((claims || []).flatMap((claim) => {
+    const rowFiles = (claim.expenses || []).flatMap((expense) => expense.attachmentIds || []);
+    const rowFileSet = new Set(rowFiles);
+    const generalFiles = (claim.generalFileIds || claim.fileIds || []).filter((fileId) => !rowFileSet.has(fileId));
+    return [...rowFiles, ...generalFiles];
+  }));
 }
 
 export function assignStoredFilesToExpenseRows<T extends { attachmentIds?: string[] }>(
@@ -80,7 +97,7 @@ export function resolveClaimAttachments(
   const rowFileIdSet = new Set(rowFileIds);
 
   return {
-    fileIds: uniqueFileIds([...storedClaimFileIds, ...rowFileIds]),
+    fileIds: uniqueFileIds([...rowFileIds, ...storedClaimFileIds]),
     generalFileIds: storedClaimFileIds.filter((fileId) => !rowFileIdSet.has(fileId)),
   };
 }

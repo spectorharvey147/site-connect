@@ -21,7 +21,7 @@ export default function ClaimAttachmentsSection({ claim }: { claim: AttachmentCl
   const rowFileSet = new Set(rowFileIds);
   const generalFileIds = unique(
     claim.generalFileIds || (claim.fileIds || []).filter((fileId) => !rowFileSet.has(fileId)),
-  );
+  ).filter((fileId) => !rowFileSet.has(fileId));
   const allFileIds = unique([...(claim.fileIds || []), ...generalFileIds, ...rowFileIds]);
   const shown = new Set<string>(generalFileIds);
   const expenseGroups = (claim.expenses || []).map((expense, index) => {

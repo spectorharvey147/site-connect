@@ -4,6 +4,7 @@ import { hashPassword, isDemoEmail } from '@/lib/auth';
 import { validatePassword } from '@/lib/password-validation';
 import { assignStoredFilesToExpenseRows, getAttachmentStorageRoots, isStorageFolderEntry, resolveClaimAttachments } from '@/lib/claim-attachments';
 import { resolveClaimWork } from '@/lib/accounting-api';
+import { isActiveAssignedManagerSubmitter } from '@/lib/claim-approval-routing';
 import {
   expenseFingerprint,
   findDuplicateExpensePair,
@@ -174,7 +175,7 @@ const demoClaims = [
     managerApprovalStatus: 'Not Started',
     fileIds: [],
     expenses: [
-      { category: 'Travel', projectCode: 'PROJ-METRO-CC-TRAVEL', claimDate: new Date().toISOString().slice(0, 10), description: 'Cab and local travel for site inspection', amountWithBill: 4200, amountWithoutBill: 0, amount: 4200 },
+      { id: 'demo-1-exp-1', category: 'Travel', projectCode: 'PROJ-METRO-CC-TRAVEL', claimDate: new Date().toISOString().slice(0, 10), description: 'Cab and local travel for site inspection', amountWithBill: 4200, amountWithoutBill: 0, amount: 4200 },
     ],
   },
   {
@@ -192,7 +193,7 @@ const demoClaims = [
     managerApprovalStatus: 'Pending',
     fileIds: [],
     expenses: [
-      { category: 'Food & Beverage', projectCode: 'PROJ-METRO-CC-FOOD', claimDate: new Date(Date.now() - 2 * 86400000).toISOString().slice(0, 10), description: 'Night shift refreshments', amountWithBill: 10000, amountWithoutBill: 2600, amount: 12600 },
+      { id: 'demo-2-exp-1', category: 'Food & Beverage', projectCode: 'PROJ-METRO-CC-FOOD', claimDate: new Date(Date.now() - 2 * 86400000).toISOString().slice(0, 10), description: 'Night shift refreshments', amountWithBill: 10000, amountWithoutBill: 2600, amount: 12600 },
     ],
   },
   {
@@ -210,7 +211,7 @@ const demoClaims = [
     managerApprovalStatus: 'Approved',
     fileIds: [],
     expenses: [
-      { category: 'Material', projectCode: 'PROJ-WARE-CC-MATERIAL', claimDate: new Date(Date.now() - 5 * 86400000).toISOString().slice(0, 10), description: 'Structural materials', amountWithBill: 65000, amountWithoutBill: 0, amount: 65000 },
+      { id: 'demo-3-exp-1', category: 'Material', projectCode: 'PROJ-WARE-CC-MATERIAL', claimDate: new Date(Date.now() - 5 * 86400000).toISOString().slice(0, 10), description: 'Structural materials', amountWithBill: 65000, amountWithoutBill: 0, amount: 65000 },
     ],
   },
   {
@@ -229,7 +230,7 @@ const demoClaims = [
     managerApprovalStatus: 'Rejected',
     fileIds: [],
     expenses: [
-      { category: 'Fuel', projectCode: 'PROJ-METRO-CC-FUEL', claimDate: new Date(Date.now() - 8 * 86400000).toISOString().slice(0, 10), description: 'Duplicate fuel claim', amountWithBill: 0, amountWithoutBill: 3200, amount: 3200 },
+      { id: 'demo-4-exp-1', category: 'Fuel', projectCode: 'PROJ-METRO-CC-FUEL', claimDate: new Date(Date.now() - 8 * 86400000).toISOString().slice(0, 10), description: 'Duplicate fuel claim', amountWithBill: 0, amountWithoutBill: 3200, amount: 3200 },
     ],
   },
 ];
@@ -759,14 +760,14 @@ export async function validateClaimSubmissionRules(userEmail: string, expenses: 
 
   const duplicatePair = findDuplicateExpensePair(expenses);
   if (duplicatePair) {
-    throw new Error(`Expenses #${duplicatePair.firstIndex + 1} and #${duplicatePair.duplicateIndex + 1} have the same date and amount.`);
+    throw new Error(`Expenses #${duplicatePair.firstIndex + 1} and #${duplicatePair.duplicateIndex + 1} have the same date, category, project code, and amount.`);
   }
 
   if (isDemoEmail(userEmail)) return;
 
   const { data, error } = await supabase
     .from('claims')
-    .select('claim_id, claim_number, status, expense_items(expense_date, amount_with_bill, amount_without_bill)')
+    .select('claim_id, claim_number, status, expense_items(expense_date, category, project_code, amount_with_bill, amount_without_bill)')
     .eq('user_email', userEmail);
   if (error) throw new Error(`Could not verify duplicate expenses: ${error.message}`);
 
@@ -778,13 +779,15 @@ export async function validateClaimSubmissionRules(userEmail: string, expenses: 
       if (!storedDate) continue;
       const fingerprint = expenseFingerprint({
         claimDate: storedDate,
+        category: storedExpense.category || '',
+        projectCode: storedExpense.project_code || '',
         amountWithBill: parseFloat(storedExpense.amount_with_bill || 0),
         amountWithoutBill: parseFloat(storedExpense.amount_without_bill || 0),
       });
       const submittedIndex = submittedFingerprints.get(fingerprint);
       if (submittedIndex != null) {
         const claimNumber = storedClaim.claim_number || storedClaim.claim_id;
-        throw new Error(`Possible duplicate: expense #${submittedIndex + 1} has the same date and amount as ${claimNumber}.`);
+        throw new Error(`Possible duplicate: expense #${submittedIndex + 1} matches the date, category, project code, and amount in ${claimNumber}.`);
       }
     }
   }
@@ -1013,12 +1016,13 @@ export async function getPendingSuperAdminClaims() {
   }));
 }
 
-async function commitRowApproval(claim: any, stage: string, rows: Record<string, number>, updates: any, note?: string) {
-  const { error } = await supabase.rpc('approve_claim_expense_rows', {
-    p_token: localStorage.getItem('claimsToken') || '', p_claim_id: claim.claim_id,
-    p_stage: stage, p_expected_status: claim.status, p_amounts: rows,
-    p_expected_total: updates.verified_amount, p_skip_manager: updates.manager_approval_status === 'Skipped', p_note: note || null,
-  });
+async function commitRowApproval(claim: any, stage: string, rows: Record<string, number>, updates: any, note?: string, accountingRows?: unknown[]) {
+  const rpc = stage === 'accounts' && accountingRows ? 'verify_claim_accounting_rows' : 'approve_claim_expense_rows';
+  const token = localStorage.getItem('claimsToken') || '';
+  const params = rpc === 'verify_claim_accounting_rows'
+    ? { p_token: token, p_claim_id: claim.claim_id, p_expected_status: claim.status, p_amounts: rows, p_expected_total: updates.verified_amount, p_accounting: accountingRows, p_note: note || null }
+    : { p_token: token, p_claim_id: claim.claim_id, p_stage: stage, p_expected_status: claim.status, p_amounts: rows, p_expected_total: updates.verified_amount, p_skip_manager: updates.manager_approval_status === 'Skipped', p_note: note || null };
+  const { error } = await supabase.rpc(rpc, params);
   if (error) throw new Error(error.code === 'PGRST202' ? 'Row-wise approval needs the database update. Please apply the approval migration before approving.' : error.message);
   return { error: null };
 }
@@ -1115,7 +1119,18 @@ export async function approveClaimAsAdmin(claimId: string, approverEmail: string
   const settings = await getCompanySettings();
   const requireManager = settings?.require_manager_approval ?? true;
   const managerEmail = String(c.manager_email || '').trim().toLowerCase();
-  const skipManagerStage = !requireManager || !managerEmail || (await isManagerAlsoSuperAdmin(managerEmail));
+  const submitterEmail = String(c.user_email || '').trim().toLowerCase();
+  let isAssignedManagerSubmitter = false;
+  if (requireManager && managerEmail && managerEmail === submitterEmail) {
+    const { data: submitter } = await supabase.from('users').select('active,role').eq('email', submitterEmail).maybeSingle();
+    isAssignedManagerSubmitter = isActiveAssignedManagerSubmitter({
+      submitterEmail,
+      managerEmail,
+      managerRole: submitter?.role,
+      managerActive: submitter?.active,
+    });
+  }
+  const skipManagerStage = !requireManager || !managerEmail || (await isManagerAlsoSuperAdmin(managerEmail)) || isAssignedManagerSubmitter;
   if (!skipManagerStage) {
     const { data: assignedManager } = await supabase.from('users').select('active,role').eq('email', managerEmail).single();
     if (!assignedManager?.active || !['Manager', 'Super Admin'].includes(assignedManager.role)) {
@@ -1142,7 +1157,8 @@ export async function approveClaimAsAdmin(claimId: string, approverEmail: string
   }
 
   const amountNote = `Submitted: Rs. ${submittedAmount.toLocaleString('en-IN')} | Verified: Rs. ${verifiedAmount.toLocaleString('en-IN')}`;
-  await logAudit('claim_admin_verified', approverEmail, 'claim', claimId, `${amountNote}${description ? ` | ${description}` : ''}${skipManagerStage ? ' | Manager stage skipped' : ' | Forwarded to manager'}`);
+  const selfManagerSkipReason = 'Manager approval automatically skipped because the claim was submitted by the assigned project manager.';
+  await logAudit('claim_admin_verified', approverEmail, 'claim', claimId, `${amountNote}${description ? ` | ${description}` : ''}${isAssignedManagerSubmitter ? ` | ${selfManagerSkipReason}` : skipManagerStage ? ' | Manager stage skipped' : ' | Forwarded to manager'}`);
   await createNotification(c.user_email, 'Claim Verified by Admin', `Your claim ${claimId} has been verified by admin for Rs. ${verifiedAmount.toLocaleString('en-IN')}.`, 'success', claimId);
 
   const appUrl = getAppUrl(settings);
@@ -1774,7 +1790,7 @@ export async function ensurePaymentVoucherCode(claimId: string) {
   return String(data || '');
 }
 
-export async function approveClaimAsAccounts(claimId: string, accountsEmail: string, note?: string, processingAmountInput?: number, rowAmounts?: Record<string, number>) {
+export async function approveClaimAsAccounts(claimId: string, accountsEmail: string, note?: string, processingAmountInput?: number, rowAmounts?: Record<string, number>, accountingRows?: unknown[]) {
   if (isDemoEmail(accountsEmail)) return;
 
   const { data: claim } = await supabase.from('claims').select('*').eq('claim_id', claimId).single();
@@ -1793,7 +1809,7 @@ export async function approveClaimAsAccounts(claimId: string, accountsEmail: str
     accounts_note: note || null,
     verified_amount: amount,
   };
-  const { error } = rowAmounts ? await commitRowApproval(c, 'accounts', rowAmounts, updates, note) : await supabase.from('claims').update(updates).eq('claim_id', claimId);
+  const { error } = rowAmounts ? await commitRowApproval(c, 'accounts', rowAmounts, updates, note, accountingRows) : await supabase.from('claims').update(updates).eq('claim_id', claimId);
   if (error) throw error;
 
   await logAudit('claim_accounts_verified', accountsEmail, 'claim', claimId, note ? `Amount: Rs. ${amount} | ${note}` : `Amount: Rs. ${amount}`);
@@ -2085,6 +2101,15 @@ export async function getClaimById(claimId: string) {
   const rawExpenses = (items || []).map((e: any) => ({
     id: e.id,
     approvedAmount: e.approved_amount == null ? null : Number(e.approved_amount),
+    hasTaxInvoice: e.has_tax_invoice,
+    vendorAvailable: e.vendor_available,
+    vendorId: e.vendor_id,
+    vendorAccountCodeSnapshot: e.vendor_account_code_snapshot,
+    vendorShortFormSnapshot: e.vendor_short_form_snapshot,
+    taxableAmount: e.taxable_amount == null ? null : Number(e.taxable_amount),
+    cgstAmount: e.cgst_amount == null ? null : Number(e.cgst_amount),
+    sgstAmount: e.sgst_amount == null ? null : Number(e.sgst_amount),
+    igstAmount: e.igst_amount == null ? null : Number(e.igst_amount),
     category: e.category,
     projectCode: e.project_code,
     customerName: e.customer_name || c.customer_name || '',
@@ -2151,6 +2176,11 @@ export type ApprovalStamp = {
   date: string;
   signatureUrl?: string;
   remarks?: string;
+  ipAddress?: string | null;
+  userAgent?: string;
+  browserName?: string;
+  operatingSystem?: string;
+  deviceType?: string;
 };
 
 export type ClaimApprovalTrail = {
@@ -2160,6 +2190,22 @@ export type ClaimApprovalTrail = {
   accounts?: ApprovalStamp;
   paid?: ApprovalStamp;
   rejected?: ApprovalStamp;
+};
+
+type ApprovalIdentityEvent = {
+  claim_id: string;
+  approval_stage: string;
+  action: string;
+  actor_email: string | null;
+  actor_name: string | null;
+  approved_at: string;
+  ip_address: string | null;
+  user_agent: string | null;
+  browser_name: string | null;
+  operating_system: string | null;
+  device_type: string | null;
+  signature_snapshot_url: string | null;
+  remarks: string | null;
 };
 
 function approvalStamp(
@@ -2198,7 +2244,7 @@ export async function getClaimApprovalTrail(claimIds: string[]): Promise<Record<
   }
 
   let claimRows: any[] = [];
-  const claimSelect = 'claim_id,status,manager_email,manager_approval_date,admin_email,admin_approval_date,final_approval_email,final_approval_date,accounts_verified_email,accounts_verified_date,paid_email,paid_date';
+  const claimSelect = 'claim_id,status,user_email,manager_email,manager_approval_status,manager_approval_date,admin_email,admin_approval_date,final_approval_email,final_approval_date,accounts_verified_email,accounts_verified_date,paid_email,paid_date';
   const { data: rowsWithFinal, error: rowsWithFinalError } = await supabase
     .from('claims')
     .select(claimSelect)
@@ -2207,7 +2253,7 @@ export async function getClaimApprovalTrail(claimIds: string[]): Promise<Record<
   if (rowsWithFinalError && isMissingFinalApprovalColumnError(rowsWithFinalError)) {
     const { data: rowsWithoutFinal } = await supabase
       .from('claims')
-      .select('claim_id,status,manager_email,manager_approval_date,admin_email,admin_approval_date')
+      .select('claim_id,status,user_email,manager_email,manager_approval_status,manager_approval_date,admin_email,admin_approval_date')
       .in('claim_id', uniqueIds);
     claimRows = (rowsWithoutFinal || []) as any[];
   } else {
@@ -2219,8 +2265,11 @@ export async function getClaimApprovalTrail(claimIds: string[]): Promise<Record<
     .select('target_id,action,performed_by,created_at,details')
     .eq('target_type', 'claim')
     .in('target_id', uniqueIds)
-    .in('action', ['claim_admin_verified', 'claim_manager_approved', 'claim_admin_approved', 'claim_final_approved', 'claim_accounts_verified', 'claim_paid', 'claim_rejected'])
+    .in('action', ['claim_admin_verified', 'claim_manager_approved', 'claim_admin_approved', 'claim_final_approved', 'claim_accounts_verified', 'claim_paid', 'claim_rejected', 'claim_expense_amounts_approved'])
     .order('created_at', { ascending: true });
+  const { data: identityEvents } = await supabase.from('claim_approval_events' as any)
+    .select('claim_id,approval_stage,action,actor_email,actor_name,approved_at,ip_address,user_agent,browser_name,operating_system,device_type,signature_snapshot_url,remarks')
+    .in('claim_id', uniqueIds).order('approved_at', { ascending: true });
 
   const emails = new Set<string>();
   claimRows.forEach((row) => {
@@ -2261,12 +2310,26 @@ export async function getClaimApprovalTrail(claimIds: string[]): Promise<Record<
   }
 
   const trails: Record<string, ClaimApprovalTrail> = Object.fromEntries(uniqueIds.map((id) => [id, {}]));
+  const selfManagerSkipReason = 'Manager approval automatically skipped because the claim was submitted by the assigned project manager.';
+  const selfManagerSkipClaims = new Set((auditRows || [])
+    .filter((row: any) => String(row.action || '') === 'claim_admin_verified' || String(row.action || '') === 'claim_expense_amounts_approved')
+    .filter((row: any) => String(row.details || '').includes(selfManagerSkipReason))
+    .map((row: any) => String(row.target_id || '')));
 
   claimRows.forEach((row) => {
     const id = String(row.claim_id || '');
     if (!id) return;
     const trail = trails[id] || {};
-    trail.manager = approvalStamp(row.manager_email, row.manager_approval_date, usersMap) || trail.manager;
+    if (String(row.manager_approval_status || '').toLowerCase() === 'skipped' && selfManagerSkipClaims.has(id)) {
+      trail.manager = {
+        name: 'Manager approval automatically skipped',
+        email: '',
+        date: row.manager_approval_date || row.admin_approval_date || '',
+        remarks: 'Manager approval automatically skipped because the claim was submitted by the assigned project manager.',
+      };
+    } else {
+      trail.manager = approvalStamp(row.manager_email, row.manager_approval_date, usersMap) || trail.manager;
+    }
     trail.final = approvalStamp(row.final_approval_email, row.final_approval_date, usersMap) || trail.final;
     trail.accounts = approvalStamp(row.accounts_verified_email, row.accounts_verified_date, usersMap) || trail.accounts;
     trail.paid = approvalStamp(row.paid_email, row.paid_date, usersMap) || trail.paid;
@@ -2276,6 +2339,26 @@ export async function getClaimApprovalTrail(claimIds: string[]): Promise<Record<
       if (trail.final || !isSettledStatus(row.status)) trail.admin = adminStamp;
       else trail.final = adminStamp;
     }
+    trails[id] = trail;
+  });
+
+  const approvalIdentityEvents = (identityEvents || []) as unknown as ApprovalIdentityEvent[];
+  approvalIdentityEvents.forEach((event) => {
+    const id = String(event.claim_id || '');
+    const stage = String(event.approval_stage || '').toLowerCase();
+    const key = stage.includes('manager') ? 'manager' : stage.includes('admin') && stage.includes('hod') ? 'final'
+      : stage === 'admin' ? 'admin' : stage === 'accounts' ? 'accounts' : stage === 'payment' ? 'paid' : stage === 'approval' ? 'rejected' : null;
+    if (!id || !key) return;
+    const trail = trails[id] || {};
+    const managerSkippedForSubmitter = stage.includes('manager')
+      && String(event.action || '').toLowerCase() === 'skipped'
+      && selfManagerSkipClaims.has(id);
+    trail[key] = {
+      name: event.actor_name || event.actor_email || 'Not Available', email: event.actor_email || '', date: event.approved_at,
+      signatureUrl: event.signature_snapshot_url || '', remarks: managerSkippedForSubmitter ? selfManagerSkipReason : event.remarks || undefined,
+      ipAddress: event.ip_address || null, userAgent: event.user_agent || undefined,
+      browserName: event.browser_name || undefined, operatingSystem: event.operating_system || undefined, deviceType: event.device_type || undefined,
+    };
     trails[id] = trail;
   });
 

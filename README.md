@@ -6,6 +6,8 @@
 
 ## How can I edit this code?
 
+Accounting setup, vendor GST verification, SAP journal treatment, approval identity limits and migration instructions are documented in [Vendor, GST and Approval Identity](docs/VENDOR_GST_AND_APPROVAL_IDENTITY.md). Claim routing, duplicate checks and attachment/PDF behavior are documented in [Claim Routing, Duplicates and Attachments](docs/claims-attachments-and-approval-routing.md).
+
 There are several ways of editing your application.
 
 **Use Lovable**

@@ -27,9 +27,13 @@
 
 Important:
 
-- Accepted attachments currently support JPG/JPEG and PDF.
+- Accepted attachments support JPG/JPEG, PNG, and PDF. WebP and HEIC/HEIF are not accepted by the claim uploader.
+- Each expense row with a bill amount needs at least one bill attached directly to that row. Additional documents can be added in the separate, optional claim-level section.
+- Matching files selected in multiple upload areas are compared by SHA-256 during submission; the row attachment is kept as the canonical reference.
 - If manager approval is enabled and the user has a manager assigned, the claim goes to manager first.
 - If manager approval is disabled or no manager is assigned, the claim goes directly to Admin/Super Admin.
+- If an active Manager submits a claim for work assigned to that same Manager, Admin verification sends it directly to HOD/Super Admin. The timeline records the skipped stage. A Manager cannot approve their own claim.
+- Possible duplicate expenses are identified by date, normalized category, project code, and total amount in paise. Rejected claims do not block resubmission.
 
 ## 4. Claim Approval
 
@@ -43,6 +47,7 @@ Important:
 
 - Open `Approval`.
 - Review claims pending final approval.
+- A self-submitted claim for work assigned to the submitting Manager skips the manager queue after Admin verification.
 - Approve or reject.
 
 Email approval:
