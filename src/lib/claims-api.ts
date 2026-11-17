@@ -1016,15 +1016,31 @@ export async function getPendingSuperAdminClaims() {
   }));
 }
 
-async function commitRowApproval(claim: any, stage: string, rows: Record<string, number>, updates: any, note?: string, accountingRows?: unknown[]) {
-  const rpc = stage === 'accounts' && accountingRows ? 'verify_claim_accounting_rows' : 'approve_claim_expense_rows';
+async function callClaimApproval(stage: string, action: string, claimId: string, payload: Record<string, unknown>) {
   const token = localStorage.getItem('claimsToken') || '';
-  const params = rpc === 'verify_claim_accounting_rows'
-    ? { p_token: token, p_claim_id: claim.claim_id, p_expected_status: claim.status, p_amounts: rows, p_expected_total: updates.verified_amount, p_accounting: accountingRows, p_note: note || null }
-    : { p_token: token, p_claim_id: claim.claim_id, p_stage: stage, p_expected_status: claim.status, p_amounts: rows, p_expected_total: updates.verified_amount, p_skip_manager: updates.manager_approval_status === 'Skipped', p_note: note || null };
-  const { error } = await supabase.rpc(rpc, params);
-  if (error) throw new Error(error.code === 'PGRST202' ? 'Row-wise approval needs the database update. Please apply the approval migration before approving.' : error.message);
+  const { data, error } = await supabase.functions.invoke('claim-approval', {
+    body: { token, claimId, stage, action, payload, eventId: crypto.randomUUID() },
+  });
+  if (error) {
+    const response = error.context as Response | undefined;
+    const detail = response && typeof response.json === 'function'
+      ? await response.clone().json().catch(() => null)
+      : null;
+    throw new Error(detail?.message || error.message || 'Approval could not be completed');
+  }
+  if (!data?.ok) throw new Error(data?.message || 'Approval could not be completed');
   return { error: null };
+}
+
+async function commitRowApproval(claim: any, stage: string, rows: Record<string, number>, updates: any, note?: string, accountingRows?: unknown[]) {
+  return callClaimApproval(stage, 'approve', claim.claim_id, {
+    expectedStatus: claim.status,
+    amounts: rows,
+    expectedTotal: updates.verified_amount,
+    skipManager: updates.manager_approval_status === 'Skipped',
+    note: note || null,
+    accountingRows: accountingRows || null,
+  });
 }
 
 export async function approveClaimAsManager(claimId: string, approverEmail: string, description?: string, verifiedAmountInput?: number, rowAmounts?: Record<string, number>) {
@@ -1048,10 +1064,8 @@ export async function approveClaimAsManager(claimId: string, approverEmail: stri
   if (verifiedAmountInput != null) {
     updates.verified_amount = normalizeVerifiedAmount(verifiedAmountInput, getClaimAmount(claimData) || getSubmittedAmount(claimData), getSubmittedAmount(claimData));
   }
-  const { error } = rowAmounts ? await commitRowApproval(claimData, 'manager', rowAmounts, updates, description) : claimData.work_id
-    ? await (supabase as any).rpc('act_on_work_claim', { p_token: localStorage.getItem('claimsToken') || '', p_claim_id: claimId, p_approve: true, p_amount: updates.verified_amount ?? getClaimAmount(claimData), p_note: description || null })
-    : await supabase.from('claims').update(updates).eq('claim_id', claimId);
-  if (error) throw error;
+  if (rowAmounts) await commitRowApproval(claimData, 'manager', rowAmounts, updates, description);
+  else await callClaimApproval('manager', 'approve', claimId, { expectedStatus: claimData.status, verifiedAmount: updates.verified_amount ?? getClaimAmount(claimData), note: description || null });
 
   await logAudit('claim_manager_approved', approverEmail, 'claim', claimId, description || undefined);
   if (claim) {
@@ -1147,14 +1161,8 @@ export async function approveClaimAsAdmin(claimId: string, approverEmail: string
     admin_approval_date: new Date().toISOString(),
     verified_amount: verifiedAmount,
   };
-  const { error } = rowAmounts ? await commitRowApproval(c, 'admin', rowAmounts, claimUpdates, description) : await supabase.from('claims').update(claimUpdates).eq('claim_id', claimId);
-  if (error) {
-    if (!isMissingVerifiedAmountColumnError(error)) throw error;
-    const { verified_amount, ...fallbackUpdates } = claimUpdates;
-    const { error: fallbackError } = await supabase.from('claims').update(fallbackUpdates).eq('claim_id', claimId);
-    if (fallbackError) throw fallbackError;
-    console.warn('verified_amount column is not available yet; admin verified amount was not persisted.');
-  }
+  if (rowAmounts) await commitRowApproval(c, 'admin', rowAmounts, claimUpdates, description);
+  else await callClaimApproval('admin', 'approve', claimId, { expectedStatus: c.status, verifiedAmount, skipManager: skipManagerStage, note: description || null });
 
   const amountNote = `Submitted: Rs. ${submittedAmount.toLocaleString('en-IN')} | Verified: Rs. ${verifiedAmount.toLocaleString('en-IN')}`;
   const selfManagerSkipReason = 'Manager approval automatically skipped because the claim was submitted by the assigned project manager.';
@@ -1242,17 +1250,8 @@ export async function approveClaimAsSuperAdmin(claimId: string, approverEmail: s
     final_approval_date: finalApprovalDate,
     verified_amount: amount,
   };
-  const { error } = rowAmounts ? await commitRowApproval(c, 'super-admin', rowAmounts, updates, description) : await supabase.from('claims').update(updates).eq('claim_id', claimId);
-  if (error) {
-    if (!isMissingFinalApprovalColumnError(error)) throw error;
-    const { error: fallbackError } = await supabase.from('claims').update({
-      status: STATUS_ACCOUNTS_VERIFICATION,
-      admin_email: approverEmail,
-      admin_approval_date: finalApprovalDate,
-      verified_amount: amount,
-    } as any).eq('claim_id', claimId);
-    if (fallbackError) throw fallbackError;
-  }
+  if (rowAmounts) await commitRowApproval(c, 'super-admin', rowAmounts, updates, description);
+  else await callClaimApproval('super-admin', 'approve', claimId, { expectedStatus: c.status, verifiedAmount: amount, note: description || null });
 
   const approvedAmount = amount;
     const emailSummary = await getClaimEmailSummary(claimId, c);
@@ -1809,8 +1808,8 @@ export async function approveClaimAsAccounts(claimId: string, accountsEmail: str
     accounts_note: note || null,
     verified_amount: amount,
   };
-  const { error } = rowAmounts ? await commitRowApproval(c, 'accounts', rowAmounts, updates, note, accountingRows) : await supabase.from('claims').update(updates).eq('claim_id', claimId);
-  if (error) throw error;
+  if (rowAmounts) await commitRowApproval(c, 'accounts', rowAmounts, updates, note, accountingRows);
+  else await callClaimApproval('accounts', 'approve', claimId, { expectedStatus: c.status, verifiedAmount: amount, note: note || null });
 
   await logAudit('claim_accounts_verified', accountsEmail, 'claim', claimId, note ? `Amount: Rs. ${amount} | ${note}` : `Amount: Rs. ${amount}`);
   await createNotification(c.user_email, 'Accounts Verified', `Your claim ${c.claim_number || claimId} has been verified by accounts and is pending SAP entry.`, 'info', claimId);
@@ -1848,15 +1847,12 @@ export async function markClaimPaid(claimId: string, accountsEmail: string, paid
   const paidDate = new Date().toISOString();
   const voucherCode = await ensurePaymentVoucherCode(claimId);
 
-  const { error } = await supabase.from('claims').update({
-    status: STATUS_PAID,
-    paid_email: accountsEmail,
-    paid_date: paidDate,
-    paid_amount: paidAmount,
-    payment_reference: paymentReference || null,
-    payment_note: note || null,
-  } as any).eq('claim_id', claimId);
-  if (error) throw error;
+  await callClaimApproval('payment', 'paid', claimId, {
+    expectedStatus: c.status,
+    paidAmount,
+    paymentReference: paymentReference || null,
+    note: note || null,
+  });
 
   const { error: txError } = await supabase.from('transactions').insert({
     user_email: c.user_email,
@@ -1913,18 +1909,7 @@ export async function rejectClaim(claimId: string, reason: string, rejectorEmail
     throw new Error(`This rejection link is no longer valid. The claim is currently "${currentStatus || 'Unknown'}".`);
   }
 
-  const updates: any = { status: 'Rejected', rejection_reason: reason };
-  if (normalizedRole === 'manager') {
-    updates.manager_approval_status = 'Rejected';
-  } else {
-    updates.admin_email = rejectorEmail;
-    updates.admin_approval_date = new Date().toISOString();
-  }
-
-  const { error } = normalizedRole === 'manager' && currentClaim.work_id
-    ? await (supabase as any).rpc('act_on_work_claim', { p_token: localStorage.getItem('claimsToken') || '', p_claim_id: claimId, p_approve: false, p_note: reason })
-    : await supabase.from('claims').update(updates).eq('claim_id', claimId);
-  if (error) throw error;
+  await callClaimApproval(normalizedRole === 'super admin' ? 'super-admin' : normalizedRole, 'reject', claimId, { expectedStatus: currentStatus, note: reason });
 
   // Refund transaction
   const claim = currentClaim;
@@ -2193,6 +2178,7 @@ export type ClaimApprovalTrail = {
 };
 
 type ApprovalIdentityEvent = {
+  id: string;
   claim_id: string;
   approval_stage: string;
   action: string;
@@ -2268,8 +2254,17 @@ export async function getClaimApprovalTrail(claimIds: string[]): Promise<Record<
     .in('action', ['claim_admin_verified', 'claim_manager_approved', 'claim_admin_approved', 'claim_final_approved', 'claim_accounts_verified', 'claim_paid', 'claim_rejected', 'claim_expense_amounts_approved'])
     .order('created_at', { ascending: true });
   const { data: identityEvents } = await supabase.from('claim_approval_events' as any)
-    .select('claim_id,approval_stage,action,actor_email,actor_name,approved_at,ip_address,user_agent,browser_name,operating_system,device_type,signature_snapshot_url,remarks')
+    .select('id,claim_id,approval_stage,action,actor_email,actor_name,approved_at,ip_address,user_agent,browser_name,operating_system,device_type,signature_snapshot_url,remarks')
     .in('claim_id', uniqueIds).order('approved_at', { ascending: true });
+
+  let signedSnapshots: Record<string, string> = {};
+  if ((identityEvents || []).some((event) => event.signature_snapshot_url && !String(event.signature_snapshot_url).startsWith('http'))) {
+    const { data, error } = await supabase.functions.invoke('claim-approval', {
+      body: { action: 'signatures', token: localStorage.getItem('claimsToken') || '', claimIds: uniqueIds },
+    });
+    if (error) console.warn('Could not load private approval signature snapshots', error.message);
+    else signedSnapshots = data?.signatures || {};
+  }
 
   const emails = new Set<string>();
   claimRows.forEach((row) => {
@@ -2355,7 +2350,8 @@ export async function getClaimApprovalTrail(claimIds: string[]): Promise<Record<
       && selfManagerSkipClaims.has(id);
     trail[key] = {
       name: event.actor_name || event.actor_email || 'Not Available', email: event.actor_email || '', date: event.approved_at,
-      signatureUrl: event.signature_snapshot_url || '', remarks: managerSkippedForSubmitter ? selfManagerSkipReason : event.remarks || undefined,
+      signatureUrl: event.signature_snapshot_url?.startsWith('http') ? event.signature_snapshot_url : signedSnapshots[event.id] || '',
+      remarks: managerSkippedForSubmitter ? selfManagerSkipReason : event.remarks || undefined,
       ipAddress: event.ip_address || null, userAgent: event.user_agent || undefined,
       browserName: event.browser_name || undefined, operatingSystem: event.operating_system || undefined, deviceType: event.device_type || undefined,
     };

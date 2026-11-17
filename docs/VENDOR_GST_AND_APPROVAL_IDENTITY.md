@@ -8,7 +8,9 @@ Accounts verification records tax invoice details per expense row. A tax invoice
 
 The OJDT and JDT1 column layouts, normal expense GL mappings, project and location fields, journal sequence and export batch snapshots remain in the existing export flow. The journal builder adds debit lines for the saved vendor or configured Input GST accounts as needed.
 
-Approval transitions captured by the database now create immutable event rows with the actor, stage, action, timestamp, remarks, signature URL snapshot and browser/device details when the request User-Agent is available. Existing approval workflow and RPC remain in use.
+Approval actions now pass through `supabase/functions/claim-approval`. The function validates the existing custom app session, reads the client IP only from Supabase's platform-set `cf-connecting-ip` header, and ignores caller-supplied forwarded-IP values. It copies the approver's current PNG/JPEG signature into a private `approval-signatures` bucket before calling the service-role-only database RPC. The claim status change and identity event are committed together. A missing or invalid IP is stored as NULL and shown as Not Available. The timeline and voucher request short-lived signed URLs for private signature snapshots.
+
+Browser, operating system, and device labels are inferred from User-Agent. These values and the observed network IP are supporting audit evidence, not proof of physical identity. VPNs, mobile networks, and shared Wi-Fi can affect the observed IP. New approval snapshots are private and use unique object paths; changing a profile signature does not overwrite them.
 
 ## Accounting examples
 
@@ -32,7 +34,7 @@ Vendor unavailable, taxable value Rs. 10,000 and IGST Rs. 1,800 uses the existin
 
 ## Migration and deployment
 
-The additive migrations are `supabase/migrations/20261117054647_vendor_gst_approval_identity.sql` and `supabase/migrations/20261117055612_claim_duplicate_self_approval.sql`. The first creates the two accounting master tables and approval event table, adds tax fields to `expense_items`, and installs session-checked master and accounting verification RPCs. The second installs manager self-approval routing and database duplicate-expense enforcement. They do not seed/invent vendors or GST account numbers and do not modify historical SAP exports.
+The migrations are `supabase/migrations/20261117054647_vendor_gst_approval_identity.sql`, `supabase/migrations/20261117055612_claim_duplicate_self_approval.sql`, and `supabase/migrations/20261117061000_approval_identity_edge_route.sql` (the final timestamp will be aligned with Supabase migration history when applied). The first two are already applied to the configured project. The approval route migration adds retry keys for new events, creates a service-role-only RPC, and records IP, User-Agent, and private signature paths without changing claim or expense values. Existing event rows are left untouched. Deploy the `claim-approval` Edge Function after the migration; its private signature bucket is created on demand when a signer has a profile signature.
 
 From a machine with the Supabase CLI, Docker and the intended local Supabase project available:
 
@@ -53,21 +55,18 @@ After confirming the project and backup, apply with `supabase db push --linked`.
 
 ## Approval identity limits
 
-IP address is intentionally stored as NULL by the current database trigger. This application has no `claim-approval` Edge Function and its current decision paths call database RPCs directly. The browser cannot provide trustworthy IP evidence by submitting a form field, so the timeline and voucher show **Not Available** instead of claiming an IP. A trusted server-side Edge Function must be added and made the only approval entry point before IP capture can be considered reliable.
-
-Browser and device are derived from the request User-Agent where available. User-Agent and IP are supporting audit evidence, not proof of physical identity. VPNs, mobile networks and shared Wi-Fi can affect observed IPs. The event keeps the approval-time signature URL reference; if the backing signature object is replaced or its URL expires, immutable private storage snapshots are still needed for guaranteed historical rendering.
+The approval identity migration and Edge Function are prepared in this branch but have not yet been applied/deployed to the live project. Until both are active and the frontend release is live, existing approvals continue through the deployed workflow. The existing `user-avatars` bucket contains profile signatures and remains public under the current application setup; new approval-time copies are stored in the private bucket. IP and device data remain supporting evidence rather than a determination of physical identity.
 
 ## Verification
 
-Run `npm install`, `npm run lint`, `npm run build`, and `npm test` from the project root. SAP journal unit tests cover the legacy treatment, vendor-available treatment, CGST/SGST, IGST, and missing or unbalanced tax data. Supabase migration and Edge Function checks require the Supabase CLI/local database and Deno respectively.
+The app type check, production build, and Vitest suite passed locally (108 tests after the approval identity tests were added). Repo-wide lint continues to report existing `no-explicit-any` violations. The Edge Function has not yet been deployed or runtime-checked against a staging project. The three migrations must be applied in the correct order to the configured database before the new frontend route is used.
 
 ## Rollback guidance
 
 Prefer a forward fix migration. If rollback is required before any new records are entered, restore the pre-deployment database backup and redeploy the prior frontend. Do not drop the additive tables or columns after vendors, tax verification records or approval evidence have been written; that would remove audit history. No automated destructive rollback is provided.
 
-## Known limitations requiring completion before production acceptance
+## Remaining deployment steps
 
-- The trusted approval Edge Function and reliable server-observed IP capture are not implemented in this repository; no `claim-approval` function exists here. Approval events currently show IP as Not Available.
-- Approval signatures are snapshotted by URL reference, not copied into immutable private storage.
-- This workspace currently has no `.git` metadata or Git remote. `npm` is unavailable here, so dependencies were installed with `pnpm`; the app build and tests ran. Branch creation, commit and GitHub upload require the intended full Git checkout.
-- No linked Supabase project reference is configured in the CLI workspace. Confirm the intended project and backup before using the remote preview/apply commands.
+- Apply the approval identity migration after confirming the current production backup, then deploy `claim-approval` with JWT gateway verification disabled because the function validates the application's custom session token itself.
+- Release this branch's frontend so all approval, rejection, payment, and private signature reads use the Edge Function.
+- Test a real approval from desktop and mobile with the function logs and verify that a missing IP remains NULL, a valid IP is recorded, and the signature still renders after the profile signature changes.
