@@ -11,9 +11,9 @@ describe('approval identity capture helpers', () => {
   });
 
   it('accepts only signature objects in the profile signature folder', () => {
-    expect(profileSignatureStoragePath('https://project.supabase.co/storage/v1/object/public/user-avatars/signatures/person@example.com/123.png'))
+    expect(profileSignatureStoragePath('https://project.supabase.co/storage/v1/object/public/user-avatars/signatures/person@example.com/123.png', 'https://project.supabase.co'))
       .toBe('signatures/person@example.com/123.png');
-    expect(profileSignatureStoragePath('https://example.com/signature.png')).toBeNull();
-    expect(profileSignatureStoragePath('https://project.supabase.co/storage/v1/object/public/user-avatars/signatures/%2e%2e/private.png')).toBeNull();
+    expect(profileSignatureStoragePath('https://example.com/storage/v1/object/public/user-avatars/signatures/signature.png', 'https://project.supabase.co')).toBeNull();
+    expect(profileSignatureStoragePath('https://project.supabase.co/storage/v1/object/public/user-avatars/signatures/%2e%2e/private.png', 'https://project.supabase.co')).toBeNull();
   });
 });

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildSapJournal, serializeSapTxt, HEADER_COLUMNS, HEADER_ALIASES, DETAIL_COLUMNS, DETAIL_ALIASES, moneyCents, type SapClaim, type SapMasters, type JournalOptions } from '../lib/sap-journal';
+import { buildSapJournal, serializeSapTxt, sapImportRows, HEADER_COLUMNS, HEADER_ALIASES, DETAIL_COLUMNS, DETAIL_ALIASES, moneyCents, type SapClaim, type SapMasters, type JournalOptions } from '../lib/sap-journal';
 
 function fixture() {
   const masters: SapMasters = {
@@ -38,17 +38,29 @@ describe('SAP journal export', () => {
     const { masters,claim,options } = fixture();
     const out = buildSapJournal([claim],masters,options,[5341]);
     expect(out.headers.slice(0,2)).toEqual([HEADER_COLUMNS,HEADER_ALIASES]);
-    expect(out.details.slice(0,2)).toEqual([DETAIL_COLUMNS,DETAIL_ALIASES]);
+    expect(out.details.slice(0,2)).toEqual([
+      ['ParentKey','LineNum','Line_ID','AccountCode','Debit','Credit','CostingCode'],
+      ['JDT_NUM','LineNum','Line_ID','Account','Debit','Credit','ProfitCode'],
+    ]);
     expect(out.headers[2]).toEqual([5341,'20260920','Customer','CLM-0001','CLM-0001/001','Maintenance','IPI','8020-Service','20260919',' ','20260920','2','Maintenance Customer','']);
     expect(out.details.slice(2)).toEqual([
-      [5341,1,1,'4330900007','100.00','','Bangalor'],
-      [5341,2,2,'4310000007','100.00','','Bangalor'],
-      [5341,5,5,'001214422433','','200.00','Bangalor'],
+      [5341,1,1,'4330900007','100','','Bangalor'],
+      [5341,2,2,'4310000007','100','','Bangalor'],
+      [5341,5,5,'001214422433','','200','Bangalor'],
     ]);
     const text = serializeSapTxt(out.headers);
     expect(text.endsWith('\t\r\n')).toBe(true);
     expect(text.split('\r\n').slice(0,-1).every(row => row.split('\t').length===14)).toBe(true);
     expect(serializeSapTxt(out.details).split('\r\n').slice(0,-1).every(row => row.split('\t').length===7)).toBe(true);
+    const imported = sapImportRows(out);
+    expect(imported.headers[0]).toEqual(['JdtNum','ReferenceDate','Memo','Reference','Reference2','Reference3','TransactionCode','ProjectCode','TaxDate','Indicator','DueDate','LocationCode','U_REMARKS','U_Month','U_Year']);
+    expect(imported.details[0]).toEqual(['ParentKey','LineNum','Line_ID','AccountCode','ShortName','Debit','Credit','CostingCode']);
+    expect(imported.details.slice(2)).toEqual([
+      [5341,1,'','4330900007','','100','','Bangalor'],
+      [5341,2,'','4310000007','','100','','Bangalor'],
+      [5341,5,'','001214422433','','','200','Bangalor'],
+    ]);
+    expect(serializeSapTxt(imported.details).split('\r\n').slice(0,-1).every(row => row.split('\t').length===8)).toBe(true);
   });
   it('splits internal projects even if they share a SAP code and balances each journal', () => {
     const { masters,claim,options } = fixture(); claim.expense_items[1].project_code='P2';
@@ -83,7 +95,7 @@ describe('SAP journal export', () => {
     expect(()=>buildSapJournal([claim],masters,options)).toThrow('must equal approved amount');
     options.allocations={ e1: 50, e2: 100 };
     const out=buildSapJournal([claim],masters,options);
-    expect(out.details.at(-1)?.[5]).toBe('150.00');
+    expect(out.details.at(-1)?.[5]).toBe('150');
     expect(claim.expense_items[0].amount_with_bill).toBe(100);
   });
   it('exports approved row amounts instead of submitted amounts, including zero', () => {
@@ -92,7 +104,7 @@ describe('SAP journal export', () => {
     claim.expense_items[0].approved_amount=75;
     claim.expense_items[1].approved_amount=0;
     const out=buildSapJournal([claim],masters,options,[100000]);
-    expect(out.details.slice(2).map(row=>[row[4],row[5]])).toEqual([['75.00',''],['','75.00']]);
+    expect(out.details.slice(2).map(row=>[row[4],row[5]])).toEqual([['75',''],['','75']]);
     expect(out.claims[0].amount).toBe(75);
     options.allocations={e1:50,e2:25};
     expect(()=>buildSapJournal([claim],masters,options)).toThrow('must match the approved expense row');
@@ -103,10 +115,11 @@ describe('SAP journal export', () => {
   });
   it('debits a vendor GL for the complete vendor-available tax invoice and keeps employee GL as credit', () => {
     const { masters,claim,options }=fixture();
-    claim.expense_items=[{ id:'vendor-row',category:'travel',project_code:'P1',expense_date:'2026-09-19',amount_with_bill:118,amount_without_bill:0,has_tax_invoice:true,vendor_available:true,vendor_id:'v-1',vendor_account_code_snapshot:'VEND-100' }];
+    claim.expense_items=[{ id:'vendor-row',category:'travel',project_code:'P1',expense_date:'2026-09-19',amount_with_bill:118,amount_without_bill:0,has_tax_invoice:true,vendor_available:true,vendor_id:'v-1',vendor_account_code_snapshot:'VEND-100',vendor_short_form_snapshot:'ES' }];
     claim.grand_total=118;
     const rows=buildSapJournal([claim],masters,options,[100001]).details.slice(2);
-    expect(rows).toEqual([[100001,6,6,'VEND-100','118.00','','Bangalor'],[100001,7,7,'001214422433','','118.00','Bangalor']]);
+    expect(rows).toEqual([[100001,6,6,'VEND-100','118','','Bangalor'],[100001,7,7,'001214422433','','118','Bangalor']]);
+    expect(sapImportRows(buildSapJournal([claim],masters,options,[100001])).details.slice(2)).toEqual([[100001,6,'','VEND-100','ES','118','','Bangalor'],[100001,7,'','001214422433','','','118','Bangalor']]);
   });
   it('debits taxable value and configured CGST and SGST GLs when the vendor is unavailable', () => {
     const { masters,claim,options }=fixture();
@@ -114,7 +127,7 @@ describe('SAP journal export', () => {
     claim.expense_items=[{ id:'gst-row',category:'other',project_code:'P1',expense_date:'2026-09-19',amount_with_bill:118,amount_without_bill:0,has_tax_invoice:true,vendor_available:false,taxable_amount:100,cgst_amount:9,sgst_amount:9,igst_amount:0 }];
     claim.grand_total=118;
     expect(buildSapJournal([claim],masters,options,[100002]).details.slice(2)).toEqual([
-      [100002,3,3,'4332000016','100.00','','Bangalor'],[100002,7,7,'GST-C','9.00','','Bangalor'],[100002,8,8,'GST-S','9.00','','Bangalor'],[100002,9,9,'001214422433','','118.00','Bangalor'],
+      [100002,3,3,'4332000016','100','','Bangalor'],[100002,7,7,'GST-C','9','','Bangalor'],[100002,8,8,'GST-S','9','','Bangalor'],[100002,9,9,'001214422433','','118','Bangalor'],
     ]);
   });
   it('debits taxable value and configured IGST GL when the vendor is unavailable', () => {
@@ -123,7 +136,7 @@ describe('SAP journal export', () => {
     claim.expense_items=[{ id:'igst-row',category:'other',project_code:'P1',expense_date:'2026-09-19',amount_with_bill:118,amount_without_bill:0,has_tax_invoice:true,vendor_available:false,taxable_amount:100,cgst_amount:0,sgst_amount:0,igst_amount:18 }];
     claim.grand_total=118;
     expect(buildSapJournal([claim],masters,options,[100003]).details.slice(2)).toEqual([
-      [100003,3,3,'4332000016','100.00','','Bangalor'],[100003,9,9,'GST-I','18.00','','Bangalor'],[100003,10,10,'001214422433','','118.00','Bangalor'],
+      [100003,3,3,'4332000016','100','','Bangalor'],[100003,9,9,'GST-I','18','','Bangalor'],[100003,10,10,'001214422433','','118','Bangalor'],
     ]);
   });
   it('rejects unbalanced invoice tax, missing vendor details and missing GST configuration', () => {
@@ -153,9 +166,9 @@ describe('SAP journal export', () => {
     claim.grand_total=246;
     const rows=buildSapJournal([claim],masters,options,[100004]).details.slice(2);
     expect(rows.filter(row=>row[4]).map(row=>[row[3],row[4]])).toEqual([
-      ['4330900007','10.00'],['4332000016','100.00'],['VEND-100','118.00'],['GST-I','18.00'],
+      ['4330900007','10'],['4332000016','100'],['VEND-100','118'],['GST-I','18'],
     ]);
-    expect(rows.filter(row=>row[5]).map(row=>[row[3],row[5]])).toEqual([['001214422433','246.00']]);
+    expect(rows.filter(row=>row[5]).map(row=>[row[3],row[5]])).toEqual([['001214422433','246']]);
     expect(rows.reduce((sum,row)=>sum+Number(row[4]||0)-Number(row[5]||0),0)).toBe(0);
   });
   it.each(['gl','category','location','project','customer'])('blocks a missing %s mapping', key => {

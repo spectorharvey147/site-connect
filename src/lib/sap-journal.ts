@@ -1,8 +1,10 @@
 // SAP import layout follows the supplied TXT files, including both header rows.
 export const HEADER_COLUMNS = ['JdtNum', 'ReferenceDate', 'Memo', 'Reference', 'Reference2', 'Reference3', 'TransactionCode', 'ProjectCode', 'TaxDate', 'Indicator', 'DueDate', 'LocationCode', 'U_REMARKS', 'U_Month'];
 export const HEADER_ALIASES = ['JDT_NUM', 'RefDate', 'Memo', 'Ref1', 'Ref2', 'Ref3', 'TransCode', 'Project', 'TaxDate', 'Indicator', 'DueDate', 'Location', 'CIG', 'CUP'];
-export const DETAIL_COLUMNS = ['ParentKey', 'LineNum', 'Line_ID', 'AccountCode', 'Debit', 'Credit', 'CostingCode'];
-export const DETAIL_ALIASES = ['JDT_NUM', 'LineNum', 'Line_ID', 'Account', 'Debit', 'Credit', 'ProfitCode'];
+export const DETAIL_COLUMNS = ['ParentKey', 'LineNum', 'Line_ID', 'AccountCode', 'ShortName', 'Debit', 'Credit', 'CostingCode'];
+export const DETAIL_ALIASES = ['JDT_NUM', 'LineNum', 'Line_ID', 'Account', 'ShortName', 'Debit', 'Credit', 'ProfitCode'];
+const PAYLOAD_DETAIL_COLUMNS = ['ParentKey', 'LineNum', 'Line_ID', 'AccountCode', 'Debit', 'Credit', 'CostingCode'];
+const PAYLOAD_DETAIL_ALIASES = ['JDT_NUM', 'LineNum', 'Line_ID', 'Account', 'Debit', 'Credit', 'ProfitCode'];
 export type SapRow = (string | number)[];
 // Normalize saved batches as well as new exports to the confirmed CSV layout.
 export function sapImportRows(payload: JournalPayload): { headers: SapRow[]; details: SapRow[] } {
@@ -13,7 +15,16 @@ export function sapImportRows(payload: JournalPayload): { headers: SapRow[]; det
       if (index > 1) copy[9] = String(copy[9]).trim();
       return copy;
     }),
-    details: payload.details.map((row, index) => index > 1 ? row.map((value, column) => column === 2 ? '' : column === 3 ? String(value).replace(/^'+/, '') : value) : [...row]),
+    details: payload.details.map((row, index) => {
+      if (index === 0) return [...DETAIL_COLUMNS];
+      if (index === 1) return [...DETAIL_ALIASES];
+      const copy = row.length === 7
+        ? [...row.slice(0, 4), payload.detailShortNames?.[String(index)] || '', ...row.slice(4)]
+        : [...row];
+      copy[2] = '';
+      copy[3] = String(copy[3]).replace(/^'+/, '');
+      return copy;
+    }),
   };
 }
 
@@ -52,7 +63,7 @@ export interface SapVendor { id: string; vendor_name: string; short_form: string
 export interface SapGstAccount { id: string; gst_type: 'CGST' | 'SGST' | 'IGST'; gl_code: string; active: boolean }
 export interface SapMasters { locations: SapLocation[]; groups: SapExpenseGroup[]; lists: SapMaster[]; users: SapEmployee[]; vendors?: SapVendor[]; gst_accounts?: SapGstAccount[] }
 export interface JournalOptions { postingDate: string; dueDate: string; transactionCode: string; allocations?: Record<string, number> }
-export interface JournalPayload { version: 1; headers: SapRow[]; details: SapRow[]; claims: { claimId: string; reference: string; employeeName: string; amount: number }[]; journalClaims: string[]; postingDate: string }
+export interface JournalPayload { version: 1; headers: SapRow[]; details: SapRow[]; detailShortNames?: Record<string, string>; claims: { claimId: string; reference: string; employeeName: string; amount: number }[]; journalClaims: string[]; postingDate: string }
 
 export function moneyCents(value: unknown): number {
   const n = Number(value);
@@ -70,6 +81,11 @@ function sapDate(value: string): string {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(value) || Number.isNaN(Date.parse(value)) || new Date(value).toISOString().slice(0, 10) !== value) throw new Error(`Invalid SAP date: ${value}`);
   return value.replace(/-/g, '');
 }
+function sapAmount(cents: number): string {
+  const whole = Math.trunc(cents / 100);
+  const fraction = cents % 100;
+  return fraction === 0 ? String(whole) : `${whole}.${String(fraction).padStart(2, '0')}`;
+}
 function only<T extends { active?: boolean }>(rows: T[], label: string): T | undefined {
   const activeRows = rows.filter(row => row.active !== false);
   if (activeRows.length) rows = activeRows;
@@ -82,7 +98,7 @@ export function buildSapJournal(claims: SapClaim[], masters: SapMasters, options
   if (new Set(claims.map(c => c.claim_id)).size !== claims.length) throw new Error('Duplicate claims in export.');
   const posting = sapDate(options.postingDate), due = sapDate(options.dueDate);
   const transaction = required(options.transactionCode, 'Transaction code');
-  const payload: JournalPayload = { version: 1, headers: [HEADER_COLUMNS, HEADER_ALIASES], details: [DETAIL_COLUMNS, DETAIL_ALIASES], claims: [], journalClaims: [], postingDate: options.postingDate };
+  const payload: JournalPayload = { version: 1, headers: [HEADER_COLUMNS, HEADER_ALIASES], details: [PAYLOAD_DETAIL_COLUMNS, PAYLOAD_DETAIL_ALIASES], detailShortNames: {}, claims: [], journalClaims: [], postingDate: options.postingDate };
   // Existing claims retain access to mappings even after their project closes.
   const lists = masters.lists;
   const usedIds = new Set<number>();
@@ -92,7 +108,7 @@ export function buildSapJournal(claims: SapClaim[], masters: SapMasters, options
     const employeeGl = required(employee?.sap_gl_code, `${ref}: employee GL`);
     const project = only(lists.filter(x => x.type === 'project' && x.value === claim.site_name), claim.site_name);
     if (!project) throw new Error(`${ref}: project mapping is missing.`);
-    const groups = new Map<string, { project: string; customer: string; date: string; location: SapLocation; amounts: Map<string, { code: string; line: number; amount: number }> }>();
+    const groups = new Map<string, { project: string; customer: string; date: string; location: SapLocation; amounts: Map<string, { code: string; shortName?: string; line: number; amount: number }> }>();
     let claimCents = 0;
     for (const item of [...claim.expense_items].sort((a, b) => a.id.localeCompare(b.id))) {
       const submittedCents = moneyCents(item.amount_with_bill) + moneyCents(item.amount_without_bill);
@@ -103,12 +119,12 @@ export function buildSapJournal(claims: SapClaim[], masters: SapMasters, options
       const expenseGroup = masters.groups.find(g => g.code === category?.sap_expense_group);
       if (!expenseGroup) throw new Error(`${ref}: map expense category "${item.category}" to a SAP expense group.`);
       required(expenseGroup.gl_code, `${item.category} GL`);
-      const debitLines: { code: string; line: number; amount: number }[] = [];
+      const debitLines: { code: string; shortName?: string; line: number; amount: number }[] = [];
       if (item.has_tax_invoice === true && item.vendor_available === true) {
         const vendorCode = required(item.vendor_account_code_snapshot, `${ref}: selected vendor SAP account code`);
         if (!item.vendor_id) throw new Error(`${ref}: tax invoice vendor selection is missing.`);
         if (!masters.vendors?.some(vendor => vendor.id === item.vendor_id && vendor.active)) throw new Error(`${ref}: selected SAP vendor is inactive or missing.`);
-        debitLines.push({ code: vendorCode, line: 6, amount });
+        debitLines.push({ code: vendorCode, shortName: item.vendor_short_form_snapshot || '', line: 6, amount });
       } else if (item.has_tax_invoice === true && item.vendor_available === false) {
         const taxable = moneyCents(item.taxable_amount);
         const cgst = moneyCents(item.cgst_amount ?? 0), sgst = moneyCents(item.sgst_amount ?? 0), igst = moneyCents(item.igst_amount ?? 0);
@@ -144,9 +160,9 @@ export function buildSapJournal(claims: SapClaim[], masters: SapMasters, options
       if (!group) { group = { project: sapProject, customer, date, location, amounts: new Map() }; groups.set(key, group); }
       for (const debit of debitLines) {
         if (!debit.amount) continue;
-        const accountKey = `${debit.line}:${debit.code}`;
+        const accountKey = `${debit.line}:${debit.code}:${debit.shortName || ''}`;
         const existing = group.amounts.get(accountKey);
-        group.amounts.set(accountKey, { code: debit.code, line: debit.line, amount: (existing?.amount || 0) + debit.amount });
+        group.amounts.set(accountKey, { code: debit.code, shortName: debit.shortName || '', line: debit.line, amount: (existing?.amount || 0) + debit.amount });
       }
       claimCents += amount;
     }
@@ -163,12 +179,14 @@ export function buildSapJournal(claims: SapClaim[], masters: SapMasters, options
       const subRef = `${ref}/${String(++part).padStart(3, '0')}`;
       payload.headers.push([id, posting, group.customer, ref, subRef, work, transaction, group.project, group.date, ' ', due, group.location.code, `${work} ${group.customer}`, '']);
       let total = 0;
-      for (const debit of [...group.amounts.values()].sort((a, b) => a.line - b.line || a.code.localeCompare(b.code))) {
-        payload.details.push([id, debit.line, debit.line, debit.code, (debit.amount / 100).toFixed(2), '', group.location.costing_code]);
+      for (const debit of [...group.amounts.values()].sort((a, b) => a.line - b.line || a.code.localeCompare(b.code) || String(a.shortName || '').localeCompare(String(b.shortName || '')))) {
+        const detailIndex = payload.details.length;
+        payload.details.push([id, debit.line, debit.line, debit.code, sapAmount(debit.amount), '', group.location.costing_code]);
+        if (debit.shortName) payload.detailShortNames[String(detailIndex)] = debit.shortName;
         total += debit.amount;
       }
       const creditLine = Math.max(5, ...[...group.amounts.values()].map(debit => debit.line + 1));
-      payload.details.push([id, creditLine, creditLine, employeeGl, '', (total / 100).toFixed(2), group.location.costing_code]);
+      payload.details.push([id, creditLine, creditLine, employeeGl, '', sapAmount(total), group.location.costing_code]);
       payload.journalClaims.push(claim.claim_id);
     }
   }

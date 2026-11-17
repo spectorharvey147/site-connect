@@ -29,7 +29,7 @@ async function ensurePrivateBucket(db: ReturnType<typeof createClient>) {
 }
 
 async function snapshotSignature(db: ReturnType<typeof createClient>, signatureUrl: string | null, claimId: string, stage: string, base: string) {
-  const source = profileSignatureStoragePath(signatureUrl);
+  const source = profileSignatureStoragePath(signatureUrl, base);
   if (!signatureUrl) return null;
   if (!source) throw new Error('The saved approval signature cannot be safely read');
   await ensurePrivateBucket(db);
@@ -136,7 +136,8 @@ Deno.serve(async (req) => {
         body: JSON.stringify(requestBody),
       });
     } catch (error) {
-      if (snapshotPath) await db.storage.from('approval-signatures').remove([snapshotPath]);
+      // The RPC may have committed even if its response was lost. Preserve the
+      // referenced snapshot; the event-id check resolves safe retries.
       throw error;
     }
     if (!response.ok) {

@@ -12,6 +12,8 @@ Approval actions now pass through `supabase/functions/claim-approval`. The funct
 
 Browser, operating system, and device labels are inferred from User-Agent. These values and the observed network IP are supporting audit evidence, not proof of physical identity. VPNs, mobile networks, and shared Wi-Fi can affect the observed IP. New approval snapshots are private and use unique object paths; changing a profile signature does not overwrite them.
 
+The previous fields were blank because approval decisions were written directly by the browser to PostgREST or existing RPCs. Those requests did not pass through an approval Edge Function or set trusted IP context; the original identity trigger therefore left `ip_address` NULL. Browser/device fields could only be filled when PostgREST forwarded a User-Agent in `request.headers`, and events created before identity capture was enabled are not retroactively populated. No IP geolocation provider is configured, so location is not collected.
+
 ## Accounting examples
 
 Vendor available, invoice total Rs. 11,800:

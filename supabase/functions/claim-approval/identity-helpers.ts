@@ -15,10 +15,11 @@ export function serverObservedClientIp(headers: Headers): string | null {
   return isValidIp(value) ? value : null;
 }
 
-export function profileSignatureStoragePath(value: string | null): string | null {
+export function profileSignatureStoragePath(value: string | null, expectedOrigin: string): string | null {
   if (!value) return null;
   try {
     const url = new URL(value);
+    if (url.origin !== new URL(expectedOrigin).origin) return null;
     const marker = '/storage/v1/object/public/user-avatars/';
     if (!url.pathname.includes(marker)) return null;
     const path = decodeURIComponent(url.pathname.slice(url.pathname.indexOf(marker) + marker.length));

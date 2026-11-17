@@ -5,9 +5,16 @@ BEGIN;
 ALTER TABLE public.claim_approval_events
   ADD COLUMN IF NOT EXISTS idempotency_key uuid;
 ALTER TABLE public.claim_approval_events
+  ALTER COLUMN idempotency_key SET DEFAULT gen_random_uuid();
+ALTER TABLE public.claim_approval_events
   DROP CONSTRAINT IF EXISTS claim_approval_events_claim_id_approval_stage_action_key;
+CREATE UNIQUE INDEX IF NOT EXISTS claim_approval_events_legacy_stage_action_uidx
+  ON public.claim_approval_events(claim_id,approval_stage,action) WHERE idempotency_key IS NULL;
 CREATE UNIQUE INDEX IF NOT EXISTS claim_approval_events_idempotency_stage_uidx
   ON public.claim_approval_events(idempotency_key,approval_stage) WHERE idempotency_key IS NOT NULL;
+ALTER TABLE public.claim_approval_events ENABLE ROW LEVEL SECURITY;
+REVOKE INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER ON public.claim_approval_events FROM PUBLIC,anon,authenticated;
+GRANT SELECT ON public.claim_approval_events TO anon,authenticated;
 
 CREATE OR REPLACE FUNCTION public.capture_claim_approval_event() RETURNS trigger
 LANGUAGE plpgsql SECURITY DEFINER SET search_path=public AS $$
@@ -18,22 +25,22 @@ DECLARE
 BEGIN
   IF NEW.manager_approval_date IS DISTINCT FROM OLD.manager_approval_date AND NEW.manager_approval_date IS NOT NULL THEN
     stage:='Manager'; action_name:=CASE WHEN NEW.status='Rejected' THEN 'Rejected' ELSE coalesce(NEW.manager_approval_status,'Approved') END;
-    actor:=coalesce(nullif(current_setting('siteconnect.approval_actor',true),''),public.app_current_email(),NEW.manager_email); event_time:=NEW.manager_approval_date;
+    actor:=coalesce(nullif(current_setting('siteconnect.approval_actor',true),''),public.app_current_email(),NEW.manager_email); event_time:=now();
     note:=CASE WHEN NEW.status='Rejected' THEN NEW.rejection_reason WHEN NEW.manager_approval_status='Skipped' THEN 'Manager approval automatically skipped because the claim was submitted by the assigned project manager.' ELSE NEW.manager_description END;
   ELSIF NEW.admin_approval_date IS DISTINCT FROM OLD.admin_approval_date AND NEW.admin_approval_date IS NOT NULL THEN
     stage:='Admin'; action_name:=CASE WHEN NEW.status='Rejected' THEN 'Rejected' ELSE 'Approved' END;
-    actor:=coalesce(nullif(current_setting('siteconnect.approval_actor',true),''),public.app_current_email(),NEW.admin_email); event_time:=NEW.admin_approval_date;
+    actor:=coalesce(nullif(current_setting('siteconnect.approval_actor',true),''),public.app_current_email(),NEW.admin_email); event_time:=now();
     note:=CASE WHEN NEW.status='Rejected' THEN NEW.rejection_reason ELSE NEW.admin_description END;
   ELSIF NEW.final_approval_date IS DISTINCT FROM OLD.final_approval_date AND NEW.final_approval_date IS NOT NULL THEN
     stage:='HOD / Super Admin'; action_name:=CASE WHEN NEW.status='Rejected' THEN 'Rejected' ELSE 'Approved' END;
-    actor:=coalesce(nullif(current_setting('siteconnect.approval_actor',true),''),public.app_current_email(),NEW.final_approval_email); event_time:=NEW.final_approval_date;
+    actor:=coalesce(nullif(current_setting('siteconnect.approval_actor',true),''),public.app_current_email(),NEW.final_approval_email); event_time:=now();
     note:=CASE WHEN NEW.status='Rejected' THEN NEW.rejection_reason ELSE NEW.admin_description END;
   ELSIF NEW.accounts_verified_date IS DISTINCT FROM OLD.accounts_verified_date AND NEW.accounts_verified_date IS NOT NULL THEN
     stage:='Accounts'; action_name:=CASE WHEN NEW.status='Rejected' THEN 'Rejected' ELSE 'Verified' END;
-    actor:=coalesce(nullif(current_setting('siteconnect.approval_actor',true),''),public.app_current_email(),NEW.accounts_verified_email); event_time:=NEW.accounts_verified_date; note:=NEW.accounts_note;
+    actor:=coalesce(nullif(current_setting('siteconnect.approval_actor',true),''),public.app_current_email(),NEW.accounts_verified_email); event_time:=now(); note:=NEW.accounts_note;
   ELSIF NEW.paid_date IS DISTINCT FROM OLD.paid_date AND NEW.paid_date IS NOT NULL THEN
     stage:='Payment'; action_name:='Marked Paid';
-    actor:=coalesce(nullif(current_setting('siteconnect.approval_actor',true),''),public.app_current_email(),NEW.paid_email); event_time:=NEW.paid_date; note:=NEW.payment_note;
+    actor:=coalesce(nullif(current_setting('siteconnect.approval_actor',true),''),public.app_current_email(),NEW.paid_email); event_time:=now(); note:=NEW.payment_note;
   ELSIF NEW.status='Rejected' AND OLD.status IS DISTINCT FROM NEW.status THEN
     stage:='Approval'; action_name:='Rejected'; actor:=coalesce(nullif(current_setting('siteconnect.approval_actor',true),''),public.app_current_email()); event_time:=now(); note:=NEW.rejection_reason;
   ELSE RETURN NEW;
@@ -95,10 +102,12 @@ BEGIN
     reason:='Manager approval automatically skipped because the claim was submitted by the assigned project manager.';
   END IF;
   INSERT INTO public.claim_approval_events(idempotency_key,claim_id,approval_stage,action,actor_email,actor_name,approved_at,ip_address,user_agent,browser_name,operating_system,device_type,signature_snapshot_url,remarks)
-  VALUES(event_id,NEW.claim_id,'Admin','Approved',actor,actor_user.name,NEW.admin_approval_date,safe_ip,ua,browser,os_name,device,signature_ref,reason)
+  VALUES(event_id,NEW.claim_id,'Admin','Approved',actor,actor_user.name,now(),safe_ip,ua,browser,os_name,device,signature_ref,reason)
   ON CONFLICT(idempotency_key,approval_stage) WHERE idempotency_key IS NOT NULL DO NOTHING;
   RETURN NEW;
 END $$;
+REVOKE ALL ON FUNCTION public.capture_claim_approval_event() FROM PUBLIC,anon,authenticated;
+REVOKE ALL ON FUNCTION public.capture_admin_identity_for_manager_skip() FROM PUBLIC,anon,authenticated;
 
 CREATE OR REPLACE FUNCTION public.claim_approval_action(
   p_token text,p_claim_id text,p_stage text,p_action text,p_payload jsonb,
