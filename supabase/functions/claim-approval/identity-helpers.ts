@@ -8,11 +8,14 @@ function isValidIp(value: string): boolean {
 }
 
 export function serverObservedClientIp(headers: Headers): string | null {
-  // Supabase's hosted platform sets cf-connecting-ip. Forwarded headers can
-  // contain caller-supplied values, so they are intentionally not fallbacks.
-  const value = headers.get('cf-connecting-ip')?.trim() || '';
-  if (!value || value.length > 64 || value.includes(',')) return null;
-  return isValidIp(value) ? value : null;
+  // Supabase's hosted gateway provides both headers as the client address.
+  // Its request logs show x-real-ip matching cf-connecting-ip on Edge calls.
+  // Do not use x-forwarded-for: callers can prepend arbitrary values there.
+  for (const header of ['cf-connecting-ip', 'x-real-ip']) {
+    const value = headers.get(header)?.trim() || '';
+    if (value && value.length <= 64 && !value.includes(',') && isValidIp(value)) return value;
+  }
+  return null;
 }
 
 export function profileSignatureStoragePath(value: string | null, expectedOrigin: string): string | null {

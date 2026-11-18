@@ -2,9 +2,10 @@ import { describe, expect, it } from 'vitest';
 import { profileSignatureStoragePath, serverObservedClientIp } from '../../supabase/functions/claim-approval/identity-helpers';
 
 describe('approval identity capture helpers', () => {
-  it('uses only the platform-set client IP and never falls back to forwarded headers', () => {
+  it('uses the platform client IP headers and never trusts forwarded-for', () => {
     expect(serverObservedClientIp(new Headers({ 'cf-connecting-ip': '203.0.113.42', 'x-forwarded-for': '198.51.100.99' }))).toBe('203.0.113.42');
-    expect(serverObservedClientIp(new Headers({ 'x-forwarded-for': '198.51.100.99', 'x-real-ip': '192.0.2.44' }))).toBeNull();
+    expect(serverObservedClientIp(new Headers({ 'x-forwarded-for': '198.51.100.99', 'x-real-ip': '192.0.2.44' }))).toBe('192.0.2.44');
+    expect(serverObservedClientIp(new Headers({ 'cf-connecting-ip': 'invalid', 'x-real-ip': '192.0.2.44' }))).toBe('192.0.2.44');
     expect(serverObservedClientIp(new Headers({ 'cf-connecting-ip': '203.0.113.42, 198.51.100.99' }))).toBeNull();
     expect(serverObservedClientIp(new Headers({ 'cf-connecting-ip': 'not-an-ip' }))).toBeNull();
     expect(serverObservedClientIp(new Headers({ 'cf-connecting-ip': '2001:db8::20' }))).toBe('2001:db8::20');
