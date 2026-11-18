@@ -2089,6 +2089,7 @@ export async function getClaimById(claimId: string) {
     hasTaxInvoice: e.has_tax_invoice,
     vendorAvailable: e.vendor_available,
     vendorId: e.vendor_id,
+    vendorAllocations: e.vendor_allocations || [],
     vendorAccountCodeSnapshot: e.vendor_account_code_snapshot,
     vendorShortFormSnapshot: e.vendor_short_form_snapshot,
     taxableAmount: e.taxable_amount == null ? null : Number(e.taxable_amount),

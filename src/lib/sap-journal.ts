@@ -55,6 +55,7 @@ export interface SapEmployee { email: string; name: string; role: string; active
 export interface SapExpense {
   approved_amount?: number | null; id: string; category: string; project_code: string; customer_name?: string; expense_date: string; amount_with_bill: number; amount_without_bill: number;
   has_tax_invoice?: boolean | null; vendor_available?: boolean | null; vendor_id?: string | null;
+  vendor_allocations?: { vendor_id: string; vendor_account_code_snapshot: string; vendor_short_form_snapshot: string; amount: number }[] | null;
   vendor_account_code_snapshot?: string | null; vendor_short_form_snapshot?: string | null;
   taxable_amount?: number | null; cgst_amount?: number | null; sgst_amount?: number | null; igst_amount?: number | null;
 }
@@ -121,10 +122,26 @@ export function buildSapJournal(claims: SapClaim[], masters: SapMasters, options
       required(expenseGroup.gl_code, `${item.category} GL`);
       const debitLines: { code: string; shortName?: string; line: number; amount: number }[] = [];
       if (item.has_tax_invoice === true && item.vendor_available === true) {
+        const allocations = Array.isArray(item.vendor_allocations) ? item.vendor_allocations : [];
+        if (allocations.length) {
+          let allocatedCents = 0;
+          for (const allocation of allocations) {
+            const allocationCents = moneyCents(allocation.amount);
+            if (!allocation.vendor_id || !masters.vendors?.some(vendor => vendor.id === allocation.vendor_id && vendor.active)) throw new Error(`${ref}: selected SAP vendor is inactive or missing.`);
+            const vendor = masters.vendors.find(entry => entry.id === allocation.vendor_id)!;
+            const vendorCode = required(allocation.vendor_account_code_snapshot, `${ref}: selected vendor SAP account code`);
+            if (vendorCode !== vendor.vendor_account_code || allocation.vendor_short_form_snapshot !== vendor.short_form) throw new Error(`${ref}: a selected vendor has changed since Accounts verification.`);
+            debitLines.push({ code: vendorCode, shortName: allocation.vendor_short_form_snapshot, line: 6, amount: allocationCents });
+            allocatedCents += allocationCents;
+          }
+          if (allocatedCents > amount) throw new Error(`${ref}: vendor allocations exceed the approved expense row amount.`);
+          if (allocatedCents < amount) debitLines.push({ code: expenseGroup.gl_code, line: expenseGroup.line_number, amount: amount - allocatedCents });
+        } else {
         const vendorCode = required(item.vendor_account_code_snapshot, `${ref}: selected vendor SAP account code`);
         if (!item.vendor_id) throw new Error(`${ref}: tax invoice vendor selection is missing.`);
         if (!masters.vendors?.some(vendor => vendor.id === item.vendor_id && vendor.active)) throw new Error(`${ref}: selected SAP vendor is inactive or missing.`);
         debitLines.push({ code: vendorCode, shortName: item.vendor_short_form_snapshot || '', line: 6, amount });
+        }
       } else if (item.has_tax_invoice === true && item.vendor_available === false) {
         const taxable = moneyCents(item.taxable_amount);
         const cgst = moneyCents(item.cgst_amount ?? 0), sgst = moneyCents(item.sgst_amount ?? 0), igst = moneyCents(item.igst_amount ?? 0);

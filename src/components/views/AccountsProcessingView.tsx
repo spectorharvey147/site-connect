@@ -1,11 +1,11 @@
-import ExpenseApprovalEditor, { type AccountingRowForm } from './ExpenseApprovalEditor';
+import { type AccountingRowForm } from './ExpenseApprovalEditor';
 import { initialRowAmounts, approvedRows, type ApprovalExpense, type RowAmounts } from '@/lib/expense-approval';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, type FormEvent } from 'react';
 import { CheckCircle2, CreditCard, Eye, Loader2, RefreshCw, WalletCards } from 'lucide-react';
 import { toast } from 'sonner';
 import { useAuth } from '@/contexts/AuthContext';
 import { approveClaimAsAccounts, getAccountsClaims, getClaimById, markClaimPaid } from '@/lib/claims-api';
-import { getActiveVendors } from '@/lib/accounting-api';
+import { getActiveVendors, saveVendorGstMaster } from '@/lib/accounting-api';
 import type { SapVendor } from '@/lib/sap-journal';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -31,6 +31,7 @@ type AccountingExpense = ApprovalExpense & {
   hasTaxInvoice?: boolean | null;
   vendorAvailable?: boolean | null;
   vendorId?: string | null;
+  vendorAllocations?: Array<{ vendor_id: string; vendor_account_code_snapshot?: string; vendor_short_form_snapshot?: string; amount: number }>;
   taxableAmount?: number | null;
   cgstAmount?: number | null;
   sgstAmount?: number | null;
@@ -44,7 +45,7 @@ function StatusBadge({ status }: { status: string }) {
   return <Badge className="bg-amber-100 text-amber-800 hover:bg-amber-100">Accounts Verification</Badge>;
 }
 
-function ClaimExpenseDetails({ claim }: { claim: any }) {
+function ClaimExpenseDetails({ claim, selectedIds, onToggle }: { claim: any; selectedIds?: string[]; onToggle?: (id: string) => void }) {
   if (!claim?.expenses?.length) return null;
 
   return (
@@ -52,6 +53,7 @@ function ClaimExpenseDetails({ claim }: { claim: any }) {
       <div className="block space-y-2 sm:hidden">
         {claim.expenses.map((expense: any, index: number) => (
           <div key={index} className="space-y-1 rounded border border-border bg-card p-3 text-sm">
+            {onToggle && <div className="mb-2 flex items-center gap-2 border-b border-border pb-2"><Checkbox checked={selectedIds?.includes(expense.id)} onCheckedChange={() => onToggle(expense.id)} aria-label={`Select ${expense.category} for accounts review`} /><span className="text-xs font-medium">Select for accounts review</span></div>}
             <div className="flex justify-between gap-4"><span className="text-muted-foreground">Category</span><span className="text-right font-medium">{expense.category}</span></div>
             <div className="flex justify-between gap-4"><span className="text-muted-foreground">Code</span><span className="text-right">{expense.projectCode || '-'}</span></div>
             {expense.claimDate && <div className="flex justify-between gap-4"><span className="text-muted-foreground">Date</span><span className="text-right">{formatDate(expense.claimDate)}</span></div>}
@@ -71,17 +73,18 @@ function ClaimExpenseDetails({ claim }: { claim: any }) {
       </div>
 
       <div className="hidden max-w-full overflow-x-auto sm:block">
-        <table className="min-w-[980px] w-full table-fixed border text-sm">
+        <table className={`w-full ${onToggle ? 'min-w-[1080px]' : 'min-w-[980px]'} table-fixed border text-sm`}>
           <thead>
             <tr className="bg-muted">
-              <th className="w-[14%] border p-2 text-left">Category</th>
-              <th className="w-[14%] border p-2 text-left">Code</th>
-              <th className="w-[12%] border p-2 text-left">Date</th>
-              <th className="w-[24%] border p-2 text-left">Description</th>
-              <th className="border p-2 text-right">With Bill (Rs.)</th>
-              <th className="border p-2 text-right">Without Bill (Rs.)</th>
-              <th className="w-[14%] border p-2 text-left">Bills</th>
-              <th className="border p-2 text-right">Total (Rs.)</th>
+              <th className={`${onToggle ? 'w-[12%]' : 'w-[13%]'} border p-2 text-left`}>Category</th>
+              <th className={`${onToggle ? 'w-[11%]' : 'w-[12%]'} border p-2 text-left`}>Code</th>
+              <th className="w-[10%] border p-2 text-left whitespace-nowrap">Date</th>
+              <th className={`${onToggle ? 'w-[20%]' : 'w-[21%]'} border p-2 text-left`}>Description</th>
+              <th className={`${onToggle ? 'w-[12%]' : 'w-[13%]'} border p-2 text-right text-xs leading-tight`}><span className="whitespace-nowrap">With Bill<br />(Rs.)</span></th>
+              <th className={`${onToggle ? 'w-[12%]' : 'w-[13%]'} border p-2 text-right text-xs leading-tight`}><span className="whitespace-nowrap">Without Bill<br />(Rs.)</span></th>
+              <th className="w-[8%] border p-2 text-center whitespace-nowrap">Bills</th>
+              {onToggle && <th className="w-[6%] border p-2 text-center whitespace-nowrap">Select</th>}
+              <th className={`${onToggle ? 'w-[9%]' : 'w-[10%]'} border p-2 text-right text-xs leading-tight`}><span className="whitespace-nowrap">Total<br />(Rs.)</span></th>
             </tr>
           </thead>
           <tbody>
@@ -91,8 +94,8 @@ function ClaimExpenseDetails({ claim }: { claim: any }) {
                 <td className="break-words border p-2">{expense.projectCode || '-'}</td>
                 <td className="border p-2">{formatDate(expense.claimDate)}</td>
                 <td className="break-words border p-2">{expense.description || '-'}</td>
-                <td className="border p-2 text-right">{formatCurrency(expense.amountWithBill)}</td>
-                <td className="border p-2 text-right">{formatCurrency(expense.amountWithoutBill)}</td>
+                <td className="whitespace-nowrap border p-2 text-right tabular-nums">{formatCurrency(expense.amountWithBill)}</td>
+                <td className="whitespace-nowrap border p-2 text-right tabular-nums">{formatCurrency(expense.amountWithoutBill)}</td>
                 <td className="border p-2">
                   {expense.attachmentIds?.length > 0 ? (
                     <span className="text-xs font-medium text-primary">{expense.attachmentIds.length} file(s)</span>
@@ -100,15 +103,17 @@ function ClaimExpenseDetails({ claim }: { claim: any }) {
                     <span className="text-xs text-muted-foreground">No bill</span>
                   )}
                 </td>
-                <td className="border p-2 text-right font-medium">{formatCurrency(expense.amount)}</td>
+                {onToggle && <td className="border p-2 text-center"><Checkbox checked={selectedIds?.includes(expense.id)} onCheckedChange={() => onToggle(expense.id)} aria-label={`Select ${expense.category} for accounts review`} /></td>}
+                <td className="whitespace-nowrap border p-2 text-right font-medium tabular-nums">{formatCurrency(expense.amount)}</td>
               </tr>
             ))}
             <tr className="bg-muted/50 font-bold">
               <td colSpan={4} className="border p-2 text-right">TOTAL</td>
-              <td className="border p-2 text-right">{formatCurrency(claim.totalWithBill)}</td>
-              <td className="border p-2 text-right">{formatCurrency(claim.totalWithoutBill)}</td>
+              <td className="whitespace-nowrap border p-2 text-right tabular-nums">{formatCurrency(claim.totalWithBill)}</td>
+              <td className="whitespace-nowrap border p-2 text-right tabular-nums">{formatCurrency(claim.totalWithoutBill)}</td>
               <td className="border p-2"></td>
-              <td className="border p-2 text-right">{formatCurrency(claim.amount)}</td>
+              {onToggle && <td className="border p-2"></td>}
+              <td className="whitespace-nowrap border p-2 text-right tabular-nums">{formatCurrency(claim.amount)}</td>
             </tr>
           </tbody>
         </table>
@@ -117,7 +122,57 @@ function ClaimExpenseDetails({ claim }: { claim: any }) {
   );
 }
 
-function ClaimDetailsPanel({ claim }: { claim: any }) {
+function AccountsExpenseCorrection({ expenses, amounts, onAmountsChange, accounting, onAccountingChange, vendors, disabled, onAddVendor, hasClaimAttachments }: {
+  expenses: AccountingExpense[]; amounts: RowAmounts; onAmountsChange: (rows: RowAmounts) => void;
+  accounting: Record<string, AccountingRowForm>; onAccountingChange: (rows: Record<string, AccountingRowForm>) => void;
+  vendors: SapVendor[]; disabled: boolean; onAddVendor: (expenseId: string) => void; hasClaimAttachments: boolean;
+}) {
+  const fallback = (): AccountingRowForm => ({ has_tax_invoice: false, vendor_available: null, vendor_id: '', vendor_allocations: [], taxable_amount: '', cgst_amount: '', sgst_amount: '', igst_amount: '' });
+  const update = (expenseId: string, patch: Partial<AccountingRowForm>) => {
+    onAccountingChange({ ...accounting, [expenseId]: { ...fallback(), ...accounting[expenseId], ...patch } });
+  };
+  const vendorAllocations = (expense: AccountingExpense) => {
+    const row = { ...fallback(), ...accounting[expense.id] };
+    const allocations = row.vendor_allocations || [];
+    const amount = Number(amounts[expense.id] ?? expense.approvedAmount ?? expense.amount ?? 0);
+    const allocated = allocations.reduce((sum, entry) => sum + Number(entry.amount || 0), 0);
+    return <div className="min-w-[320px] space-y-2">
+      <div className="flex flex-wrap gap-2"><Button type="button" variant="outline" size="sm" disabled={disabled} onClick={() => update(expense.id, { vendor_allocations: [...allocations, { vendor_id: '', amount: '' }] })}>Add vendor row</Button><Button type="button" variant="ghost" size="sm" disabled={disabled} onClick={() => onAddVendor(expense.id)}>Add new vendor</Button></div>
+      {allocations.map((allocation, index) => <div key={`${expense.id}-${index}`} className="grid grid-cols-[minmax(0,1fr)_110px_auto] items-center gap-2">
+        <select aria-label={`${expense.category}: Vendor ${index + 1}`} className="h-9 min-w-0 rounded-md border border-input bg-background px-2 text-xs" disabled={disabled} value={allocation.vendor_id} onChange={(event) => { const next = [...allocations]; next[index] = { ...next[index], vendor_id: event.target.value }; update(expense.id, { vendor_id: next[0]?.vendor_id || '', vendor_allocations: next }); }}><option value="">Select vendor</option>{vendors.filter((vendor) => vendor.active).map((vendor) => <option key={vendor.id} value={vendor.id}>{vendor.vendor_name} · {vendor.vendor_account_code}</option>)}</select>
+        <Input aria-label={`${expense.category}: Vendor invoice value ${index + 1}`} type="number" min="0" step="0.01" placeholder="Invoice value" value={allocation.amount} disabled={disabled} onChange={(event) => { const next = [...allocations]; next[index] = { ...next[index], amount: event.target.value }; update(expense.id, { vendor_allocations: next }); }} />
+        <Button type="button" variant="ghost" size="sm" disabled={disabled} onClick={() => { const next = allocations.filter((_, itemIndex) => itemIndex !== index); update(expense.id, { vendor_id: next[0]?.vendor_id || '', vendor_allocations: next }); }}>Remove</Button>
+      </div>)}
+      <p className="text-xs text-muted-foreground">Vendors {formatCurrency(allocated)} · Remaining to category GL {formatCurrency(Math.max(0, amount - allocated))}</p>
+    </div>;
+  };
+  const invoiceFallback = (expense: AccountingExpense) => {
+    const row = { ...fallback(), ...accounting[expense.id] };
+    const set = (patch: Partial<AccountingRowForm>) => update(expense.id, patch);
+    return <div className="min-w-[250px] space-y-2">
+      <label className="block space-y-1 text-xs"><span>Tax invoice</span><select className="h-9 w-full rounded-md border border-input bg-background px-2 text-sm" disabled={disabled} value={String(row.has_tax_invoice)} onChange={(event) => set({ has_tax_invoice: event.target.value === 'true', vendor_available: null, vendor_id: '', vendor_allocations: [] })}><option value="false">No</option><option value="true">Yes</option></select></label>
+      {row.has_tax_invoice && <>
+        {!expense.attachmentIds?.length && hasClaimAttachments && <p className="text-xs text-muted-foreground">No separate file is attached to this row. Review the combined bill PDF in Attachments above; a separate upload is not required.</p>}
+        {!expense.attachmentIds?.length && !hasClaimAttachments && <p role="alert" className="text-xs text-destructive">No bill is attached to this row or claim.</p>}
+        <label className="block space-y-1 text-xs"><span>Vendor available in SAP</span><select className="h-9 w-full rounded-md border border-input bg-background px-2 text-sm" disabled={disabled} value={row.vendor_available == null ? '' : String(row.vendor_available)} onChange={(event) => set({ vendor_available: event.target.value === '' ? null : event.target.value === 'true', vendor_id: '', vendor_allocations: event.target.value === 'true' ? row.vendor_allocations : [] })}><option value="">Select</option><option value="true">Yes</option><option value="false">No</option></select></label>
+        {row.vendor_available === false && <div className="grid grid-cols-2 gap-2">{(['taxable_amount','cgst_amount','sgst_amount','igst_amount'] as const).map((field) => <label key={field} className="space-y-1 text-xs"><span>{({ taxable_amount: 'Taxable value', cgst_amount: 'CGST', sgst_amount: 'SGST', igst_amount: 'IGST' })[field]} (Rs.)</span><Input aria-label={`${expense.category}: ${field}`} type="number" min="0" step="0.01" disabled={disabled} value={row[field]} onChange={(event) => set({ [field]: event.target.value })} /></label>)}</div>}
+      </>}
+    </div>;
+  };
+  return <div className="overflow-x-auto rounded-lg border border-border">
+    <table className="w-full min-w-[1160px] table-fixed text-sm">
+      <thead className="bg-muted/60"><tr><th className="w-[26%] p-3 text-left">Expense details</th><th className="w-[14%] p-3 text-right">Approved row value</th><th className="w-[24%] p-3 text-left">Invoice checks</th><th className="w-[36%] p-3 text-left">Vendor invoices / GL balance</th></tr></thead>
+      <tbody>{expenses.map((expense) => <tr key={expense.id} className="align-top border-t border-border">
+        <td className="p-3 align-top"><p className="font-semibold break-words">{expense.category}</p><p className="text-xs text-muted-foreground">{expense.projectCode || '-'} · {formatDate(expense.claimDate)}</p><p className="mt-1 whitespace-pre-wrap break-words">{expense.description || 'No description'}</p><p className="mt-2 text-xs text-primary">{expense.attachmentIds?.length ? `${expense.attachmentIds.length} bill file(s)` : 'No bill attached'}</p></td>
+        <td className="p-3 align-top"><Input aria-label={`${expense.category}: Approved row value`} type="number" min="0" max={expense.amount} step="0.01" disabled={disabled} value={amounts[expense.id] ?? ''} onChange={(event) => onAmountsChange({ ...amounts, [expense.id]: event.target.value })} /><p className="mt-1 whitespace-nowrap text-right text-xs text-muted-foreground">Submitted {formatCurrency(expense.amount)}</p></td>
+        <td className="p-3 align-top">{invoiceFallback(expense)}</td>
+        <td className="p-3 align-top">{accounting[expense.id]?.has_tax_invoice && accounting[expense.id]?.vendor_available === true ? vendorAllocations(expense) : accounting[expense.id]?.has_tax_invoice && accounting[expense.id]?.vendor_available === false ? <p className="text-xs text-muted-foreground">Enter taxable value and GST in the invoice checks.</p> : <p className="text-xs text-muted-foreground">Full row amount posts to the expense category GL.</p>}</td>
+      </tr>)}</tbody>
+    </table>
+  </div>;
+}
+
+function ClaimDetailsPanel({ claim, selectedIds, onToggle }: { claim: any; selectedIds?: string[]; onToggle?: (id: string) => void }) {
   if (!claim) return null;
 
   return (
@@ -130,7 +185,7 @@ function ClaimDetailsPanel({ claim }: { claim: any }) {
 
       <div className="rounded-lg border border-border bg-muted/20 p-3">
         <h4 className="mb-3 text-sm font-semibold">Expense Details</h4>
-        <ClaimExpenseDetails claim={claim} />
+        <ClaimExpenseDetails claim={claim} selectedIds={selectedIds} onToggle={onToggle} />
       </div>
     </div>
   );
@@ -147,7 +202,12 @@ export default function AccountsProcessingView() {
   const [amount, setAmount] = useState('');
   const [rowAmounts, setRowAmounts] = useState<RowAmounts>({});
   const [accountingRows, setAccountingRows] = useState<Record<string, AccountingRowForm>>({});
+  const [selectedAccountingIds, setSelectedAccountingIds] = useState<string[]>([]);
+  const [accountingPopupOpen, setAccountingPopupOpen] = useState(false);
   const [vendors, setVendors] = useState<SapVendor[]>([]);
+  const [newVendorOpen, setNewVendorOpen] = useState(false);
+  const [newVendorExpenseId, setNewVendorExpenseId] = useState('');
+  const [newVendor, setNewVendor] = useState({ vendor_name: '', short_form: '', vendor_account_code: '' });
   const [reference, setReference] = useState('');
   const [note, setNote] = useState('');
   const [selectedPayIds, setSelectedPayIds] = useState<string[]>([]);
@@ -195,6 +255,8 @@ export default function AccountsProcessingView() {
     setVerifyClaim(fallbackClaim);
     setRowAmounts({});
     setAccountingRows({});
+      setSelectedAccountingIds([]);
+      setAccountingPopupOpen(false);
     setAmount(String((claim.verifiedAmount ?? claim.amount ?? 0).toFixed(2)));
     setNote('');
     try {
@@ -203,14 +265,58 @@ export default function AccountsProcessingView() {
       if (details) {
         const expenses = (details.expenses || []) as unknown as AccountingExpense[];
         setVerifyClaim(details); setRowAmounts(initialRowAmounts(expenses, details.verifiedAmount));
-        setAccountingRows(Object.fromEntries(expenses.map((expense) => [expense.id, {
+        setAccountingRows(Object.fromEntries(expenses.map((expense) => {
+          const savedAllocations = (expense.vendorAllocations || []) as Array<{ vendor_id: string; amount: number }>;
+          const allocations = savedAllocations.length
+            ? savedAllocations.map((entry) => ({ vendor_id: entry.vendor_id, amount: String(entry.amount) }))
+            : expense.vendorId ? [{ vendor_id: expense.vendorId, amount: String(expense.approvedAmount ?? expense.amount ?? '') }] : [];
+          return [expense.id, {
           has_tax_invoice: expense.hasTaxInvoice === true, vendor_available: expense.vendorAvailable ?? null, vendor_id: expense.vendorId || '',
+          vendor_allocations: allocations,
           taxable_amount: expense.taxableAmount == null ? '' : String(expense.taxableAmount), cgst_amount: expense.cgstAmount == null ? '' : String(expense.cgstAmount),
           sgst_amount: expense.sgstAmount == null ? '' : String(expense.sgstAmount), igst_amount: expense.igstAmount == null ? '' : String(expense.igstAmount),
-        }])));
+        }];
+        })));
+        setSelectedAccountingIds(expenses.filter((expense) => expense.hasTaxInvoice === true).map((expense) => expense.id));
       }
     } catch (error: any) {
       toast.error(error.message || 'Unable to load claim details');
+    }
+  };
+
+  const toggleAccountingExpense = (expenseId: string) => {
+    setSelectedAccountingIds((current) => current.includes(expenseId) ? current.filter((id) => id !== expenseId) : [...current, expenseId]);
+  };
+
+  const openAddVendor = (expenseId: string) => {
+    setNewVendorExpenseId(expenseId);
+    setNewVendor({ vendor_name: '', short_form: '', vendor_account_code: '' });
+    setNewVendorOpen(true);
+  };
+
+  const handleSaveNewVendor = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    setProcessing(true);
+    try {
+      await saveVendorGstMaster('vendor', '', newVendor);
+      const refreshed = await getActiveVendors();
+      setVendors(refreshed);
+      const created = refreshed.find((vendor) => vendor.vendor_name.toLowerCase() === newVendor.vendor_name.trim().toLowerCase());
+      if (!created) throw new Error('Vendor was saved but could not be loaded. Refresh and try again.');
+      setAccountingRows((current) => {
+        const row = current[newVendorExpenseId] || { has_tax_invoice: true, vendor_available: true, vendor_id: '', vendor_allocations: [], taxable_amount: '', cgst_amount: '', sgst_amount: '', igst_amount: '' };
+        const allocations = [...row.vendor_allocations];
+        const blankIndex = allocations.findIndex((allocation) => !allocation.vendor_id);
+        if (blankIndex >= 0) allocations[blankIndex] = { ...allocations[blankIndex], vendor_id: created.id };
+        else allocations.push({ vendor_id: created.id, amount: '' });
+        return { ...current, [newVendorExpenseId]: { ...row, has_tax_invoice: true, vendor_available: true, vendor_id: allocations[0]?.vendor_id || '', vendor_allocations: allocations } };
+      });
+      setNewVendorOpen(false);
+      toast.success('Vendor added and selected');
+    } catch (error: any) {
+      toast.error(error.message || 'Could not add vendor');
+    } finally {
+      setProcessing(false);
     }
   };
 
@@ -248,10 +354,27 @@ export default function AccountsProcessingView() {
     let accountingPayload: Array<AccountingRowForm & { id: string }>;
     try {
       accountingPayload = (verifyClaim.expenses as AccountingExpense[] || []).map((expense) => {
-        const row = accountingRows[expense.id] || { has_tax_invoice: false, vendor_available: null, vendor_id: '', taxable_amount: '', cgst_amount: '', sgst_amount: '', igst_amount: '' };
-        if (row.has_tax_invoice && !expense.attachmentIds?.length) throw new Error(`${expense.category}: attach the invoice or receipt before verification.`);
+        const row = { ...(accountingRows[expense.id] || { has_tax_invoice: false, vendor_available: null, vendor_id: '', vendor_allocations: [], taxable_amount: '', cgst_amount: '', sgst_amount: '', igst_amount: '' }) };
+        const claimHasAttachments = Boolean(verifyClaim.fileIds?.length || verifyClaim.generalFileIds?.length || (verifyClaim.expenses || []).some((item: AccountingExpense) => item.attachmentIds?.length));
+        if (row.has_tax_invoice && !expense.attachmentIds?.length && !claimHasAttachments) throw new Error(`${expense.category}: attach the invoice or receipt before verification.`);
         if (row.has_tax_invoice && row.vendor_available == null) throw new Error(`${expense.category}: choose whether the vendor is available in SAP.`);
-        if (row.has_tax_invoice && row.vendor_available && !row.vendor_id) throw new Error(`${expense.category}: select an active vendor.`);
+        if (row.has_tax_invoice && row.vendor_available) {
+          if (!row.vendor_allocations?.length) throw new Error(`${expense.category}: add at least one vendor allocation.`);
+          const approvedCents = Math.round(Number(approved.rows.find((item) => item.id === expense.id)?.amount || 0) * 100);
+          const seenVendorIds = new Set<string>();
+          const allocations = row.vendor_allocations.map((allocation, index) => {
+            if (!allocation.vendor_id) throw new Error(`${expense.category}: select a vendor for allocation ${index + 1}.`);
+            if (seenVendorIds.has(allocation.vendor_id)) throw new Error(`${expense.category}: each vendor can appear only once.`);
+            seenVendorIds.add(allocation.vendor_id);
+            const value = Number(allocation.amount);
+            if (!allocation.amount.trim() || !Number.isFinite(value) || value <= 0 || Math.abs(value * 100 - Math.round(value * 100)) > 0.000001) throw new Error(`${expense.category}: enter a positive vendor invoice value with at most two decimals.`);
+            return { ...allocation, amount: String(value) };
+          });
+          const allocationCents = allocations.reduce((sum, allocation) => sum + Math.round(Number(allocation.amount) * 100), 0);
+          if (allocationCents > approvedCents) throw new Error(`${expense.category}: vendor allocations exceed the approved row amount.`);
+          row.vendor_id = allocations[0].vendor_id;
+          row.vendor_allocations = allocations;
+        }
         if (row.has_tax_invoice && row.vendor_available === false) {
           const cents = (input: string, label: string, optional = false) => {
             if (!input.trim() && optional) return 0;
@@ -424,24 +547,67 @@ export default function AccountsProcessingView() {
         open={!!verifyClaim}
         onOpenChange={(open) => !open && setVerifyClaim(null)}
         title={`Accounts Verify - ${verifyClaim?.claimId || ''}`}
-        desktopClassName="max-w-5xl"
+        desktopClassName="max-w-7xl"
         mobileClassName="max-h-[94svh]"
         bodyClassName="max-h-[74vh] overflow-y-auto pr-1"
         footer={verifyClaim ? (
-          <div className="flex flex-col gap-2 sm:flex-row sm:justify-end">
+          <div className="flex flex-col gap-2 sm:flex-row sm:justify-between">
+            <Button variant="outline" onClick={() => setAccountingPopupOpen(true)} disabled={processing || selectedAccountingIds.length === 0}>Proceed to expense correction ({selectedAccountingIds.length})</Button>
+            <div className="flex flex-col gap-2 sm:flex-row sm:justify-end">
             <Button variant="outline" onClick={() => setVerifyClaim(null)}>Cancel</Button>
             <Button onClick={handleVerify} disabled={processing}>
               {processing ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <CheckCircle2 className="mr-2 h-4 w-4" />}
               Verify & Process
             </Button>
+            </div>
           </div>
         ) : undefined}
       >
         <div className="space-y-3">
-          <ClaimDetailsPanel claim={verifyClaim} />
-          <ExpenseApprovalEditor expenses={verifyClaim?.expenses || []} amounts={rowAmounts} onChange={setRowAmounts} disabled={processing} vendors={vendors} accounting={accountingRows} onAccountingChange={setAccountingRows} />
+          <ClaimDetailsPanel claim={verifyClaim} selectedIds={selectedAccountingIds} onToggle={toggleAccountingExpense} />
+          <p className="text-sm text-muted-foreground">Select expense rows that include tax invoices. The selected rows open together for vendor and invoice amount correction; any unallocated remainder stays on the expense category GL.</p>
           <div><Label>Accounts Note</Label><Textarea rows={4} value={note} onChange={(event) => setNote(event.target.value)} placeholder="Optional verification note" /></div>
         </div>
+      </ResponsiveOverlay>
+
+      <ResponsiveOverlay
+        open={accountingPopupOpen}
+        onOpenChange={setAccountingPopupOpen}
+        title={`Expense correction · ${selectedAccountingIds.length} selected`}
+        description="Enter the invoice and vendor details for the selected expense rows. Any remaining row value posts to its category GL."
+        desktopClassName="max-w-7xl"
+        mobileClassName="max-h-[94svh]"
+        bodyClassName="max-h-[70vh] overflow-y-auto pr-1"
+        footer={<div className="flex justify-end"><Button variant="outline" onClick={() => setAccountingPopupOpen(false)}>Done</Button></div>}
+      >
+        <AccountsExpenseCorrection
+          expenses={(verifyClaim?.expenses || []).filter((expense: AccountingExpense) => selectedAccountingIds.includes(expense.id))}
+          amounts={rowAmounts}
+          onAmountsChange={setRowAmounts}
+          disabled={processing}
+          vendors={vendors}
+          accounting={accountingRows}
+          onAccountingChange={setAccountingRows}
+          onAddVendor={openAddVendor}
+          hasClaimAttachments={Boolean(verifyClaim?.fileIds?.length || verifyClaim?.generalFileIds?.length || (verifyClaim?.expenses || []).some((expense: AccountingExpense) => expense.attachmentIds?.length))}
+        />
+      </ResponsiveOverlay>
+
+      <ResponsiveOverlay
+        open={newVendorOpen}
+        onOpenChange={(open) => !processing && setNewVendorOpen(open)}
+        title="Add new vendor"
+        description="Create a vendor record for this invoice and select it on the expense row."
+        desktopClassName="max-w-lg"
+        mobileClassName="max-h-[90svh]"
+        footer={null}
+      >
+        <form className="space-y-3" onSubmit={handleSaveNewVendor}>
+          <div><Label htmlFor="accounts-vendor-name">Vendor name</Label><Input id="accounts-vendor-name" required value={newVendor.vendor_name} onChange={(event) => setNewVendor((current) => ({ ...current, vendor_name: event.target.value }))} /></div>
+          <div><Label htmlFor="accounts-vendor-short-form">Short name</Label><Input id="accounts-vendor-short-form" required value={newVendor.short_form} onChange={(event) => setNewVendor((current) => ({ ...current, short_form: event.target.value }))} /></div>
+          <div><Label htmlFor="accounts-vendor-code">SAP vendor account code</Label><Input id="accounts-vendor-code" required value={newVendor.vendor_account_code} onChange={(event) => setNewVendor((current) => ({ ...current, vendor_account_code: event.target.value }))} /></div>
+          <div className="flex justify-end gap-2 pt-2"><Button type="button" variant="outline" onClick={() => setNewVendorOpen(false)} disabled={processing}>Cancel</Button><Button type="submit" disabled={processing}>{processing ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}Save vendor</Button></div>
+        </form>
       </ResponsiveOverlay>
 
       <ResponsiveOverlay
