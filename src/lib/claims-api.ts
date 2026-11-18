@@ -2170,6 +2170,7 @@ export type ApprovalStamp = {
 };
 
 export type ClaimApprovalTrail = {
+  submitted?: ApprovalStamp;
   admin?: ApprovalStamp;
   manager?: ApprovalStamp;
   final?: ApprovalStamp;
@@ -2231,7 +2232,7 @@ export async function getClaimApprovalTrail(claimIds: string[]): Promise<Record<
   }
 
   let claimRows: any[] = [];
-  const claimSelect = 'claim_id,status,user_email,manager_email,manager_approval_status,manager_approval_date,admin_email,admin_approval_date,final_approval_email,final_approval_date,accounts_verified_email,accounts_verified_date,paid_email,paid_date';
+  const claimSelect = 'claim_id,status,user_email,submitted_by,created_at,manager_email,manager_approval_status,manager_approval_date,admin_email,admin_approval_date,final_approval_email,final_approval_date,accounts_verified_email,accounts_verified_date,paid_email,paid_date';
   const { data: rowsWithFinal, error: rowsWithFinalError } = await supabase
     .from('claims')
     .select(claimSelect)
@@ -2240,7 +2241,7 @@ export async function getClaimApprovalTrail(claimIds: string[]): Promise<Record<
   if (rowsWithFinalError && isMissingFinalApprovalColumnError(rowsWithFinalError)) {
     const { data: rowsWithoutFinal } = await supabase
       .from('claims')
-      .select('claim_id,status,user_email,manager_email,manager_approval_status,manager_approval_date,admin_email,admin_approval_date')
+      .select('claim_id,status,user_email,submitted_by,created_at,manager_email,manager_approval_status,manager_approval_date,admin_email,admin_approval_date')
       .in('claim_id', uniqueIds);
     claimRows = (rowsWithoutFinal || []) as any[];
   } else {
@@ -2252,7 +2253,7 @@ export async function getClaimApprovalTrail(claimIds: string[]): Promise<Record<
     .select('target_id,action,performed_by,created_at,details')
     .eq('target_type', 'claim')
     .in('target_id', uniqueIds)
-    .in('action', ['claim_admin_verified', 'claim_manager_approved', 'claim_admin_approved', 'claim_final_approved', 'claim_accounts_verified', 'claim_paid', 'claim_rejected', 'claim_expense_amounts_approved'])
+    .in('action', ['claim_submitted', 'claim_admin_verified', 'claim_manager_approved', 'claim_admin_approved', 'claim_final_approved', 'claim_accounts_verified', 'claim_paid', 'claim_rejected', 'claim_expense_amounts_approved'])
     .order('created_at', { ascending: true });
   const { data: identityEvents } = await supabase.from('claim_approval_events' as any)
     .select('id,claim_id,approval_stage,action,actor_email,actor_name,approved_at,ip_address,user_agent,browser_name,operating_system,device_type,signature_snapshot_url,remarks')
@@ -2269,7 +2270,7 @@ export async function getClaimApprovalTrail(claimIds: string[]): Promise<Record<
 
   const emails = new Set<string>();
   claimRows.forEach((row) => {
-    [row.manager_email, row.admin_email, row.final_approval_email, row.accounts_verified_email, row.paid_email].forEach((email) => {
+    [row.user_email, row.manager_email, row.admin_email, row.final_approval_email, row.accounts_verified_email, row.paid_email].forEach((email) => {
       const normalized = String(email || '').trim().toLowerCase();
       if (normalized) emails.add(normalized);
     });
@@ -2316,6 +2317,7 @@ export async function getClaimApprovalTrail(claimIds: string[]): Promise<Record<
     const id = String(row.claim_id || '');
     if (!id) return;
     const trail = trails[id] || {};
+    trail.submitted = approvalStamp(row.user_email, row.created_at, usersMap) || trail.submitted;
     if (String(row.manager_approval_status || '').toLowerCase() === 'skipped' && selfManagerSkipClaims.has(id)) {
       trail.manager = {
         name: 'Manager approval automatically skipped',
@@ -2342,7 +2344,8 @@ export async function getClaimApprovalTrail(claimIds: string[]): Promise<Record<
   approvalIdentityEvents.forEach((event) => {
     const id = String(event.claim_id || '');
     const stage = String(event.approval_stage || '').toLowerCase();
-    const key = stage.includes('manager') ? 'manager' : stage.includes('admin') && stage.includes('hod') ? 'final'
+    const key = stage === 'submission' || stage === 'submitted' ? 'submitted'
+      : stage.includes('manager') ? 'manager' : stage.includes('admin') && stage.includes('hod') ? 'final'
       : stage === 'admin' ? 'admin' : stage === 'accounts' ? 'accounts' : stage === 'payment' ? 'paid' : stage === 'approval' ? 'rejected' : null;
     if (!id || !key) return;
     const trail = trails[id] || {};
@@ -2365,7 +2368,8 @@ export async function getClaimApprovalTrail(claimIds: string[]): Promise<Record<
     const stamp = approvalStamp(row.performed_by, row.created_at, usersMap, row.details);
     if (!stamp) return;
     const trail = trails[id] || {};
-    const stage = row.action === 'claim_admin_verified' ? 'admin'
+    const stage = row.action === 'claim_submitted' ? 'submitted'
+      : row.action === 'claim_admin_verified' ? 'admin'
       : row.action === 'claim_manager_approved' ? 'manager'
         : row.action === 'claim_admin_approved' || row.action === 'claim_final_approved' ? 'final'
           : row.action === 'claim_accounts_verified' ? 'accounts'

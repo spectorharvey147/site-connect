@@ -78,7 +78,7 @@ export default function ClaimApprovalTimeline({ claim }: { claim: TimelineClaim 
 
   const stageDetails = stages.map((stage, index) => {
     const stamp = stage.key === 'submitted'
-      ? { name: claim.submittedBy || claim.userEmail || 'Claimant', email: claim.userEmail || '', date: claim.date || '' }
+      ? trail.submitted || { name: claim.submittedBy || claim.userEmail || 'Claimant', email: claim.userEmail || '', date: claim.date || '' }
       : trail[stage.key];
     const skipped = stage.key === 'manager' && String(claim.managerApprovalStatus || '').toLowerCase() === 'skipped';
     const inferredComplete = !isRejected && activeIndex >= 0 && index < activeIndex;
