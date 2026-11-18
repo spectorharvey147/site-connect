@@ -5,6 +5,7 @@ import { validatePassword } from '@/lib/password-validation';
 import { assignStoredFilesToExpenseRows, getAttachmentStorageRoots, isStorageFolderEntry, resolveClaimAttachments } from '@/lib/claim-attachments';
 import { resolveClaimWork } from '@/lib/accounting-api';
 import { isActiveAssignedManagerSubmitter } from '@/lib/claim-approval-routing';
+import { proxySupabaseStorageUrl } from '@/lib/supabase-storage-url';
 import {
   expenseFingerprint,
   findDuplicateExpensePair,
@@ -2222,7 +2223,7 @@ function approvalStamp(
     email: normalizedEmail,
     name: user?.name || normalizedEmail,
     date,
-    signatureUrl: user?.signatureUrl || '',
+    signatureUrl: proxySupabaseStorageUrl(user?.signatureUrl),
     remarks: String(remarks || '').trim() || undefined,
   };
 }
@@ -2367,7 +2368,7 @@ export async function getClaimApprovalTrail(claimIds: string[]): Promise<Record<
       && selfManagerSkipClaims.has(id);
     trail[key] = {
       name: event.actor_name || event.actor_email || 'Not Available', email: event.actor_email || '', date: event.approved_at,
-      signatureUrl: event.signature_snapshot_url?.startsWith('http') ? event.signature_snapshot_url : signedSnapshots[event.id] || '',
+      signatureUrl: proxySupabaseStorageUrl(event.signature_snapshot_url?.startsWith('http') ? event.signature_snapshot_url : signedSnapshots[event.id] || ''),
       remarks: managerSkippedForSubmitter ? selfManagerSkipReason : event.remarks || undefined,
       ipAddress: normalizeApprovalIpAddress(event.ip_address), userAgent: event.user_agent || undefined,
       browserName: event.browser_name || undefined, operatingSystem: event.operating_system || undefined, deviceType: event.device_type || undefined,
