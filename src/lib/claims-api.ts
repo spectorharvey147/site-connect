@@ -2204,6 +2204,11 @@ type ApprovalIdentityEvent = {
   remarks: string | null;
 };
 
+function normalizeApprovalIpAddress(value: string | null | undefined) {
+  const ipAddress = String(value || '').trim();
+  return ipAddress ? ipAddress.replace(/\/(?:32|128)$/, '') : null;
+}
+
 function approvalStamp(
   email: string | null | undefined,
   date: string | null | undefined,
@@ -2364,7 +2369,7 @@ export async function getClaimApprovalTrail(claimIds: string[]): Promise<Record<
       name: event.actor_name || event.actor_email || 'Not Available', email: event.actor_email || '', date: event.approved_at,
       signatureUrl: event.signature_snapshot_url?.startsWith('http') ? event.signature_snapshot_url : signedSnapshots[event.id] || '',
       remarks: managerSkippedForSubmitter ? selfManagerSkipReason : event.remarks || undefined,
-      ipAddress: event.ip_address || null, userAgent: event.user_agent || undefined,
+      ipAddress: normalizeApprovalIpAddress(event.ip_address), userAgent: event.user_agent || undefined,
       browserName: event.browser_name || undefined, operatingSystem: event.operating_system || undefined, deviceType: event.device_type || undefined,
     };
     trails[id] = trail;
