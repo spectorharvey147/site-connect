@@ -1,5 +1,5 @@
 import { createClient } from 'npm:@supabase/supabase-js@2';
-import { profileSignatureStoragePath, serverObservedClientIp } from './identity-helpers.ts';
+import { profileSignatureStoragePath } from './identity-helpers.ts';
 
 const cors = {
   'Access-Control-Allow-Origin': '*',
@@ -89,7 +89,6 @@ Deno.serve(async (req) => {
     if (!token || token.length > 256) return respond(401, { message: 'Sign in again' });
     const { data: actor, error: actorError } = await db.rpc('app_session', { p_token: token });
     if (actorError || !actor?.email || !actor?.role) return respond(401, { message: 'Your session has expired' });
-
     if (body.action === 'signatures') {
       return respond(200, { signatures: await signedApprovalSignatures(db, actor, body.claimIds) });
     }
@@ -109,9 +108,18 @@ Deno.serve(async (req) => {
       const stageName = ({ admin: 'Admin', manager: 'Manager', 'super-admin': 'HOD / Super Admin', accounts: 'Accounts', payment: 'Payment' } as Record<string, string>)[stage];
       const expectedAction = body.action === 'paid' ? 'Marked Paid' : body.action === 'reject' ? 'Rejected' : stage === 'manager' ? 'Approved' : stage === 'accounts' ? 'Verified' : 'Approved';
       if (priorEvents.some((event) => event.approval_stage === stageName && event.action === expectedAction)) {
+        await db.from('claim_approval_ip_attestations').delete().eq('event_id', eventId);
         return respond(200, { ok: true, eventId, replayed: true });
       }
       return respond(409, { message: 'This retry identifier belongs to another approval action' });
+    }
+    const { data: identityAttestation, error: identityError } = await db.from('claim_approval_ip_attestations')
+      .select('actor_email,ip_address,user_agent,expires_at').eq('event_id', eventId).maybeSingle();
+    if (identityError || !identityAttestation
+      || String(identityAttestation.actor_email).toLowerCase() !== String(actor.email).toLowerCase()
+      || !identityAttestation.ip_address
+      || new Date(identityAttestation.expires_at).getTime() <= Date.now()) {
+      return respond(400, { message: 'Approval identity could not be verified. Refresh and retry.' });
     }
     const { data: profile, error: profileError } = await db.from('users').select('signature_url').eq('email', actor.email).maybeSingle();
     if (profileError) return respond(400, { message: 'Could not read the current approval signature' });
@@ -123,8 +131,8 @@ Deno.serve(async (req) => {
       p_stage: stage,
       p_action: String(body.action || 'approve'),
       p_payload: payload,
-      p_client_ip: serverObservedClientIp(req.headers),
-      p_user_agent: (req.headers.get('user-agent') || '').slice(0, 1000),
+      p_client_ip: identityAttestation.ip_address,
+      p_user_agent: (identityAttestation.user_agent || req.headers.get('user-agent') || '').slice(0, 1000),
       p_signature_snapshot_path: snapshotPath,
       p_event_id: eventId,
     };
@@ -143,8 +151,10 @@ Deno.serve(async (req) => {
     if (!response.ok) {
       const failure = await response.json().catch(() => ({}));
       if (snapshotPath) await db.storage.from('approval-signatures').remove([snapshotPath]);
+      await db.from('claim_approval_ip_attestations').delete().eq('event_id', eventId);
       return respond(response.status >= 400 && response.status < 500 ? response.status : 400, { message: failure.message || 'Approval could not be completed' });
     }
+    await db.from('claim_approval_ip_attestations').delete().eq('event_id', eventId);
     return respond(200, { ok: true, eventId });
   } catch (error) {
     console.error('Approval request failed', error instanceof Error ? error.message : 'unknown');

@@ -1018,8 +1018,16 @@ export async function getPendingSuperAdminClaims() {
 
 async function callClaimApproval(stage: string, action: string, claimId: string, payload: Record<string, unknown>) {
   const token = localStorage.getItem('claimsToken') || '';
+  const eventId = crypto.randomUUID();
+  const { data: identityCaptured, error: identityError } = await supabase.rpc('capture_claim_approval_ip', {
+    p_token: token,
+    p_event_id: eventId,
+  });
+  if (identityError || identityCaptured !== true) {
+    throw new Error('We could not capture this approval’s IP address, so the claim was not changed. Refresh and retry.');
+  }
   const { data, error } = await supabase.functions.invoke('claim-approval', {
-    body: { token, claimId, stage, action, payload, eventId: crypto.randomUUID() },
+    body: { token, claimId, stage, action, payload, eventId },
   });
   if (error) {
     const response = error.context as Response | undefined;
