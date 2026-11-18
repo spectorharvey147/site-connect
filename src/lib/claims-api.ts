@@ -2374,7 +2374,21 @@ export async function getClaimApprovalTrail(claimIds: string[]): Promise<Record<
                 : null;
     const auditStageKey = stage ? `${id}:${stage}` : '';
     if (stage && !seenAuditStages.has(auditStageKey)) {
-      trail[stage] = stamp;
+      const identityStamp = trail[stage];
+      trail[stage] = identityStamp ? {
+        ...stamp,
+        ...identityStamp,
+        name: identityStamp.name && identityStamp.name !== 'Not Available' ? identityStamp.name : stamp.name,
+        email: identityStamp.email || stamp.email,
+        date: identityStamp.date || stamp.date,
+        signatureUrl: identityStamp.signatureUrl || stamp.signatureUrl,
+        remarks: identityStamp.remarks || stamp.remarks,
+        ipAddress: identityStamp.ipAddress ?? stamp.ipAddress,
+        userAgent: identityStamp.userAgent ?? stamp.userAgent,
+        browserName: identityStamp.browserName ?? stamp.browserName,
+        operatingSystem: identityStamp.operatingSystem ?? stamp.operatingSystem,
+        deviceType: identityStamp.deviceType ?? stamp.deviceType,
+      } : stamp;
       seenAuditStages.add(auditStageKey);
     }
     trails[id] = trail;
