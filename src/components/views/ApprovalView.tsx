@@ -585,7 +585,7 @@ export default function ApprovalView({ type }: ApprovalViewProps) {
             </Button>
           </div>
         ) : undefined}
-        desktopClassName="max-w-5xl"
+        desktopClassName="max-w-7xl"
         mobileClassName="max-h-[94svh]"
         bodyClassName="max-h-[74vh] overflow-y-auto pr-1"
         >
@@ -667,7 +667,7 @@ export default function ApprovalView({ type }: ApprovalViewProps) {
           if (!open) setViewClaim(null);
         }}
         title={`Claim Details - ${viewClaim?.claimId || ''}`}
-        desktopClassName="max-w-3xl"
+        desktopClassName="max-w-7xl"
         mobileClassName="max-h-[94svh]"
         bodyClassName="max-h-[75vh] overflow-y-auto"
         footer={viewClaim ? (

@@ -664,7 +664,7 @@ export default function ClaimHistoryView() {
           if (!open) setSelectedClaim(null);
         }}
         title={`Claim Details - ${selectedClaim?.claimId || ''}`}
-        desktopClassName="max-w-3xl"
+        desktopClassName="max-w-7xl"
         mobileClassName="max-h-[94svh]"
         bodyClassName="max-h-[75vh] overflow-y-auto"
         footer={selectedClaim ? claimFooter : undefined}
@@ -682,10 +682,10 @@ export default function ClaimHistoryView() {
             <div className="block space-y-2 sm:hidden">
               {selectedClaim.expenses?.map((expense: any, i: number) => (
                 <div key={i} className="space-y-1 rounded border border-border bg-card p-3 text-sm">
-                  <div className="flex justify-between"><span className="text-muted-foreground">Category</span><span className="font-medium">{expense.category}</span></div>
-                  {expense.projectCode && <div className="flex justify-between"><span className="text-muted-foreground">Code</span><span>{expense.projectCode}</span></div>}
-                  {expense.claimDate && <div className="flex justify-between"><span className="text-muted-foreground">Date</span><span>{formatDate(expense.claimDate)}</span></div>}
-                  {expense.description && <div className="flex justify-between gap-4"><span className="text-muted-foreground">Desc</span><span className="max-w-[60%] text-right">{expense.description}</span></div>}
+                  <div className="flex justify-between gap-4"><span className="shrink-0 text-muted-foreground">Category</span><span className="min-w-0 max-w-[65%] break-words text-right font-medium">{expense.category}</span></div>
+                  {expense.projectCode && <div className="flex justify-between gap-4"><span className="shrink-0 text-muted-foreground">Code</span><span className="min-w-0 max-w-[65%] break-words text-right">{expense.projectCode}</span></div>}
+                  {expense.claimDate && <div className="flex justify-between gap-4"><span className="shrink-0 text-muted-foreground">Date</span><span className="min-w-0 text-right">{formatDate(expense.claimDate)}</span></div>}
+                  {expense.description && <div className="flex justify-between gap-4"><span className="shrink-0 text-muted-foreground">Desc</span><span className="min-w-0 max-w-[65%] break-words text-right">{expense.description}</span></div>}
                   {expense.attachmentIds?.length > 0 && (
                     <div className="mt-2 border-t border-border pt-2">
                       <span className="text-muted-foreground">Bills</span>
@@ -701,44 +701,44 @@ export default function ClaimHistoryView() {
             </div>
 
             <div className="hidden overflow-x-auto sm:block">
-              <table className="w-full border text-sm">
+              <table className="w-full min-w-[1180px] table-fixed border text-sm">
                 <thead>
                   <tr className="bg-muted">
-                    <th className="border p-2 text-left">Category</th>
-                    <th className="border p-2 text-left">Code</th>
-                    <th className="border p-2 text-left">Date</th>
-                    <th className="border p-2 text-left">Description</th>
-                    <th className="border p-2 text-right">With Bill (Rs.)</th>
-                    <th className="border p-2 text-right">Without Bill (Rs.)</th>
-                    <th className="border p-2 text-left">Bills</th>
-                    <th className="border p-2 text-right">Total (Rs.)</th>
+                    <th className="w-[13%] border p-2 text-left">Category</th>
+                    <th className="w-[11%] border p-2 text-left">Code</th>
+                    <th className="w-[11%] border p-2 text-left whitespace-nowrap">Date</th>
+                    <th className="w-[20%] border p-2 text-left">Description</th>
+                    <th className="w-[12%] border p-2 text-right whitespace-nowrap">With Bill (Rs.)</th>
+                    <th className="w-[15%] border p-2 text-right whitespace-nowrap">Without Bill (Rs.)</th>
+                    <th className="w-[7%] border p-2 text-center whitespace-nowrap">Bills</th>
+                    <th className="w-[11%] border p-2 text-right whitespace-nowrap">Total (Rs.)</th>
                   </tr>
                 </thead>
                 <tbody>
                   {selectedClaim.expenses?.map((expense: any, i: number) => (
                     <tr key={i} className="border-t">
-                      <td className="border p-2">{expense.category}</td>
-                      <td className="border p-2">{expense.projectCode}</td>
-                      <td className="border p-2">{expense.claimDate ? formatDate(expense.claimDate) : ''}</td>
-                      <td className="border p-2">{expense.description}</td>
-                      <td className="border p-2 text-right">Rs. {(expense.amountWithBill ?? 0).toFixed(2)}</td>
-                      <td className="border p-2 text-right">Rs. {(expense.amountWithoutBill ?? 0).toFixed(2)}</td>
-                      <td className="border p-2">
+                      <td className="break-words border p-2">{expense.category}</td>
+                      <td className="break-words border p-2">{expense.projectCode}</td>
+                      <td className="border p-2 whitespace-nowrap">{expense.claimDate ? formatDate(expense.claimDate) : ''}</td>
+                      <td className="break-words border p-2">{expense.description}</td>
+                      <td className="whitespace-nowrap border p-2 text-right tabular-nums">Rs. {(expense.amountWithBill ?? 0).toFixed(2)}</td>
+                      <td className="whitespace-nowrap border p-2 text-right tabular-nums">Rs. {(expense.amountWithoutBill ?? 0).toFixed(2)}</td>
+                      <td className="border p-2 text-center">
                         {expense.attachmentIds?.length > 0 ? (
                           <span className="text-xs font-medium text-primary">{expense.attachmentIds.length} file(s)</span>
                         ) : (
                           <span className="text-xs text-muted-foreground">No bill</span>
                         )}
                       </td>
-                      <td className="border p-2 text-right font-medium">Rs. {(expense.amount ?? 0).toFixed(2)}</td>
+                      <td className="whitespace-nowrap border p-2 text-right font-medium tabular-nums">Rs. {(expense.amount ?? 0).toFixed(2)}</td>
                     </tr>
                   ))}
                   <tr className="bg-muted/50 font-bold">
                     <td colSpan={4} className="border p-2 text-right">TOTAL</td>
-                    <td className="border p-2 text-right">Rs. {(selectedClaim.totalWithBill ?? 0).toFixed(2)}</td>
-                    <td className="border p-2 text-right">Rs. {(selectedClaim.totalWithoutBill ?? 0).toFixed(2)}</td>
+                    <td className="whitespace-nowrap border p-2 text-right tabular-nums">Rs. {(selectedClaim.totalWithBill ?? 0).toFixed(2)}</td>
+                    <td className="whitespace-nowrap border p-2 text-right tabular-nums">Rs. {(selectedClaim.totalWithoutBill ?? 0).toFixed(2)}</td>
                     <td className="border p-2"></td>
-                    <td className="border p-2 text-right">Rs. {(selectedClaim.amount ?? 0).toFixed(2)}</td>
+                    <td className="whitespace-nowrap border p-2 text-right tabular-nums">Rs. {(selectedClaim.amount ?? 0).toFixed(2)}</td>
                   </tr>
                 </tbody>
               </table>
@@ -754,7 +754,7 @@ export default function ClaimHistoryView() {
           if (!open) setReportPreview(null);
         }}
         title={reportPreview?.title || 'Claims Report'}
-        desktopClassName="max-w-5xl"
+        desktopClassName="max-w-7xl"
         mobileClassName="max-h-[94svh]"
         bodyClassName="space-y-4"
         footer={reportFooter}

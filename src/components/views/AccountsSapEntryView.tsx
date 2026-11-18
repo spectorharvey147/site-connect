@@ -408,7 +408,7 @@ export default function AccountsSapEntryView() {
         open={!!viewBatch}
         onOpenChange={(open) => !open && setViewBatch(null)}
         title={`SAP Batch Claims - ${viewBatch?.batch_id || ''}`}
-        desktopClassName="max-w-4xl"
+        desktopClassName="max-w-6xl"
         mobileClassName="max-h-[94svh]"
         bodyClassName="max-h-[70vh] overflow-y-auto"
       >

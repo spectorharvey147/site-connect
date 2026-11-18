@@ -162,7 +162,7 @@ export default function AttachmentPreview({ fileIds, compact = false, onRemove }
           if (!open) closePreview();
         }}
         title="Attachment Preview"
-        desktopClassName="max-w-4xl"
+        desktopClassName="max-w-6xl"
         mobileClassName="max-h-[94svh]"
         bodyClassName="overflow-auto max-h-[70vh] flex items-center justify-center"
         footer={previewUrl ? footer : undefined}

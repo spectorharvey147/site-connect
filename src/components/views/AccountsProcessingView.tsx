@@ -652,7 +652,7 @@ export default function AccountsProcessingView() {
         open={!!payClaim}
         onOpenChange={(open) => !open && setPayClaim(null)}
         title={`Mark Paid - ${payClaim?.claimId || ''}`}
-        desktopClassName="max-w-5xl"
+        desktopClassName="max-w-7xl"
         mobileClassName="max-h-[94svh]"
         bodyClassName="max-h-[74vh] overflow-y-auto pr-1"
         footer={payClaim ? (
@@ -677,7 +677,7 @@ export default function AccountsProcessingView() {
         open={!!viewClaim}
         onOpenChange={(open) => !open && setViewClaim(null)}
         title={`Claim Details - ${viewClaim?.claimId || ''}`}
-        desktopClassName="max-w-5xl"
+        desktopClassName="max-w-7xl"
         mobileClassName="max-h-[94svh]"
         bodyClassName="max-h-[75vh] overflow-y-auto"
       >
