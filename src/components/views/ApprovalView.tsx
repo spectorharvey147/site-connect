@@ -202,7 +202,7 @@ export default function ApprovalView({ type }: ApprovalViewProps) {
     setProcessing(true);
     try {
       const internal = rejectModal!.internalId || rejectModal!.claimId;
-      await rejectClaim(internal, rejectReason, user!.email, type === 'manager' ? 'Manager' : 'Admin');
+      await rejectClaim(internal, rejectReason, user!.email, type === 'manager' ? 'Manager' : type === 'super-admin' ? 'Super Admin' : 'Admin');
       toast.success('Claim rejected');
       setRejectModal(null);
       setRejectReason('');
