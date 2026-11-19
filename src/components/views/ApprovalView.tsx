@@ -2,7 +2,8 @@ import ExpenseApprovalEditor from './ExpenseApprovalEditor';
 import { initialRowAmounts, approvedRows, type ApprovalExpense, type RowAmounts } from '@/lib/expense-approval';
 import { useState, useEffect, useMemo } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
-import { getPendingManagerClaims, getPendingAdminClaims, getPendingSuperAdminClaims, approveClaimAsManager, approveClaimAsAdmin, approveClaimAsSuperAdmin, rejectClaim, getClaimById } from '@/lib/claims-api';
+import { getPendingManagerClaims, getPendingAdminClaims, getPendingSuperAdminClaims, approveClaimAsManager, approveClaimAsAdmin, approveClaimAsSuperAdmin, rejectClaim, getClaimById, getDropdownOptions } from '@/lib/claims-api';
+import { correctPendingClaimWork, getProjectWorks, type ProjectWork } from '@/lib/accounting-api';
 import { Button } from '@/components/ui/button';
 import { ResponsiveOverlay } from '@/components/ui/responsive-overlay';
 import { Textarea } from '@/components/ui/textarea';
@@ -16,6 +17,7 @@ import ClaimDetailsOverview from '@/components/views/ClaimDetailsOverview';
 import ClaimAttachmentsSection from '@/components/views/ClaimAttachmentsSection';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Badge } from '@/components/ui/badge';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 
 function formatDate(date: string) {
   if (!date) return '';
@@ -108,6 +110,9 @@ export default function ApprovalView({ type }: ApprovalViewProps) {
   const [approveModal, setApproveModal] = useState<{ claimId: string; internalId?: string } | null>(null);
   const [approveDescription, setApproveDescription] = useState('');
   const [rowAmounts, setRowAmounts] = useState<RowAmounts>({});
+  const [projectWorks, setProjectWorks] = useState<ProjectWork[]>([]);
+  const [projectOptions, setProjectOptions] = useState<any[]>([]);
+  const [correctedWorkId, setCorrectedWorkId] = useState('');
 
   const [processing, setProcessing] = useState(false);
   const [viewClaim, setViewClaim] = useState<any>(null);
@@ -164,6 +169,11 @@ export default function ApprovalView({ type }: ApprovalViewProps) {
 
   useEffect(() => { loadClaims(); }, [user, type]);
   useEffect(() => {
+    if (type !== 'admin') return;
+    getProjectWorks().then(setProjectWorks).catch(() => setProjectWorks([]));
+    getDropdownOptions().then((options) => setProjectOptions(options.projects || [])).catch(() => setProjectOptions([]));
+  }, [type]);
+  useEffect(() => {
     if (viewClaim || approveModal) window.scrollTo({ top: 0, behavior: 'smooth' });
   }, [viewClaim, approveModal]);
 
@@ -186,6 +196,7 @@ export default function ApprovalView({ type }: ApprovalViewProps) {
       setApproveModal(null);
       setApproveDetails(null);
       setApproveDescription('');
+      setCorrectedWorkId('');
       setRowAmounts({});
       loadClaims();
     } catch (e: any) {
@@ -228,6 +239,7 @@ export default function ApprovalView({ type }: ApprovalViewProps) {
       try {
         const details = await getClaimById(claim.claimIdInternal || claim.claimId);
         setApproveDetails(details);
+        setCorrectedWorkId(details?.workId || '');
         setRowAmounts(initialRowAmounts((details?.expenses || []) as unknown as ApprovalExpense[], details?.verifiedAmount));
       } catch (e) {
         console.error('Failed to load claim details for approval', e);
@@ -286,6 +298,7 @@ export default function ApprovalView({ type }: ApprovalViewProps) {
       setApproveModal(null);
       setApproveDetails(null);
       setApproveDescription('');
+      setCorrectedWorkId('');
       setRowAmounts({});
     };
 
@@ -317,6 +330,45 @@ export default function ApprovalView({ type }: ApprovalViewProps) {
         ) : (
           <>
             <ClaimDetailsOverview claim={approveDetails} />
+            {type === 'admin' && (() => {
+              const project = projectOptions.find((item) => item.name === approveDetails.site);
+              const worksForProject = projectWorks.filter((work) => work.active && work.project_id === project?.id);
+              const workChanged = correctedWorkId !== (approveDetails.workId || '');
+              return (
+                <section className="rounded-xl border border-sky-200 bg-sky-50/50 p-4 dark:border-sky-900 dark:bg-sky-950/20">
+                  <Label>Work activity and manager routing</Label>
+                  <div className="mt-2 flex flex-col gap-2 sm:flex-row">
+                    <Select value={correctedWorkId} onValueChange={setCorrectedWorkId}>
+                      <SelectTrigger><SelectValue placeholder="Choose the correct work" /></SelectTrigger>
+                      <SelectContent>
+                        {worksForProject.map((work) => <SelectItem key={work.id} value={work.id}>{work.name}</SelectItem>)}
+                      </SelectContent>
+                    </Select>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      disabled={!workChanged || !correctedWorkId || processing}
+                      onClick={async () => {
+                        setProcessing(true);
+                        try {
+                          await correctPendingClaimWork(approveModal.internalId || approveModal.claimId, correctedWorkId);
+                          const details = await getClaimById(approveModal.internalId || approveModal.claimId);
+                          setApproveDetails(details);
+                          setCorrectedWorkId(details?.workId || '');
+                          loadClaims();
+                          toast.success('Work activity updated; claim ID and expenses were kept');
+                        } catch (error: any) {
+                          toast.error(error.message || 'Could not update work activity');
+                        } finally {
+                          setProcessing(false);
+                        }
+                      }}
+                    >Update Work</Button>
+                  </div>
+                  <p className="mt-2 text-xs text-muted-foreground">Changing the work updates the manager who receives this claim after verification.</p>
+                </section>
+              );
+            })()}
             <ClaimAttachmentsSection claim={approveDetails} />
             <ClaimApprovalTimeline claim={approveDetails} />
             <section className="rounded-xl border border-border bg-card p-4 shadow-sm sm:p-5">

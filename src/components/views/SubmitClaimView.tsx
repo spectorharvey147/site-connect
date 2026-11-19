@@ -272,6 +272,7 @@ export default function SubmitClaimView() {
       await validateClaimSubmissionRules(user!.email, expenses);
 
       const canonicalFiles = new Map<string, string>();
+      const canonicalPathByPath = new Map<string, string>();
       const alreadyAttachedPaths = uniqueFileIds([
         ...expenses.flatMap((expense) => expense.attachmentIds || []),
         ...existingFileIds,
@@ -281,7 +282,9 @@ export default function SubmitClaimView() {
           const { data, error } = await supabase.storage.from('claim-attachments').download(path);
           if (!error && data?.size) {
             const fingerprint = await sha256ContentFingerprint(data);
+            const canonicalPath = canonicalFiles.get(fingerprint) || path;
             if (!canonicalFiles.has(fingerprint)) canonicalFiles.set(fingerprint, path);
+            canonicalPathByPath.set(path, canonicalPath);
           }
         } catch {
           // Existing paths remain valid references even when their contents cannot be hashed.
@@ -300,7 +303,10 @@ export default function SubmitClaimView() {
         for (const handle of uploadHandles) uploadedRowPaths.push(...await handle.uploadAll(canonicalFiles));
         const expectedUploads = uploadHandles.reduce((count, handle) => count + handle.getFileCount(), 0);
         if (uploadedRowPaths.length < expectedUploads) throw new Error(`One or more bills for expense #${expenses.indexOf(expense) + 1} did not upload. Please retry.`);
-        const rowAttachmentIds = uniqueFileIds([...(expense.attachmentIds || []), ...uploadedRowPaths]);
+        const rowAttachmentIds = uniqueFileIds([
+          ...(expense.attachmentIds || []).map((path) => canonicalPathByPath.get(path) || path),
+          ...uploadedRowPaths.map((path) => canonicalPathByPath.get(path) || path),
+        ]);
         if (expense.amountWithBill > 0 && rowAttachmentIds.length === 0) {
           throw new Error(`Attach at least one bill to expense #${expenses.indexOf(expense) + 1}.`);
         }
@@ -320,9 +326,11 @@ export default function SubmitClaimView() {
         throw new Error('One or more additional claim attachments did not upload. Please retry.');
       }
       const rowAttachmentSet = new Set(expensesWithAttachments.flatMap((expense) => expense.attachmentIds));
-      const uniqueGeneralPaths = uploadedPaths.filter((path) => !rowAttachmentSet.has(path));
+      const uniqueGeneralPaths = uploadedPaths
+        .map((path) => canonicalPathByPath.get(path) || path)
+        .filter((path) => !rowAttachmentSet.has(path));
       const allFileIds = uniqueFileIds([
-        ...existingFileIds,
+        ...existingFileIds.map((path) => canonicalPathByPath.get(path) || path),
         ...expensesWithAttachments.flatMap((expense) => expense.attachmentIds),
         ...uniqueGeneralPaths,
       ]);

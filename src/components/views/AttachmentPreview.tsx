@@ -24,7 +24,13 @@ function isPdf(name: string) {
 
 function getFileName(fileId: string) {
   const parts = fileId.split('/');
-  return parts[parts.length - 1] || fileId;
+  const storedName = parts[parts.length - 1] || fileId;
+  const extension = storedName.match(/\.([a-z0-9]{1,8})$/i)?.[1]?.toLowerCase();
+  const standardName = storedName.match(/^(\d+)-(\d+)(?:\.|$)/);
+  const generatedName = storedName.match(/^(\d+)-[0-9a-f-]{36}-(\d+)-/i);
+  const timestampAndIndex = standardName || generatedName;
+  if (!timestampAndIndex) return storedName;
+  return `${timestampAndIndex[1]}-${timestampAndIndex[2]}${extension ? `.${extension}` : ''}`;
 }
 
 export default function AttachmentPreview({ fileIds, compact = false, onRemove }: AttachmentPreviewProps) {
@@ -104,7 +110,7 @@ export default function AttachmentPreview({ fileIds, compact = false, onRemove }
         </h4>
       )}
       <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 md:grid-cols-4">
-        {fileIds.map((fileId, idx) => {
+        {fileIds.map((fileId) => {
           const url = signedUrls[fileId] || '';
           const name = getFileName(fileId);
           const imageFile = isImage(fileId);
@@ -122,11 +128,11 @@ export default function AttachmentPreview({ fileIds, compact = false, onRemove }
                 ) : (
                   <div className="flex aspect-square flex-col items-center justify-center gap-1 bg-muted/30 p-2">
                     <FileText className="h-8 w-8 text-muted-foreground" />
-                    <span className="w-full truncate text-center text-xs text-muted-foreground">{name}</span>
                   </div>
                 )}
               </div>
-              <div className={`absolute bottom-0 left-0 right-0 flex justify-center gap-1 bg-gradient-to-t from-black/70 to-transparent p-1 transition-opacity ${onRemove ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`}>
+              <p className="truncate border-t border-border px-2 py-1 text-center text-xs text-muted-foreground" title={name}>{name}</p>
+              <div className={`absolute bottom-7 left-0 right-0 flex justify-center gap-1 bg-gradient-to-t from-black/70 to-transparent p-1 transition-opacity ${onRemove ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`}>
                 <Button
                   variant="secondary"
                   size="icon"

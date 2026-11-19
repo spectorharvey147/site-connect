@@ -30,6 +30,7 @@ Important:
 - Accepted attachments support JPG/JPEG, PNG, and PDF. WebP and HEIC/HEIF are not accepted by the claim uploader.
 - Each expense row with a bill amount needs at least one bill attached directly to that row. Additional documents can be added in the separate, optional claim-level section.
 - Matching files selected in multiple upload areas are compared by SHA-256 during submission; the row attachment is kept as the canonical reference.
+- Attachment filenames use the standard `timestamp-index` format plus the file extension (for example, `1793365789652-0.pdf`).
 - If manager approval is enabled and the user has a manager assigned, the claim goes to manager first.
 - If manager approval is disabled or no manager is assigned, the claim goes directly to Admin/Super Admin.
 - If an active Manager submits a claim for work assigned to that same Manager, Admin verification sends it directly to HOD/Super Admin. The timeline records the skipped stage. A Manager cannot approve their own claim.
@@ -47,6 +48,7 @@ Important:
 
 - Open `Approval`.
 - Review claims pending final approval.
+- During Admin Verification, Admin and Super Admin can correct the work activity before forwarding. This updates the work and its manager routing while preserving the claim ID and expense rows.
 - A self-submitted claim for work assigned to the submitting Manager skips the manager queue after Admin verification.
 - Approve or reject.
 

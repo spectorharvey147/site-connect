@@ -12,6 +12,7 @@ const ACCEPTED_EXT = '.jpg,.jpeg,.png,.pdf';
 const TOTAL_UPLOAD_LIMIT_BYTES = 50 * 1024 * 1024;
 const IMAGE_COMPRESSION_QUALITIES = [0.96, 0.94, 0.92, 0.9, 0.88, 0.86, 0.84, 0.82];
 const IMAGE_COMPRESSION_SCALES = [1, 0.95, 0.9, 0.85, 0.8, 0.75, 0.7, 0.65, 0.6];
+let lastUploadTimestamp = 0;
 
 interface FileUploadProps {
   claimId: string;
@@ -214,6 +215,8 @@ const FileUpload = forwardRef<FileUploadHandle, FileUploadProps>(
       if (files.length === 0) return [];
       setUploading(true);
       const uploadedPaths: string[] = [];
+      lastUploadTimestamp = Math.max(Date.now(), lastUploadTimestamp + 1);
+      const uploadTimestamp = lastUploadTimestamp;
 
       for (let i = 0; i < files.length; i++) {
         const fingerprint = await sha256ContentFingerprint(files[i].file);
@@ -231,7 +234,7 @@ const FileUpload = forwardRef<FileUploadHandle, FileUploadProps>(
         }
 
         const ext = files[i].file.name.split('.').pop()?.toLowerCase() || 'jpg';
-        const path = `${claimId}/${Date.now()}-${crypto.randomUUID()}-${i}-${fingerprint.slice(0, 12)}.${ext}`;
+        const path = `${claimId}/${uploadTimestamp}-${i}.${ext}`;
 
         const { error } = await supabase.storage.from('claim-attachments').upload(path, files[i].file, {
           contentType: files[i].file.type,

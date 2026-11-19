@@ -25,6 +25,15 @@ export async function getProjectWorks(): Promise<ProjectWork[]> {
   return data;
 }
 
+export async function correctPendingClaimWork(claimId: string, workId: string) {
+  const { error } = await db.rpc('admin_correct_pending_claim_work', {
+    p_token: token(),
+    p_claim_id: claimId,
+    p_work_id: workId,
+  });
+  if (error) throw new Error(error.message);
+}
+
 export async function saveAccountingMaster(kind: string, id: string, values: Record<string, unknown>) {
   const { error } = await db.rpc('save_accounting_master', { p_token: token(), p_kind: kind, p_id: id, p_values: values });
   if (error) throw new Error(error.message);
