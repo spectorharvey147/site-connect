@@ -117,7 +117,7 @@ export default function AttachmentPreview({ fileIds, compact = false, onRemove }
 
           return (
             <div
-              key={idx}
+              key={fileId}
               className="group relative overflow-hidden rounded-lg border border-border transition-all hover:ring-2 hover:ring-primary/50"
             >
               <div className="cursor-pointer" onClick={() => openPreview(fileId)}>
