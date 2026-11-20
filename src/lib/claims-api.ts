@@ -1890,7 +1890,14 @@ export async function approveClaimAsAccounts(claimId: string, accountsEmail: str
   });
 }
 
-export async function markClaimPaid(claimId: string, accountsEmail: string, paidAmountInput: number, paymentReference?: string, note?: string) {
+export async function markClaimPaid(
+  claimId: string,
+  accountsEmail: string,
+  paidAmountInput: number,
+  paymentReference?: string,
+  note?: string,
+  onPaid?: () => void,
+) {
   if (isDemoEmail(accountsEmail)) return;
 
   const { data: claim } = await supabase.from('claims').select('*').eq('claim_id', claimId).single();
@@ -1913,6 +1920,10 @@ export async function markClaimPaid(claimId: string, accountsEmail: string, paid
     paymentReference: paymentReference || null,
     note: note || null,
   });
+
+  // The claim's paid status is committed by the approval action. Notify the UI
+  // now so long-running ledger, audit, and email work does not look like a hang.
+  onPaid?.();
 
   const { error: txError } = await supabase.from('transactions').insert({
     user_email: c.user_email,

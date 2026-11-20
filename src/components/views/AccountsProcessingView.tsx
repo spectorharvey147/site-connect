@@ -1,7 +1,7 @@
 import { type AccountingRowForm } from './ExpenseApprovalEditor';
 import { initialRowAmounts, approvedRows, type ApprovalExpense, type RowAmounts } from '@/lib/expense-approval';
 import { useEffect, useMemo, useState, type FormEvent } from 'react';
-import { CheckCircle2, CreditCard, Eye, Loader2, RefreshCw, WalletCards } from 'lucide-react';
+import { CheckCircle2, CircleAlert, CircleCheck, Clock3, CreditCard, Eye, Loader2, RefreshCw, WalletCards } from 'lucide-react';
 import { toast } from 'sonner';
 import { useAuth } from '@/contexts/AuthContext';
 import { approveClaimAsAccounts, getAccountsClaims, getClaimById, markClaimPaid } from '@/lib/claims-api';
@@ -37,6 +37,17 @@ type AccountingExpense = ApprovalExpense & {
   sgstAmount?: number | null;
   igstAmount?: number | null;
 };
+
+type PaymentProgressStatus = 'waiting' | 'processing' | 'paid' | 'paid_with_issue' | 'failed';
+type PaymentProgressItem = { claim: any; status: PaymentProgressStatus; error?: string };
+
+function PaymentProgressBadge({ status }: { status: PaymentProgressStatus }) {
+  if (status === 'paid') return <Badge className="bg-green-100 text-green-800 hover:bg-green-100"><CircleCheck className="mr-1 h-3 w-3" />Paid</Badge>;
+  if (status === 'paid_with_issue') return <Badge className="bg-amber-100 text-amber-800 hover:bg-amber-100"><CircleAlert className="mr-1 h-3 w-3" />Paid, needs review</Badge>;
+  if (status === 'failed') return <Badge variant="destructive">Could not mark paid</Badge>;
+  if (status === 'processing') return <Badge className="bg-blue-100 text-blue-800 hover:bg-blue-100"><Loader2 className="mr-1 h-3 w-3 animate-spin" />Processing</Badge>;
+  return <Badge variant="secondary"><Clock3 className="mr-1 h-3 w-3" />Waiting</Badge>;
+}
 
 function StatusBadge({ status }: { status: string }) {
   const normalized = status.toLowerCase();
@@ -214,6 +225,9 @@ export default function AccountsProcessingView() {
   const [bulkPayOpen, setBulkPayOpen] = useState(false);
   const [bulkReference, setBulkReference] = useState('');
   const [bulkNote, setBulkNote] = useState('');
+  const [singlePayProgress, setSinglePayProgress] = useState<PaymentProgressStatus | null>(null);
+  const [singlePayError, setSinglePayError] = useState('');
+  const [bulkPayProgress, setBulkPayProgress] = useState<PaymentProgressItem[]>([]);
 
   const loadClaims = async () => {
     setLoading(true);
@@ -323,6 +337,8 @@ export default function AccountsProcessingView() {
   const openPay = async (claim: any) => {
     const fallbackClaim = { ...claim, status: claim.status || 'Payment Processing' };
     setPayClaim(fallbackClaim);
+    setSinglePayProgress(null);
+    setSinglePayError('');
     setAmount(String((claim.verifiedAmount ?? claim.amount ?? 0).toFixed(2)));
     setReference('');
     setNote('');
@@ -413,13 +429,29 @@ export default function AccountsProcessingView() {
       return;
     }
     setProcessing(true);
+    setSinglePayProgress('processing');
+    setSinglePayError('');
+    let paidCommitted = false;
     try {
-      await markClaimPaid(payClaim.claimIdInternal || payClaim.claimId, user.email, value, reference, note);
+      await markClaimPaid(payClaim.claimIdInternal || payClaim.claimId, user.email, value, reference, note, () => {
+        paidCommitted = true;
+        setSinglePayProgress('paid');
+      });
+      setSinglePayProgress('paid');
       toast.success('Claim marked paid');
-      setPayClaim(null);
       await loadClaims();
     } catch (error: any) {
-      toast.error(error.message || 'Failed to mark paid');
+      const message = error.message || 'Failed to mark paid';
+      if (paidCommitted) {
+        setSinglePayProgress('paid_with_issue');
+        setSinglePayError(message);
+        toast.error('Claim is paid, but some follow-up records need review');
+        await loadClaims();
+      } else {
+        setSinglePayProgress('failed');
+        setSinglePayError(message);
+        toast.error(message);
+      }
     } finally {
       setProcessing(false);
     }
@@ -427,30 +459,45 @@ export default function AccountsProcessingView() {
 
   const handleBulkPaid = async () => {
     if (!user || selectedPayClaims.length === 0) return;
+    const runItems: PaymentProgressItem[] = selectedPayClaims.map((claim) => ({ claim, status: 'waiting' }));
+    const previouslyPaid = bulkPayProgress.filter((item) => item.status === 'paid' || item.status === 'paid_with_issue');
+    setBulkPayProgress([...previouslyPaid, ...runItems]);
     setProcessing(true);
     const failedIds: string[] = [];
     let completed = 0;
+    let paidWithIssues = 0;
     for (const claim of selectedPayClaims) {
       const claimId = claim.claimIdInternal || claim.claimId;
       const paidAmount = Number(claim.verifiedAmount ?? claim.amount ?? 0);
       if (!claimId || !Number.isFinite(paidAmount) || paidAmount <= 0) {
         failedIds.push(claimId);
+        setBulkPayProgress((items) => items.map((item) => item.claim === claim ? { ...item, status: 'failed', error: 'Invalid claim or paid amount' } : item));
         continue;
       }
+      setBulkPayProgress((items) => items.map((item) => (item.claim.claimIdInternal || item.claim.claimId) === claimId ? { ...item, status: 'processing', error: undefined } : item));
+      let paidCommitted = false;
       try {
-        await markClaimPaid(claimId, user.email, paidAmount, bulkReference.trim(), bulkNote.trim());
+        await markClaimPaid(claimId, user.email, paidAmount, bulkReference.trim(), bulkNote.trim(), () => {
+          paidCommitted = true;
+          setBulkPayProgress((items) => items.map((item) => (item.claim.claimIdInternal || item.claim.claimId) === claimId ? { ...item, status: 'paid' } : item));
+        });
         completed += 1;
+        setBulkPayProgress((items) => items.map((item) => (item.claim.claimIdInternal || item.claim.claimId) === claimId ? { ...item, status: 'paid' } : item));
       } catch (error) {
         console.error(`Failed to mark ${claim.claimId || claimId} paid:`, error);
-        failedIds.push(claimId);
+        if (paidCommitted) paidWithIssues += 1;
+        else failedIds.push(claimId);
+        setBulkPayProgress((items) => items.map((item) => (item.claim.claimIdInternal || item.claim.claimId) === claimId
+          ? { ...item, status: paidCommitted ? 'paid_with_issue' : 'failed', error: error instanceof Error ? error.message : 'Unable to complete payment update' }
+          : item));
       }
     }
 
     if (completed > 0) toast.success(`${completed} claim${completed === 1 ? '' : 's'} marked paid`);
     if (failedIds.length > 0) toast.error(`${failedIds.length} claim${failedIds.length === 1 ? '' : 's'} could not be updated and remain selected`);
+    if (paidWithIssues > 0) toast.error(`${paidWithIssues} claim${paidWithIssues === 1 ? ' is' : 's are'} paid, but need follow-up review`);
     setSelectedPayIds(failedIds);
     if (failedIds.length === 0) {
-      setBulkPayOpen(false);
       setBulkReference('');
       setBulkNote('');
     }
@@ -535,7 +582,7 @@ export default function AccountsProcessingView() {
             <Button type="button" variant="outline" size="sm" onClick={() => toggleAllProcessing(!allProcessingSelected)} disabled={processingClaims.length === 0}>
               {allProcessingSelected ? 'Clear Selection' : 'Select All'}
             </Button>
-            <Button type="button" size="sm" className="gradient-success text-success-foreground" onClick={() => setBulkPayOpen(true)} disabled={selectedPayIds.length === 0 || processing}>
+            <Button type="button" size="sm" className="gradient-success text-success-foreground" onClick={() => { setBulkPayProgress([]); setBulkPayOpen(true); }} disabled={selectedPayIds.length === 0 || processing}>
               <WalletCards className="mr-2 h-4 w-4" />Mark Selected Paid
             </Button>
           </div>
@@ -613,63 +660,76 @@ export default function AccountsProcessingView() {
       <ResponsiveOverlay
         open={bulkPayOpen}
         onOpenChange={(open) => {
-          if (!processing) setBulkPayOpen(open);
+          if (!processing) {
+            setBulkPayOpen(open);
+            if (open) setBulkPayProgress([]);
+          }
         }}
-        title={`Mark ${selectedPayClaims.length} Claims Paid`}
-        desktopClassName="max-w-3xl"
-        mobileClassName="max-h-[94svh]"
-        bodyClassName="max-h-[72vh] overflow-y-auto pr-1"
+        title={`Mark ${bulkPayProgress.length || selectedPayClaims.length} Claims Paid`}
+        desktopClassName="w-[calc(100vw-2rem)] max-w-5xl max-h-[92vh]"
+        mobileClassName="max-h-[96svh]"
+        bodyClassName="max-h-[78vh] overflow-y-auto pr-1"
         footer={bulkPayOpen ? (
           <div className="flex flex-col gap-2 sm:flex-row sm:justify-end">
-            <Button variant="outline" onClick={() => setBulkPayOpen(false)} disabled={processing}>Cancel</Button>
-            <Button className="gradient-success text-success-foreground" onClick={handleBulkPaid} disabled={processing || selectedPayClaims.length === 0}>
+            {processing ? <p className="mr-auto self-center text-sm text-muted-foreground">Updating claims one by one. Keep this window open to follow progress.</p> : null}
+            <Button variant="outline" onClick={() => setBulkPayOpen(false)} disabled={processing}>{bulkPayProgress.length ? 'Done' : 'Cancel'}</Button>
+            {(!bulkPayProgress.length || selectedPayClaims.length > 0) ? <Button className="gradient-success text-success-foreground" onClick={handleBulkPaid} disabled={processing || selectedPayClaims.length === 0}>
               {processing ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <WalletCards className="mr-2 h-4 w-4" />}
-              Confirm & Mark All Paid
-            </Button>
+              {bulkPayProgress.length ? `Retry ${selectedPayClaims.length} Remaining` : 'Confirm & Mark All Paid'}
+            </Button> : null}
           </div>
         ) : undefined}
       >
         <div className="space-y-4">
           <div className="grid grid-cols-2 gap-3">
-            <div className="rounded-lg border border-border bg-muted/20 p-3"><p className="text-xs text-muted-foreground">Selected Claims</p><p className="mt-1 text-xl font-bold">{selectedPayClaims.length}</p></div>
-            <div className="rounded-lg border border-border bg-muted/20 p-3"><p className="text-xs text-muted-foreground">Total Paid Amount</p><p className="mt-1 text-xl font-bold text-success">{formatCurrency(selectedPayTotal)}</p></div>
+            <div className="rounded-lg border border-border bg-muted/20 p-3"><p className="text-xs text-muted-foreground">{bulkPayProgress.length ? 'Batch Progress' : 'Selected Claims'}</p><p className="mt-1 text-xl font-bold">{bulkPayProgress.length ? `${bulkPayProgress.filter((item) => ['paid', 'paid_with_issue', 'failed'].includes(item.status)).length} / ${bulkPayProgress.length} processed` : selectedPayClaims.length}</p></div>
+            <div className="rounded-lg border border-border bg-muted/20 p-3"><p className="text-xs text-muted-foreground">{bulkPayProgress.length ? 'Paid Successfully' : 'Total Paid Amount'}</p><p className="mt-1 text-xl font-bold text-success">{bulkPayProgress.length ? bulkPayProgress.filter((item) => item.status === 'paid' || item.status === 'paid_with_issue').length : formatCurrency(selectedPayTotal)}</p></div>
           </div>
           <div className="rounded-lg border border-warning/25 bg-warning/10 p-3 text-sm text-warning">
-            Each claim will be paid using its own accounts-approved amount. Ledger, payment status and audit information will be updated separately for every claim.
+            Each claim uses its accounts-approved amount. Payment status is shown for every claim as the batch runs. Keep this window open until the batch finishes.
           </div>
-          <div className="max-h-64 overflow-auto rounded-lg border border-border">
-            <table className="w-full min-w-[520px] text-sm">
-              <thead className="sticky top-0 bg-card"><tr className="bg-muted/50"><th className="p-2 text-left">Claim</th><th className="p-2 text-left">Employee</th><th className="p-2 text-right">Paid Amount</th></tr></thead>
-              <tbody>{selectedPayClaims.map((claim) => <tr key={claim.claimIdInternal || claim.claimId} className="border-t border-border"><td className="p-2 font-mono text-xs">{claim.claimId}</td><td className="p-2">{claim.submittedBy}</td><td className="p-2 text-right font-semibold">{formatCurrency(claim.verifiedAmount ?? claim.amount)}</td></tr>)}</tbody>
+          <div className="max-h-[48vh] overflow-auto rounded-lg border border-border">
+            <table className="w-full min-w-[720px] text-sm">
+              <thead className="sticky top-0 z-10 bg-card"><tr className="bg-muted/50"><th className="p-2 text-left">Claim</th><th className="p-2 text-left">Employee</th><th className="p-2 text-right">Paid Amount</th><th className="p-2 text-left">Status</th></tr></thead>
+              <tbody>{(bulkPayProgress.length ? bulkPayProgress : selectedPayClaims.map((claim) => ({ claim, status: 'waiting' as const }))).map(({ claim, status, error }) => <tr key={claim.claimIdInternal || claim.claimId} className="border-t border-border"><td className="p-2 font-mono text-xs">{claim.claimId}</td><td className="p-2">{claim.submittedBy}</td><td className="p-2 text-right font-semibold">{formatCurrency(claim.verifiedAmount ?? claim.amount)}</td><td className="p-2"><div className="flex flex-col items-start gap-1"><PaymentProgressBadge status={status} />{error ? <span className="max-w-[20rem] text-xs text-muted-foreground">{error}</span> : null}</div></td></tr>)}</tbody>
             </table>
           </div>
-          <div><Label>Shared Payment Reference</Label><Input value={bulkReference} onChange={(event) => setBulkReference(event.target.value)} placeholder="UTR / cheque / cash reference applied to all selected claims" /></div>
-          <div><Label>Shared Payment Note</Label><Textarea rows={3} value={bulkNote} onChange={(event) => setBulkNote(event.target.value)} placeholder="Optional note applied to all selected claims" /></div>
+          {!bulkPayProgress.length ? <>
+            <div><Label>Shared Payment Reference</Label><Input value={bulkReference} onChange={(event) => setBulkReference(event.target.value)} placeholder="UTR / cheque / cash reference applied to all selected claims" /></div>
+            <div><Label>Shared Payment Note</Label><Textarea rows={3} value={bulkNote} onChange={(event) => setBulkNote(event.target.value)} placeholder="Optional note applied to all selected claims" /></div>
+          </> : null}
         </div>
       </ResponsiveOverlay>
 
       <ResponsiveOverlay
         open={!!payClaim}
-        onOpenChange={(open) => !open && setPayClaim(null)}
+        onOpenChange={(open) => {
+          if (open || !processing) setPayClaim(open ? payClaim : null);
+        }}
         title={`Mark Paid - ${payClaim?.claimId || ''}`}
         desktopClassName="max-w-7xl"
-        mobileClassName="max-h-[94svh]"
-        bodyClassName="max-h-[74vh] overflow-y-auto pr-1"
+        mobileClassName="max-h-[96svh]"
+        bodyClassName="max-h-[78vh] overflow-y-auto pr-1"
         footer={payClaim ? (
           <div className="flex flex-col gap-2 sm:flex-row sm:justify-end">
-            <Button variant="outline" onClick={() => setPayClaim(null)}>Cancel</Button>
-            <Button className="gradient-success text-success-foreground" onClick={handlePaid} disabled={processing}>
+            <Button variant="outline" onClick={() => setPayClaim(null)} disabled={processing}>{singlePayProgress ? 'Done' : 'Cancel'}</Button>
+            {singlePayProgress !== 'paid' && singlePayProgress !== 'paid_with_issue' ? <Button className="gradient-success text-success-foreground" onClick={handlePaid} disabled={processing}>
               {processing ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <CreditCard className="mr-2 h-4 w-4" />}
-              Mark Paid
-            </Button>
+              {singlePayProgress === 'failed' ? 'Retry Mark Paid' : 'Mark Paid'}
+            </Button> : null}
           </div>
         ) : undefined}
       >
         <div className="space-y-3">
+          {singlePayProgress ? <div className="rounded-lg border border-border bg-muted/20 p-3" role="status" aria-live="polite">
+            <div className="flex items-center gap-2"><PaymentProgressBadge status={singlePayProgress} /><span className="text-sm font-medium">{singlePayProgress === 'processing' ? `Updating ${payClaim?.claimId}…` : singlePayProgress === 'paid' ? `${payClaim?.claimId} is marked paid.` : singlePayProgress === 'paid_with_issue' ? `${payClaim?.claimId} is paid; follow-up records need review.` : `${payClaim?.claimId} could not be marked paid.`}</span></div>
+            {singlePayProgress === 'processing' ? <p className="mt-2 text-xs text-muted-foreground">The payment status will update here as soon as it is saved. Keep this window open.</p> : null}
+            {singlePayError ? <p className="mt-2 text-xs text-muted-foreground">{singlePayError}</p> : null}
+          </div> : null}
           <ClaimDetailsPanel claim={payClaim} />
-          <div><Label>Paid Amount</Label><Input type="number" min="0" step="0.01" value={amount} onChange={(event) => setAmount(event.target.value)} /></div>
-          <div><Label>Payment Reference</Label><Input value={reference} onChange={(event) => setReference(event.target.value)} placeholder="UTR / cheque / cash reference" /></div>
-          <div><Label>Payment Note</Label><Textarea rows={4} value={note} onChange={(event) => setNote(event.target.value)} placeholder="Optional payment note" /></div>
+          <div><Label>Paid Amount</Label><Input type="number" min="0" step="0.01" value={amount} onChange={(event) => setAmount(event.target.value)} disabled={processing || singlePayProgress === 'paid' || singlePayProgress === 'paid_with_issue'} /></div>
+          <div><Label>Payment Reference</Label><Input value={reference} onChange={(event) => setReference(event.target.value)} placeholder="UTR / cheque / cash reference" disabled={processing || singlePayProgress === 'paid' || singlePayProgress === 'paid_with_issue'} /></div>
+          <div><Label>Payment Note</Label><Textarea rows={4} value={note} onChange={(event) => setNote(event.target.value)} placeholder="Optional note" disabled={processing || singlePayProgress === 'paid' || singlePayProgress === 'paid_with_issue'} /></div>
         </div>
       </ResponsiveOverlay>
 
