@@ -411,13 +411,13 @@ export default function SubmitClaimView() {
           </div>
           <div className="mb-4 grid grid-cols-1 gap-4 md:grid-cols-3">
             <div className="space-y-2">
-              <Label>Name</Label>
-              <Input value={user?.name || ''} readOnly className="bg-muted" />
+              <Label htmlFor="claim-submitter-name">Name</Label>
+              <Input id="claim-submitter-name" value={user?.name || ''} readOnly className="bg-muted" />
             </div>
             <div className="space-y-2">
-              <Label>Project Site</Label>
+              <Label htmlFor="claim-project-site">Project Site</Label>
               <Select value={site} onValueChange={setSite}>
-                <SelectTrigger><SelectValue placeholder="Select project site" /></SelectTrigger>
+                <SelectTrigger id="claim-project-site"><SelectValue placeholder="Select project site" /></SelectTrigger>
                 <SelectContent>
                   {dropdown.projects.map((project: any) => (
                     <SelectItem key={project.name} value={project.name}>{project.name} {project.code ? `(${project.code})` : ''}</SelectItem>
@@ -426,10 +426,10 @@ export default function SubmitClaimView() {
               </Select>
             </div>
             <div className="space-y-2">
-              <Label>Customer Name</Label>
+              <Label htmlFor="claim-customer-name">Customer Name</Label>
               {projectCustomers.length > 1 ? (
                 <Select value={customerName} onValueChange={setCustomerName} disabled={!site}>
-                  <SelectTrigger><SelectValue placeholder="Select customer" /></SelectTrigger>
+                  <SelectTrigger id="claim-customer-name"><SelectValue placeholder="Select customer" /></SelectTrigger>
                   <SelectContent>
                     {projectCustomers.map((customer: string) => (
                       <SelectItem key={customer} value={customer}>{customer}</SelectItem>
@@ -438,6 +438,7 @@ export default function SubmitClaimView() {
                 </Select>
               ) : (
                 <Input
+                  id="claim-customer-name"
                   value={customerName || (site ? 'No customer mapped' : '')}
                   readOnly
                   className="bg-muted"
@@ -505,9 +506,9 @@ export default function SubmitClaimView() {
                   <div className={isActive ? 'space-y-3' : 'hidden'}>
                       <div className="grid grid-cols-2 gap-3">
                         <div className="space-y-1">
-                          <Label className="text-xs">Category</Label>
+                          <Label className="text-xs" htmlFor={`expense-${expense.id}-category`}>Category</Label>
                           <Select value={expense.category} onValueChange={(value) => updateRow(expense.id, 'category', value)}>
-                            <SelectTrigger><SelectValue placeholder="Select" /></SelectTrigger>
+                            <SelectTrigger id={`expense-${expense.id}-category`}><SelectValue placeholder="Select" /></SelectTrigger>
                             <SelectContent>
                               {dropdown.categories.map((category: string) => (
                                 <SelectItem key={category} value={category}>{category}</SelectItem>
@@ -516,18 +517,18 @@ export default function SubmitClaimView() {
                           </Select>
                         </div>
                         <div className="space-y-1">
-                          <Label className="text-xs">Date</Label>
-                          <Input type="date" max={today} value={expense.claimDate} onChange={e => updateRow(expense.id, 'claimDate', e.target.value)} />
+                          <Label className="text-xs" htmlFor={`expense-${expense.id}-date`}>Date</Label>
+                          <Input id={`expense-${expense.id}-date`} type="date" max={today} value={expense.claimDate} onChange={e => updateRow(expense.id, 'claimDate', e.target.value)} />
                         </div>
                       </div>
                       <div className="space-y-1">
-                        <Label className="text-xs">Project Code</Label>
+                        <Label className="text-xs" htmlFor={`expense-${expense.id}-project-code`}>Project Code</Label>
                         <Select
                           value={expense.projectCode}
                           onValueChange={(value) => updateRow(expense.id, 'projectCode', value)}
                           disabled={!site || !expense.category}
                         >
-                          <SelectTrigger>
+                          <SelectTrigger id={`expense-${expense.id}-project-code`}>
                             <SelectValue placeholder={!site ? 'Select site first' : !expense.category ? 'Select category first' : 'Select code'} />
                           </SelectTrigger>
                           <SelectContent>
@@ -541,13 +542,14 @@ export default function SubmitClaimView() {
                         <p className="text-xs text-muted-foreground">Cost codes now follow the selected expense category automatically.</p>
                       </div>
                       <div className="space-y-1">
-                        <Label className="text-xs">Description</Label>
-                        <Input value={expense.description} onChange={e => updateRow(expense.id, 'description', e.target.value)} placeholder="Enter description" />
+                        <Label className="text-xs" htmlFor={`expense-${expense.id}-description`}>Description</Label>
+                        <Input id={`expense-${expense.id}-description`} value={expense.description} onChange={e => updateRow(expense.id, 'description', e.target.value)} placeholder="Enter description" />
                       </div>
                       <div className="grid grid-cols-2 gap-3">
                         <div className="space-y-1">
-                          <Label className="text-xs">With Bill (Rs.)</Label>
+                          <Label className="text-xs" htmlFor={`expense-${expense.id}-with-bill`}>With Bill (Rs.)</Label>
                           <Input
+                            id={`expense-${expense.id}-with-bill`}
                             type="text"
                             inputMode="decimal"
                             pattern="[0-9]*[.]?[0-9]*"
@@ -557,8 +559,9 @@ export default function SubmitClaimView() {
                           />
                         </div>
                         <div className="space-y-1">
-                          <Label className="text-xs">Without Bill (Rs.)</Label>
+                          <Label className="text-xs" htmlFor={`expense-${expense.id}-without-bill`}>Without Bill (Rs.)</Label>
                           <Input
+                            id={`expense-${expense.id}-without-bill`}
                             type="text"
                             inputMode="decimal"
                             pattern="[0-9]*[.]?[0-9]*"
@@ -641,7 +644,7 @@ export default function SubmitClaimView() {
                       <td className="p-2 text-muted-foreground">{idx + 1}</td>
                       <td className="p-2">
                         <Select value={expense.category} onValueChange={(value) => updateRow(expense.id, 'category', value)}>
-                          <SelectTrigger className="h-10 text-sm"><SelectValue placeholder="Category" /></SelectTrigger>
+                          <SelectTrigger className="h-10 text-sm" aria-label={`Expense ${idx + 1} category`}><SelectValue placeholder="Category" /></SelectTrigger>
                           <SelectContent>
                             {dropdown.categories.map((category: string) => (
                               <SelectItem key={category} value={category}>{category}</SelectItem>
@@ -655,7 +658,7 @@ export default function SubmitClaimView() {
                           onValueChange={(value) => updateRow(expense.id, 'projectCode', value)}
                           disabled={!site || !expense.category}
                         >
-                          <SelectTrigger className="h-10 text-sm">
+                          <SelectTrigger className="h-10 text-sm" aria-label={`Expense ${idx + 1} project code`}>
                             <SelectValue placeholder={!site ? 'Site first' : !expense.category ? 'Category first' : 'Code'} />
                           </SelectTrigger>
                           <SelectContent>
@@ -668,10 +671,10 @@ export default function SubmitClaimView() {
                         </Select>
                       </td>
                       <td className="p-2">
-                        <Input type="date" max={today} className="h-10 text-sm" value={expense.claimDate} onChange={e => updateRow(expense.id, 'claimDate', e.target.value)} />
+                        <Input aria-label={`Expense ${idx + 1} date`} type="date" max={today} className="h-10 text-sm" value={expense.claimDate} onChange={e => updateRow(expense.id, 'claimDate', e.target.value)} />
                       </td>
                       <td className="p-2">
-                        <Input className="h-10 text-sm" value={expense.description} onChange={e => updateRow(expense.id, 'description', e.target.value)} placeholder="Description" />
+                        <Input aria-label={`Expense ${idx + 1} description`} className="h-10 text-sm" value={expense.description} onChange={e => updateRow(expense.id, 'description', e.target.value)} placeholder="Description" />
                       </td>
                       <td className="p-2">
                         <Input
@@ -679,6 +682,7 @@ export default function SubmitClaimView() {
                           inputMode="decimal"
                           pattern="[0-9]*[.]?[0-9]*"
                           className="h-10 text-right text-sm"
+                          aria-label={`Expense ${idx + 1} with bill amount`}
                           value={expense.amountWithBill || ''}
                           onChange={e => updateRow(expense.id, 'amountWithBill', parseAmountInput(e.target.value))}
                           placeholder="0.00"
@@ -690,6 +694,7 @@ export default function SubmitClaimView() {
                           inputMode="decimal"
                           pattern="[0-9]*[.]?[0-9]*"
                           className="h-10 text-right text-sm"
+                          aria-label={`Expense ${idx + 1} without bill amount`}
                           value={expense.amountWithoutBill || ''}
                           onChange={e => updateRow(expense.id, 'amountWithoutBill', parseAmountInput(e.target.value))}
                           placeholder="0.00"

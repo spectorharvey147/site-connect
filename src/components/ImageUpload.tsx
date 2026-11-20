@@ -84,8 +84,8 @@ export default function ImageUpload({
               <ImageIcon className="h-6 w-6 text-muted-foreground" />
             )}
           </div>
-          <div className="flex flex-col gap-1">
-            <div className="flex gap-2">
+          <div className="flex min-w-0 flex-col gap-1">
+            <div className="flex flex-wrap gap-2">
               <Button type="button" variant="outline" size="sm" onClick={() => inputRef.current?.click()} disabled={uploading}>
                 {uploading ? <Loader2 className="h-4 w-4 animate-spin mr-1" /> : <Upload className="h-4 w-4 mr-1" />}
                 Upload Logo
@@ -115,8 +115,8 @@ export default function ImageUpload({
               <ImageIcon className="h-6 w-6 text-muted-foreground" />
             )}
           </div>
-          <div className="flex flex-col gap-1">
-            <div className="flex gap-2">
+          <div className="flex min-w-0 flex-col gap-1">
+            <div className="flex flex-wrap gap-2">
               <Button type="button" variant="outline" size="sm" onClick={() => inputRef.current?.click()} disabled={uploading}>
                 {uploading ? <Loader2 className="h-4 w-4 animate-spin mr-1" /> : <Upload className="h-4 w-4 mr-1" />}
                 {buttonLabel || (preview ? 'Change Signature' : 'Upload Signature')}
