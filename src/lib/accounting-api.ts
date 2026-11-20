@@ -58,11 +58,6 @@ export async function removePendingClaimAttachment(claimId: string, path: string
 }
 
 export async function saveAccountingMaster(kind: string, id: string, values: Record<string, unknown>) {
-  if (kind === 'group' || kind === 'group_add') {
-    const { error } = await db.rpc('save_expense_gl_master', { p_token: token(), p_id: kind === 'group_add' ? '' : id, p_values: values });
-    if (error) throw new Error(error.message);
-    return;
-  }
   const { error } = await db.rpc('save_accounting_master', { p_token: token(), p_kind: kind, p_id: id, p_values: values });
   if (error) throw new Error(error.message);
 }
