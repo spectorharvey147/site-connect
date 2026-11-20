@@ -55,6 +55,8 @@ export default function AccountsSapEntryView() {
 
   const selectedSet = useMemo(() => new Set(selected), [selected]);
   const selectedHistoricalSet = useMemo(() => new Set(selectedHistorical), [selectedHistorical]);
+  const pendingGlColumns = claims[0]?.expenseGlColumns || historicalClaims[0]?.expenseGlColumns || [];
+  const historicalGlColumns = historicalClaims[0]?.expenseGlColumns || pendingGlColumns;
   const filteredClaims = useMemo(() => {
     const query = claimSearch.trim().toLowerCase();
     return claims.filter((claim) => !query || [claim.claimId, claim.projectCode, claim.customerName, claim.employeeName, claim.serviceType, claim.status]
@@ -244,10 +246,7 @@ export default function AccountsSapEntryView() {
                   <th className="p-3 text-left">Employee Name</th>
                   <th className="p-3 text-left">Claim Submitted Date</th>
                   <th className="p-3 text-left">Service Type</th>
-                  <th className="p-3 text-right">Boarding Amount</th>
-                  <th className="p-3 text-right">Other Amount</th>
-                  <th className="p-3 text-right">DA Amount</th>
-                  <th className="p-3 text-right">Travel Amount</th>
+                  {pendingGlColumns.map((column: any) => <th key={column.code} className="p-3 text-right">{column.name}</th>)}
                   <th className="p-3 text-right">Grand Total</th>
                   <th className="p-3 text-left">Remarks</th>
                   <th className="p-3 text-center">Status</th>
@@ -257,11 +256,11 @@ export default function AccountsSapEntryView() {
                 {loadingClaims ? (
                   Array.from({ length: 4 }).map((_, index) => (
                     <tr key={index} className="border-t border-border">
-                      {Array.from({ length: 14 }).map((__, cell) => <td key={cell} className="p-3"><Skeleton className="h-4 w-full" /></td>)}
+                      {Array.from({ length: 10 + pendingGlColumns.length }).map((__, cell) => <td key={cell} className="p-3"><Skeleton className="h-4 w-full" /></td>)}
                     </tr>
                   ))
                 ) : filteredClaims.length === 0 ? (
-                  <tr><td colSpan={14} className="p-8 text-center text-muted-foreground">{claims.length === 0 ? 'No fresh accounts-verified claims pending SAP export' : 'No pending claims match this search'}</td></tr>
+                  <tr><td colSpan={10 + pendingGlColumns.length} className="p-8 text-center text-muted-foreground">{claims.length === 0 ? 'No fresh accounts-verified claims pending SAP export' : 'No pending claims match this search'}</td></tr>
                 ) : filteredClaims.map((claim) => (
                   <tr key={claim.claimIdInternal} className="border-t border-border hover:bg-muted/30">
                     <td className="p-3 text-center"><Checkbox checked={selectedSet.has(claim.claimIdInternal)} onCheckedChange={() => toggleClaim(claim.claimIdInternal)} /></td>
@@ -271,10 +270,7 @@ export default function AccountsSapEntryView() {
                     <td className="p-3">{claim.employeeName}</td>
                     <td className="p-3">{formatDate(claim.submittedDate)}</td>
                     <td className="p-3">{claim.serviceType}</td>
-                    <td className="p-3 text-right">{formatCurrency(claim.boardingAmount)}</td>
-                    <td className="p-3 text-right">{formatCurrency(claim.otherAmount)}</td>
-                    <td className="p-3 text-right">{formatCurrency(claim.daAmount)}</td>
-                    <td className="p-3 text-right">{formatCurrency(claim.travelAmount)}</td>
+                    {pendingGlColumns.map((column: any) => <td key={column.code} className="p-3 text-right">{formatCurrency(claim.expenseGlAmounts?.[column.code] || 0)}</td>)}
                     <td className="p-3 text-right font-bold text-primary">{formatCurrency(claim.grandTotal)}</td>
                     <td className="max-w-[260px] p-3">{claim.remarks || '-'}</td>
                     <td className="p-3 text-center"><Badge className="bg-cyan-100 text-cyan-800 hover:bg-cyan-100">{claim.status}</Badge></td>
@@ -315,10 +311,7 @@ export default function AccountsSapEntryView() {
                   <th className="p-3 text-left">Employee Name</th>
                   <th className="p-3 text-left">Claim Submitted Date</th>
                   <th className="p-3 text-left">Service Type</th>
-                  <th className="p-3 text-right">Boarding Amount</th>
-                  <th className="p-3 text-right">Other Amount</th>
-                  <th className="p-3 text-right">DA Amount</th>
-                  <th className="p-3 text-right">Travel Amount</th>
+                  {historicalGlColumns.map((column: any) => <th key={column.code} className="p-3 text-right">{column.name}</th>)}
                   <th className="p-3 text-right">Grand Total</th>
                   <th className="p-3 text-left">Remarks</th>
                   <th className="p-3 text-center">Status</th>
@@ -328,11 +321,11 @@ export default function AccountsSapEntryView() {
                 {loadingHistorical ? (
                   Array.from({ length: 4 }).map((_, index) => (
                     <tr key={index} className="border-t border-border">
-                      {Array.from({ length: 14 }).map((__, cell) => <td key={cell} className="p-3"><Skeleton className="h-4 w-full" /></td>)}
+                      {Array.from({ length: 10 + historicalGlColumns.length }).map((__, cell) => <td key={cell} className="p-3"><Skeleton className="h-4 w-full" /></td>)}
                     </tr>
                   ))
                 ) : filteredHistoricalClaims.length === 0 ? (
-                  <tr><td colSpan={14} className="p-8 text-center text-muted-foreground">{historicalClaims.length === 0 ? 'No previous accounts verified or paid claims found' : 'No historical claims match this search'}</td></tr>
+                  <tr><td colSpan={10 + historicalGlColumns.length} className="p-8 text-center text-muted-foreground">{historicalClaims.length === 0 ? 'No previous accounts verified or paid claims found' : 'No historical claims match this search'}</td></tr>
                 ) : filteredHistoricalClaims.map((claim) => (
                   <tr key={claim.claimIdInternal} className="border-t border-border hover:bg-muted/30">
                     <td className="p-3 text-center"><Checkbox checked={selectedHistoricalSet.has(claim.claimIdInternal)} onCheckedChange={() => toggleHistoricalClaim(claim.claimIdInternal)} /></td>
@@ -342,10 +335,7 @@ export default function AccountsSapEntryView() {
                     <td className="p-3">{claim.employeeName}</td>
                     <td className="p-3">{formatDate(claim.submittedDate)}</td>
                     <td className="p-3">{claim.serviceType}</td>
-                    <td className="p-3 text-right">{formatCurrency(claim.boardingAmount)}</td>
-                    <td className="p-3 text-right">{formatCurrency(claim.otherAmount)}</td>
-                    <td className="p-3 text-right">{formatCurrency(claim.daAmount)}</td>
-                    <td className="p-3 text-right">{formatCurrency(claim.travelAmount)}</td>
+                    {historicalGlColumns.map((column: any) => <td key={column.code} className="p-3 text-right">{formatCurrency(claim.expenseGlAmounts?.[column.code] || 0)}</td>)}
                     <td className="p-3 text-right font-bold text-primary">{formatCurrency(claim.grandTotal)}</td>
                     <td className="max-w-[260px] p-3">{claim.remarks || '-'}</td>
                     <td className="p-3 text-center"><Badge className="bg-blue-100 text-blue-800 hover:bg-blue-100">{claim.status}</Badge></td>

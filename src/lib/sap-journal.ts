@@ -47,7 +47,7 @@ export function serializeSapCsv(rows: SapRow[]): string {
     return /[",\r\n]/.test(text) ? '"' + text.replace(/"/g, '""') + '"' : text;
   }).join(',')).join('\r\n') + '\r\n';
 }
-export type SapGroup = 'travel' | 'da' | 'other' | 'boarding';
+export type SapGroup = string;
 export interface SapLocation { code: string; name: string; costing_code: string }
 export interface SapExpenseGroup { code: SapGroup; name: string; gl_code: string; line_number: number }
 export interface SapMaster { id: string; type: string; value: string; project?: string; project_code?: string; sap_project_code?: string; sap_location_code?: string; sap_expense_group?: SapGroup; default_manager_email?: string; active: boolean }
@@ -64,7 +64,7 @@ export interface SapVendor { id: string; vendor_name: string; short_form: string
 export interface SapGstAccount { id: string; gst_type: 'CGST' | 'SGST' | 'IGST'; gl_code: string; active: boolean }
 export interface SapMasters { locations: SapLocation[]; groups: SapExpenseGroup[]; lists: SapMaster[]; users: SapEmployee[]; vendors?: SapVendor[]; gst_accounts?: SapGstAccount[] }
 export interface JournalOptions { postingDate: string; dueDate: string; transactionCode: string; allocations?: Record<string, number> }
-export interface JournalPayload { version: 1; headers: SapRow[]; details: SapRow[]; detailShortNames?: Record<string, string>; claims: { claimId: string; reference: string; employeeName: string; amount: number }[]; journalClaims: string[]; postingDate: string }
+export interface JournalPayload { version: 1; headers: SapRow[]; details: SapRow[]; detailShortNames?: Record<string, string>; expenseGlGroups?: { code: string; name: string; gl_code: string }[]; claims: { claimId: string; reference: string; employeeName: string; amount: number }[]; journalClaims: string[]; postingDate: string }
 
 export function moneyCents(value: unknown): number {
   const n = Number(value);
@@ -100,6 +100,7 @@ export function buildSapJournal(claims: SapClaim[], masters: SapMasters, options
   const posting = sapDate(options.postingDate), due = sapDate(options.dueDate);
   const transaction = required(options.transactionCode, 'Transaction code');
   const payload: JournalPayload = { version: 1, headers: [HEADER_COLUMNS, HEADER_ALIASES], details: [PAYLOAD_DETAIL_COLUMNS, PAYLOAD_DETAIL_ALIASES], detailShortNames: {}, claims: [], journalClaims: [], postingDate: options.postingDate };
+  payload.expenseGlGroups = masters.groups.map(group => ({ code: group.code, name: group.name, gl_code: group.gl_code }));
   // Existing claims retain access to mappings even after their project closes.
   const lists = masters.lists;
   const usedIds = new Set<number>();

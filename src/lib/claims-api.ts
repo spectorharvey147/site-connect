@@ -1418,6 +1418,43 @@ function sapBucketForCategory(category: string): 'boarding' | 'travel' | 'da' | 
   return 'other';
 }
 
+type SapReportBucket = 'boarding' | 'travel' | 'da' | 'other';
+type SapExpenseReportConfig = {
+  columns: { code: string; name: string; gl_code: string }[];
+  resolve: (category: string) => { bucket: SapReportBucket | 'custom'; groupCode: string };
+};
+
+async function getSapExpenseReportConfig(): Promise<SapExpenseReportConfig> {
+  if (isDemoMode()) return {
+    columns: [
+      { code: 'boarding', name: 'Boarding / room rent', gl_code: '' },
+      { code: 'other', name: 'Other expenses', gl_code: '' },
+      { code: 'da', name: 'Per diem (DA)', gl_code: '' },
+      { code: 'travel', name: 'Travel expenses', gl_code: '' },
+    ],
+    resolve: category => ({ bucket: sapBucketForCategory(category), groupCode: sapBucketForCategory(category) }),
+  };
+  const [categoriesResult, groupsResult] = await Promise.all([
+    supabase.from('app_lists').select('value,sap_expense_group').eq('type', 'category'),
+    supabase.from('sap_expense_groups').select('code,name,gl_code').order('line_number').order('name'),
+  ]);
+  if (categoriesResult.error) throw categoriesResult.error;
+  if (groupsResult.error) throw groupsResult.error;
+  const categoryGroups = new Map<string, string>();
+  (categoriesResult.data || []).forEach((row: any) => categoryGroups.set(normalizeSapCategory(row.value), String(row.sap_expense_group || '')));
+  const columns = (groupsResult.data || []).map((group: any) => ({ code: String(group.code), name: String(group.name), gl_code: String(group.gl_code) }));
+  const knownGroups = new Set(columns.map(group => group.code));
+  return {
+    columns,
+    resolve: (category: string) => {
+      const mapped = categoryGroups.get(normalizeSapCategory(category));
+      if (mapped && knownGroups.has(mapped)) return { bucket: mapped === 'boarding' || mapped === 'travel' || mapped === 'da' || mapped === 'other' ? mapped : 'custom', groupCode: mapped };
+      const fallback = sapBucketForCategory(category);
+      return { bucket: fallback, groupCode: knownGroups.has(fallback) ? fallback : 'other' };
+    },
+  };
+}
+
 function formatSapDate(value?: string | null) {
   if (!value) return '';
   const date = new Date(value);
@@ -1519,12 +1556,19 @@ function sapRemarks(expenses: any[], fallbackDate: string | null | undefined, pr
   return `Claims ${periodText} for the project / site${siteText ? ` ${siteText}` : ''}`;
 }
 
-function summarizeSapClaim(c: any, customerResolver?: SapCustomerResolver) {
+function summarizeSapClaim(c: any, customerResolver?: SapCustomerResolver, reportConfig?: SapExpenseReportConfig) {
+  const config = reportConfig || { columns: [], resolve: (category: string) => ({ bucket: sapBucketForCategory(category), groupCode: sapBucketForCategory(category) }) };
   const expenses = c.expense_items || [];
   const totals = expenses.reduce((acc: { boarding: number; travel: number; da: number; other: number }, expense: any) => {
-    acc[sapBucketForCategory(expense.category)] += amountFromExpense(expense);
+    const mapping = config.resolve(expense.category);
+    if (mapping.bucket !== 'custom') acc[mapping.bucket] += amountFromExpense(expense);
     return acc;
   }, { boarding: 0, travel: 0, da: 0, other: 0 });
+  const expenseGlAmounts = expenses.reduce((acc: Record<string, number>, expense: any) => {
+    const groupCode = config.resolve(expense.category).groupCode;
+    acc[groupCode] = (acc[groupCode] || 0) + amountFromExpense(expense);
+    return acc;
+  }, {});
   const firstExpense = expenses.find((expense: any) => expense.project_code) || expenses[0] || {};
   const firstCustomerExpense = expenses.find((expense: any) => String(expense.customer_name || '').trim()) || {};
   const amount = c.verified_amount == null ? getClaimAmount(c) : toNumber(c.verified_amount);
@@ -1547,6 +1591,8 @@ function summarizeSapClaim(c: any, customerResolver?: SapCustomerResolver) {
     otherAmount: totals.other,
     daAmount: totals.da,
     travelAmount: totals.travel,
+    expenseGlAmounts,
+    expenseGlColumns: config.columns,
     grandTotal: amount,
     remarks: sapRemarks(expenses, c.created_at, projectSite || firstExpense.project_code || ''),
     status: c.status,
@@ -1554,9 +1600,10 @@ function summarizeSapClaim(c: any, customerResolver?: SapCustomerResolver) {
   };
 }
 
-function sapExcelRows(claims: any[], customerResolver?: SapCustomerResolver) {
+function sapExcelRows(claims: any[], customerResolver?: SapCustomerResolver, reportConfig?: SapExpenseReportConfig) {
+  const config = reportConfig || { columns: [], resolve: (category: string) => ({ bucket: sapBucketForCategory(category), groupCode: sapBucketForCategory(category) }) };
   const rows = claims.map((claim) => {
-    const summary = summarizeSapClaim(claim, customerResolver);
+    const summary = summarizeSapClaim(claim, customerResolver, config);
     return {
       'Project code': summary.projectCode,
       'Employee Name': summary.employeeName,
@@ -1565,23 +1612,17 @@ function sapExcelRows(claims: any[], customerResolver?: SapCustomerResolver) {
       'Visit Dt': formatSapDate(summary.submittedDate),
       ID: summary.claimId,
       'Service Type': summary.serviceType,
-      'BOARDING(ROOM RENT)': summary.boardingAmount,
-      'OTHER EXPENSES': summary.otherAmount,
-      'PERDIEM (DA)': summary.daAmount,
-      'TRAVEL EXPENSE- BUS,TRAIN,BIKE': summary.travelAmount,
+      ...Object.fromEntries(config.columns.map(column => [column.name, summary.expenseGlAmounts[column.code] || 0])),
       'Grand Total': summary.grandTotal,
       Remarks: summary.remarks,
     };
   });
 
-  const totals = rows.reduce((acc, row) => {
-    acc.boarding += toNumber(row['BOARDING(ROOM RENT)']);
-    acc.other += toNumber(row['OTHER EXPENSES']);
-    acc.da += toNumber(row['PERDIEM (DA)']);
-    acc.travel += toNumber(row['TRAVEL EXPENSE- BUS,TRAIN,BIKE']);
-    acc.grand += toNumber(row['Grand Total']);
+  const totals = rows.reduce((acc: Record<string, number>, row) => {
+    for (const column of config.columns) acc[column.name] = (acc[column.name] || 0) + toNumber(row[column.name]);
+    acc['Grand Total'] = (acc['Grand Total'] || 0) + toNumber(row['Grand Total']);
     return acc;
-  }, { boarding: 0, other: 0, da: 0, travel: 0, grand: 0 });
+  }, {});
 
   rows.push({
     'Project code': 'Grand Total',
@@ -1591,11 +1632,8 @@ function sapExcelRows(claims: any[], customerResolver?: SapCustomerResolver) {
     'Visit Dt': '',
     ID: '',
     'Service Type': '',
-    'BOARDING(ROOM RENT)': totals.boarding,
-    'OTHER EXPENSES': totals.other,
-    'PERDIEM (DA)': totals.da,
-    'TRAVEL EXPENSE- BUS,TRAIN,BIKE': totals.travel,
-    'Grand Total': totals.grand,
+    ...Object.fromEntries(config.columns.map(column => [column.name, totals[column.name] || 0])),
+    'Grand Total': totals['Grand Total'] || 0,
     Remarks: '',
   });
 
@@ -1606,6 +1644,7 @@ export async function getSapPendingClaims() {
   if (isDemoMode()) return [];
 
   const customerResolver = await getSapCustomerResolver();
+  const reportConfig = await getSapExpenseReportConfig();
   const { data, error } = await supabase
     .from('claims')
     .select('*, expense_items(*)')
@@ -1614,7 +1653,7 @@ export async function getSapPendingClaims() {
     .order('created_at', { ascending: false });
   if (error) throw error;
 
-  return ((data || []) as any[]).map((claim) => summarizeSapClaim(claim, customerResolver));
+  return ((data || []) as any[]).map((claim) => summarizeSapClaim(claim, customerResolver, reportConfig));
 }
 
 function isSapHistoricalStatus(status?: string | null) {
@@ -1627,6 +1666,7 @@ function isSapHistoricalStatus(status?: string | null) {
 
 export async function getSapHistoricalClaims() {
   const customerResolver = await getSapCustomerResolver();
+  const reportConfig = await getSapExpenseReportConfig();
   if (isDemoMode()) return demoClaims.map((claim) => {
     const projectCode = claim.expenses?.[0]?.projectCode || '';
     return {
@@ -1661,7 +1701,7 @@ export async function getSapHistoricalClaims() {
   return ((data || []) as any[])
     .filter((claim) => isSapHistoricalStatus(claim.status) || claim.accounts_verified_email || claim.paid_date)
     .slice(0, 200)
-    .map((claim) => summarizeSapClaim(claim, customerResolver));
+    .map((claim) => summarizeSapClaim(claim, customerResolver, reportConfig));
 }
 
 async function fetchSapPreviewClaimsByIds(claimIds: string[]) {
@@ -1706,7 +1746,8 @@ export async function downloadSapPreviewExcel(claimIds: string[], generatedBy?: 
 
   const XLSX = await import('xlsx');
   const customerResolver = await getSapCustomerResolver();
-  const worksheet = XLSX.utils.json_to_sheet(sapExcelRows(claims, customerResolver));
+  const reportConfig = await getSapExpenseReportConfig();
+  const worksheet = XLSX.utils.json_to_sheet(sapExcelRows(claims, customerResolver, reportConfig));
   const workbook = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(workbook, worksheet, 'SAP Preview');
   const workbookData = XLSX.write(workbook, { bookType: 'xlsx', type: 'array' });
@@ -1766,7 +1807,16 @@ export async function getSapExportBatchClaims(batchId: string) {
     const ids = new Set(headers.map(h=>h[0]));
     const details = snapshot.details.slice(2).filter(d=>ids.has(d[0]));
     const amount = (line: number) => details.filter(d=>d[1]===line).reduce((sum,d)=>sum+Number(d[4] || 0),0);
-    return { claimId: claim.reference, claimIdInternal: claim.claimId, projectCode: [...new Set(headers.map(h=>h[7]))].join(', '), customerName: [...new Set(headers.map(h=>h[2]))].join(', '), employeeName: claim.employeeName, submittedDate: snapshot.postingDate, serviceType: headers[0]?.[5] || '', boardingAmount: amount(4), otherAmount: amount(3), daAmount: amount(2), travelAmount: amount(1), grandTotal: claim.amount, remarks: headers.map(h=>h[12]).join('; '), status: 'Exported', sapStatus: 'Exported' };
+    const expenseGlColumns = snapshot.expenseGlGroups || [
+      { code: 'boarding', name: 'Boarding / room rent', gl_code: '' },
+      { code: 'other', name: 'Other expenses', gl_code: '' },
+      { code: 'da', name: 'Per diem (DA)', gl_code: '' },
+      { code: 'travel', name: 'Travel expenses', gl_code: '' },
+    ];
+    const expenseGlAmounts = Object.fromEntries(expenseGlColumns.map(group => [group.code, group.gl_code
+      ? details.filter(row => String(row[3]) === group.gl_code).reduce((sum, row) => sum + Number(row[4] || 0), 0)
+      : amount(({ boarding: 4, other: 3, da: 2, travel: 1 } as Record<string, number>)[group.code] || 3)]));
+    return { claimId: claim.reference, claimIdInternal: claim.claimId, projectCode: [...new Set(headers.map(h=>h[7]))].join(', '), customerName: [...new Set(headers.map(h=>h[2]))].join(', '), employeeName: claim.employeeName, submittedDate: snapshot.postingDate, serviceType: headers[0]?.[5] || '', boardingAmount: amount(4), otherAmount: amount(3), daAmount: amount(2), travelAmount: amount(1), expenseGlAmounts, expenseGlColumns, grandTotal: claim.amount, remarks: headers.map(h=>h[12]).join('; '), status: 'Exported', sapStatus: 'Exported' };
   });
 
   const { data: items, error: itemsError } = await supabase
@@ -1783,7 +1833,8 @@ export async function getSapExportBatchClaims(batchId: string) {
     .in('claim_id', claimIds);
   if (error) throw error;
   const customerResolver = await getSapCustomerResolver();
-  return ((data || []) as any[]).map((claim) => summarizeSapClaim(claim, customerResolver));
+  const reportConfig = await getSapExpenseReportConfig();
+  return ((data || []) as any[]).map((claim) => summarizeSapClaim(claim, customerResolver, reportConfig));
 }
 
 export async function logSapReportDownloaded(batchId: string, downloadedBy: string) {

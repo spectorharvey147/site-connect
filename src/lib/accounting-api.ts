@@ -58,6 +58,11 @@ export async function removePendingClaimAttachment(claimId: string, path: string
 }
 
 export async function saveAccountingMaster(kind: string, id: string, values: Record<string, unknown>) {
+  if (kind === 'group' || kind === 'group_add') {
+    const { error } = await db.rpc('save_expense_gl_master', { p_token: token(), p_id: kind === 'group_add' ? '' : id, p_values: values });
+    if (error) throw new Error(error.message);
+    return;
+  }
   const { error } = await db.rpc('save_accounting_master', { p_token: token(), p_kind: kind, p_id: id, p_values: values });
   if (error) throw new Error(error.message);
 }
@@ -136,9 +141,9 @@ export async function journalWorkbook(payload: JournalPayload): Promise<Blob> {
   const book = XLSX.utils.book_new();
   const importRows = sapImportRows(payload);
   const abstract = XLSX.utils.aoa_to_sheet(journalAbstractRows(payload));
-  abstract['!cols'] = [28, 25, 40, 16, 16, 20, 25, 24, 22, 20, 34, 20, 48].map(wch => ({ wch }));
+  abstract['!cols'] = journalAbstractRows(payload)[0].map((heading, index) => ({ wch: index < 7 ? [28, 25, 40, 16, 16, 20, 25][index] : Math.max(18, String(heading).length + 2) }));
   for (let row = 1; row <= payload.journalClaims.length + 1; row++) {
-    for (let col = 7; col <= 13; col++) {
+    for (let col = 7; col < journalAbstractRows(payload)[0].length - 1; col++) {
       const cell = abstract[XLSX.utils.encode_cell({ r: row, c: col })];
       if (cell) cell.z = '#,##0.00';
     }
@@ -153,16 +158,30 @@ export async function journalWorkbook(payload: JournalPayload): Promise<Blob> {
 }
 
 export function journalAbstractRows(payload: JournalPayload) {
-  const rows: (string | number)[][] = [['Project code', 'Employee Name', 'CustName', 'PostingDate', 'Visit Dt', 'ID', 'Service Type', 'BOARDING(ROOM RENT)', 'OTHER EXPENSES', 'PERDIEM (DA)', 'TRAVEL EXPENSE- BUS,TRAIN,BIKE', 'Vendor GL', 'Input GST', 'Grand Total', 'Remarks']];
+  const expenseGroups = payload.expenseGlGroups;
+  const legacyGroups = [
+    { code: 'boarding', name: 'BOARDING(ROOM RENT)', gl_code: '' },
+    { code: 'other', name: 'OTHER EXPENSES', gl_code: '' },
+    { code: 'da', name: 'PERDIEM (DA)', gl_code: '' },
+    { code: 'travel', name: 'TRAVEL EXPENSE- BUS,TRAIN,BIKE', gl_code: '' },
+  ];
+  const groups = expenseGroups?.length ? expenseGroups : legacyGroups;
+  const header: (string | number)[] = ['Project code', 'Employee Name', 'CustName', 'PostingDate', 'Visit Dt', 'ID', 'Service Type', ...groups.map(group => group.name), 'Vendor GL', 'Input GST', 'Grand Total', 'Remarks'];
+  const rows: (string | number)[][] = [header];
   for (const [index, header] of payload.headers.slice(2).entries()) {
     const claim = payload.claims.find(claim => claim.claimId === payload.journalClaims[index]);
     const details = payload.details.slice(2).filter(row => row[0] === header[0]);
     const amount = (line: number) => details.filter(row => Number(row[1]) === line).reduce((sum, row) => sum + Math.round(Number(row[4] || 0) * 100), 0) / 100;
+    const amountForAccount = (code: string) => details.filter(row => String(row[3]) === code).reduce((sum, row) => sum + Math.round(Number(row[4] || 0) * 100), 0) / 100;
     const tax = [7,8,9].reduce((sum,line)=>sum+amount(line),0);
     const total = details.reduce((sum, row) => sum + Math.round(Number(row[4] || 0) * 100), 0) / 100;
-    rows.push([header[7], claim?.employeeName || '', header[2], header[1], header[8], header[3], header[5], amount(4), amount(3), amount(2), amount(1), amount(6), tax, total, header[12]]);
+    const groupAmounts = groups.map(group => group.gl_code ? amountForAccount(group.gl_code) : amount(({ boarding: 4, other: 3, da: 2, travel: 1 } as Record<string, number>)[group.code] || 3));
+    rows.push([header[7], claim?.employeeName || '', header[2], header[1], header[8], header[3], header[5], ...groupAmounts, amount(6), tax, total, header[12]]);
   }
-  rows.push(['Grand Total', '', '', '', '', '', '', ...[7, 8, 9, 10, 11, 12, 13].map(column => rows.slice(1).reduce((sum, row) => sum + Math.round(Number(row[column]) * 100), 0) / 100), '']);
+  rows.push(['Grand Total', '', '', '', '', '', '', ...Array.from({ length: header.length - 8 }, (_, offset) => {
+    const column = offset + 7;
+    return rows.slice(1).reduce((sum, row) => sum + Math.round(Number(row[column]) * 100), 0) / 100;
+  }), '']);
   return rows;
 }
 
