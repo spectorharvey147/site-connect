@@ -3,7 +3,7 @@ import { initialRowAmounts, approvedRows, type ApprovalExpense, type RowAmounts 
 import { useState, useEffect, useMemo } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { getPendingManagerClaims, getPendingAdminClaims, getPendingSuperAdminClaims, approveClaimAsManager, approveClaimAsAdmin, approveClaimAsSuperAdmin, rejectClaim, getClaimById, getDropdownOptions } from '@/lib/claims-api';
-import { correctPendingClaimWork, getProjectWorks, type ProjectWork } from '@/lib/accounting-api';
+import { correctPendingClaimExpenseCategory, correctPendingClaimWork, getProjectWorks, removePendingClaimAttachment, type ProjectWork } from '@/lib/accounting-api';
 import { Button } from '@/components/ui/button';
 import { ResponsiveOverlay } from '@/components/ui/responsive-overlay';
 import { Textarea } from '@/components/ui/textarea';
@@ -113,6 +113,8 @@ export default function ApprovalView({ type }: ApprovalViewProps) {
   const [projectWorks, setProjectWorks] = useState<ProjectWork[]>([]);
   const [projectOptions, setProjectOptions] = useState<any[]>([]);
   const [correctedWorkId, setCorrectedWorkId] = useState('');
+  const [categoryOptions, setCategoryOptions] = useState<string[]>([]);
+  const [correctedCategories, setCorrectedCategories] = useState<Record<string, string>>({});
 
   const [processing, setProcessing] = useState(false);
   const [viewClaim, setViewClaim] = useState<any>(null);
@@ -171,7 +173,10 @@ export default function ApprovalView({ type }: ApprovalViewProps) {
   useEffect(() => {
     if (type !== 'admin') return;
     getProjectWorks().then(setProjectWorks).catch(() => setProjectWorks([]));
-    getDropdownOptions().then((options) => setProjectOptions(options.projects || [])).catch(() => setProjectOptions([]));
+    getDropdownOptions().then((options) => {
+      setProjectOptions(options.projects || []);
+      setCategoryOptions(options.categories || []);
+    }).catch(() => { setProjectOptions([]); setCategoryOptions([]); });
   }, [type]);
   useEffect(() => {
     if (viewClaim || approveModal) window.scrollTo({ top: 0, behavior: 'smooth' });
@@ -240,6 +245,7 @@ export default function ApprovalView({ type }: ApprovalViewProps) {
         const details = await getClaimById(claim.claimIdInternal || claim.claimId);
         setApproveDetails(details);
         setCorrectedWorkId(details?.workId || '');
+        setCorrectedCategories(Object.fromEntries((details?.expenses || []).map((expense: any) => [expense.id, expense.category])));
         setRowAmounts(initialRowAmounts((details?.expenses || []) as unknown as ApprovalExpense[], details?.verifiedAmount));
       } catch (e) {
         console.error('Failed to load claim details for approval', e);
@@ -369,10 +375,71 @@ export default function ApprovalView({ type }: ApprovalViewProps) {
                 </section>
               );
             })()}
-            <ClaimAttachmentsSection claim={approveDetails} />
+            <ClaimAttachmentsSection claim={approveDetails} onRemove={type === 'admin' ? (fileId) => {
+              if (!window.confirm('Remove this attachment from the claim? If no other claim uses it, the stored file will be permanently deleted.')) return;
+              void (async () => {
+                setProcessing(true);
+                try {
+                  await removePendingClaimAttachment(approveModal.internalId || approveModal.claimId, fileId);
+                  const details = await getClaimById(approveModal.internalId || approveModal.claimId);
+                  setApproveDetails(details);
+                  setCorrectedCategories(Object.fromEntries((details?.expenses || []).map((expense: any) => [expense.id, expense.category])));
+                  loadClaims();
+                  toast.success('Attachment removed from the claim');
+                } catch (error: any) {
+                  toast.error(error.message || 'Could not remove attachment');
+                  const details = await getClaimById(approveModal.internalId || approveModal.claimId).catch(() => null);
+                  if (details) setApproveDetails(details);
+                } finally {
+                  setProcessing(false);
+                }
+              })();
+            } : undefined} />
             <ClaimApprovalTimeline claim={approveDetails} />
             <section className="rounded-xl border border-border bg-card p-4 shadow-sm sm:p-5">
               <h3 className="mb-4 text-base font-semibold">Expense Details</h3>
+              {type === 'admin' && (
+                <div className="mb-4 space-y-3 rounded-lg border border-sky-200 bg-sky-50/50 p-3 dark:border-sky-900 dark:bg-sky-950/20">
+                  <div>
+                    <h4 className="text-sm font-semibold">Correct expense categories</h4>
+                    <p className="mt-1 text-xs text-muted-foreground">Save a correction before verifying. Each change is recorded in the audit log.</p>
+                  </div>
+                  {approveDetails.expenses.map((expense: any, index: number) => {
+                    const currentCategory = correctedCategories[expense.id] ?? expense.category;
+                    return (
+                      <div key={expense.id} className="flex flex-col gap-2 rounded-md border border-border bg-background p-2 sm:flex-row sm:items-end">
+                        <div className="min-w-0 flex-1">
+                          <Label htmlFor={`claim-category-${expense.id}`}>Expense {index + 1}: {expense.category}</Label>
+                          <Select value={currentCategory} onValueChange={(value) => setCorrectedCategories((previous) => ({ ...previous, [expense.id]: value }))}>
+                            <SelectTrigger id={`claim-category-${expense.id}`} className="mt-1"><SelectValue placeholder="Choose category" /></SelectTrigger>
+                            <SelectContent>{categoryOptions.map((category) => <SelectItem key={category} value={category}>{category}</SelectItem>)}</SelectContent>
+                          </Select>
+                        </div>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          disabled={processing || !currentCategory || currentCategory === expense.category}
+                          onClick={async () => {
+                            setProcessing(true);
+                            try {
+                              await correctPendingClaimExpenseCategory(approveModal.internalId || approveModal.claimId, expense.id, currentCategory);
+                              const details = await getClaimById(approveModal.internalId || approveModal.claimId);
+                              setApproveDetails(details);
+                              setCorrectedCategories(Object.fromEntries((details?.expenses || []).map((row: any) => [row.id, row.category])));
+                              loadClaims();
+                              toast.success('Expense category updated; claim amounts and attachments were kept');
+                            } catch (error: any) {
+                              toast.error(error.message || 'Could not update expense category');
+                            } finally {
+                              setProcessing(false);
+                            }
+                          }}
+                        >Update Category</Button>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
               <ExpenseApprovalEditor expenses={approveDetails.expenses} amounts={rowAmounts} onChange={setRowAmounts} disabled={processing} />
             </section>
           </>

@@ -34,6 +34,18 @@ Deno.serve(async req => {
       if (bucket === 'user-avatars') { if (isWrite && !admin && path.split('/')[0] !== actor.email) return json(403, 'You may only edit your own image'); continue; }
       const prefix = path.split('/')[0];
       if (finance) {
+        if (bucket === 'claim-attachments' && req.method === 'DELETE') {
+          if (!admin) return json(403, 'Admin access required to remove claim attachments');
+          let { data: claim } = await db.from('claims').select('claim_id,claim_number,status')
+            .eq('claim_id', prefix).maybeSingle();
+          if (!claim) {
+            const result = await db.from('claims').select('claim_id,claim_number,status')
+              .eq('claim_number', prefix).maybeSingle();
+            claim = result.data;
+          }
+          if (!claim || !['Submitted','Pending Admin Verification'].includes(claim.status)) return json(403, 'Attachments can only be removed from claims pending Admin verification');
+          if (![claim.claim_id, claim.claim_number].includes(prefix)) return json(403, 'Attachment does not belong to this claim');
+        }
         if (isWrite && req.method !== 'DELETE' && /^C-\d+$/.test(prefix)) {
           const { error } = await db.from('storage_upload_owners').upsert({ bucket, prefix, user_email: actor.email }, { onConflict: 'bucket,prefix', ignoreDuplicates: true });
           if (error) throw error;

@@ -34,6 +34,29 @@ export async function correctPendingClaimWork(claimId: string, workId: string) {
   if (error) throw new Error(error.message);
 }
 
+export async function correctPendingClaimExpenseCategory(claimId: string, expenseId: string, category: string) {
+  const { error } = await db.rpc('admin_correct_pending_claim_expense_category', {
+    p_token: token(),
+    p_claim_id: claimId,
+    p_expense_id: expenseId,
+    p_category: category,
+  });
+  if (error) throw new Error(error.message);
+}
+
+export async function removePendingClaimAttachment(claimId: string, path: string) {
+  const { data: canDeleteObject, error } = await db.rpc('admin_detach_pending_claim_attachment', {
+    p_token: token(),
+    p_claim_id: claimId,
+    p_path: path,
+  });
+  if (error) throw new Error(error.message);
+  if (canDeleteObject) {
+    const { error: storageError } = await db.storage.from('claim-attachments').remove([path]);
+    if (storageError) throw new Error(`Attachment was removed from the claim, but the stored file could not be deleted: ${storageError.message}`);
+  }
+}
+
 export async function saveAccountingMaster(kind: string, id: string, values: Record<string, unknown>) {
   const { error } = await db.rpc('save_accounting_master', { p_token: token(), p_kind: kind, p_id: id, p_values: values });
   if (error) throw new Error(error.message);
