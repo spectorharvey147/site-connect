@@ -34,6 +34,24 @@ export async function correctPendingClaimWork(claimId: string, workId: string) {
   if (error) throw new Error(error.message);
 }
 
+export async function correctPendingClaimProject(
+  claimId: string,
+  siteName: string,
+  customerName: string,
+  workId: string | null,
+  expenseCodes: Array<{ id: string; projectCode: string }>,
+) {
+  const { error } = await db.rpc('admin_correct_pending_claim_project', {
+    p_token: token(),
+    p_claim_id: claimId,
+    p_site_name: siteName,
+    p_customer_name: customerName || null,
+    p_work_id: workId,
+    p_expenses: expenseCodes.map((expense) => ({ id: expense.id, project_code: expense.projectCode || null })),
+  });
+  if (error) throw new Error(error.message);
+}
+
 export async function correctPendingClaimExpenseCategory(claimId: string, expenseId: string, category: string) {
   const { error } = await db.rpc('admin_correct_pending_claim_expense_category', {
     p_token: token(),

@@ -16,7 +16,7 @@ function unique(values: string[]) {
   return [...new Set(values.map((value) => String(value || '').trim()).filter(Boolean))];
 }
 
-export default function ClaimAttachmentsSection({ claim, onRemove }: { claim: AttachmentClaim; onRemove?: (fileId: string) => void }) {
+export default function ClaimAttachmentsSection({ claim, inlinePreview = false, onRemove }: { claim: AttachmentClaim; inlinePreview?: boolean; onRemove?: (fileId: string) => void }) {
   const rowFileIds = unique((claim.expenses || []).flatMap((expense) => expense.attachmentIds || []));
   const rowFileSet = new Set(rowFileIds);
   const generalFileIds = unique(
@@ -74,7 +74,7 @@ export default function ClaimAttachmentsSection({ claim, onRemove }: { claim: At
                   {group.fileIds.length} {group.fileIds.length === 1 ? 'file' : 'files'}
                 </span>
               </div>
-              <AttachmentPreview fileIds={group.fileIds} claimId={claim.claimId || ''} compact onRemove={onRemove} />
+              <AttachmentPreview fileIds={group.fileIds} claimId={claim.claimId || ''} compact inlinePreview={inlinePreview} onRemove={onRemove} />
             </div>
           ))}
         </div>

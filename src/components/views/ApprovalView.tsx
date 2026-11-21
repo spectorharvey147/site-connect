@@ -2,8 +2,8 @@ import ExpenseApprovalEditor from './ExpenseApprovalEditor';
 import { initialRowAmounts, approvedRows, type ApprovalExpense, type RowAmounts } from '@/lib/expense-approval';
 import { useState, useEffect, useMemo } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
-import { getPendingManagerClaims, getPendingAdminClaims, getPendingSuperAdminClaims, approveClaimAsManager, approveClaimAsAdmin, approveClaimAsSuperAdmin, rejectClaim, getClaimById, getDropdownOptions } from '@/lib/claims-api';
-import { correctPendingClaimExpenseCategory, correctPendingClaimWork, getProjectWorks, removePendingClaimAttachment, type ProjectWork } from '@/lib/accounting-api';
+import { getPendingManagerClaims, getPendingAdminClaims, getPendingSuperAdminClaims, approveClaimAsManager, approveClaimAsAdmin, approveClaimAsSuperAdmin, rejectClaim, getClaimById, getDropdownOptions, type ProjectCodeOption } from '@/lib/claims-api';
+import { correctPendingClaimExpenseCategory, correctPendingClaimProject, getProjectWorks, removePendingClaimAttachment, type ProjectWork } from '@/lib/accounting-api';
 import { Button } from '@/components/ui/button';
 import { ResponsiveOverlay } from '@/components/ui/responsive-overlay';
 import { Textarea } from '@/components/ui/textarea';
@@ -18,6 +18,42 @@ import ClaimAttachmentsSection from '@/components/views/ClaimAttachmentsSection'
 import { Skeleton } from '@/components/ui/skeleton';
 import { Badge } from '@/components/ui/badge';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+
+function availableProjectCodes(projectCodes: ProjectCodeOption[], site: string, category: string, customerName: string) {
+  if (!site || !category) return [];
+  const categoryKey = category.trim().toLowerCase();
+  const customerKey = customerName.trim().toLowerCase();
+  const matches = projectCodes.filter((code) =>
+    (!code.project || code.project === site)
+    && (code.allowsAllCategories || code.expenseCategories.some((item) => item.trim().toLowerCase() === categoryKey))
+    && (!code.customerNames.length || !customerKey || code.customerNames.some((item) => item.trim().toLowerCase() === customerKey)),
+  );
+  const unique = new Map<string, ProjectCodeOption>();
+  matches.forEach((code) => {
+    const existing = unique.get(code.code);
+    if (!existing || (existing.project === '' && code.project === site)) unique.set(code.code, code);
+  });
+  return [...unique.values()].sort((a, b) => a.code.localeCompare(b.code));
+}
+
+function projectCustomerNames(project: any, projectCodes: ProjectCodeOption[]) {
+  if (project?.customerNames?.length) return project.customerNames as string[];
+  const site = String(project?.name || '');
+  return [...new Set(projectCodes
+    .filter((code) => !code.project || code.project === site)
+    .flatMap((code) => code.customerNames || []))];
+}
+
+function initialCorrectedProjectCodes(expenses: any[], projectCodes: ProjectCodeOption[], site: string, customerName: string) {
+  return Object.fromEntries(expenses.map((expense) => {
+    const choices = availableProjectCodes(projectCodes, site, expense.category || '', customerName);
+    const currentCode = String(expense.projectCode || '');
+    const selectedCode = choices.some((choice) => choice.code === currentCode)
+      ? currentCode
+      : choices.length === 1 ? choices[0].code : '';
+    return [expense.id, selectedCode];
+  }));
+}
 
 function formatDate(date: string) {
   if (!date) return '';
@@ -111,7 +147,14 @@ export default function ApprovalView({ type }: ApprovalViewProps) {
   const [approveDescription, setApproveDescription] = useState('');
   const [rowAmounts, setRowAmounts] = useState<RowAmounts>({});
   const [projectWorks, setProjectWorks] = useState<ProjectWork[]>([]);
+  const [projectWorksReady, setProjectWorksReady] = useState(false);
   const [projectOptions, setProjectOptions] = useState<any[]>([]);
+  const [projectCodeOptions, setProjectCodeOptions] = useState<ProjectCodeOption[]>([]);
+  const [projectOptionsReady, setProjectOptionsReady] = useState(false);
+  const [correctedSite, setCorrectedSite] = useState('');
+  const [correctedCustomerName, setCorrectedCustomerName] = useState('');
+  const [correctedProjectCodes, setCorrectedProjectCodes] = useState<Record<string, string>>({});
+  const [projectMappingTouched, setProjectMappingTouched] = useState(false);
   const [correctedWorkId, setCorrectedWorkId] = useState('');
   const [categoryOptions, setCategoryOptions] = useState<string[]>([]);
   const [correctedCategories, setCorrectedCategories] = useState<Record<string, string>>({});
@@ -172,18 +215,143 @@ export default function ApprovalView({ type }: ApprovalViewProps) {
   useEffect(() => { loadClaims(); }, [user, type]);
   useEffect(() => {
     if (type !== 'admin') return;
-    getProjectWorks().then(setProjectWorks).catch(() => setProjectWorks([]));
+    getProjectWorks().then(setProjectWorks).catch(() => setProjectWorks([])).finally(() => setProjectWorksReady(true));
     getDropdownOptions().then((options) => {
       setProjectOptions(options.projects || []);
+      setProjectCodeOptions(options.projectCodes || []);
       setCategoryOptions(options.categories || []);
-    }).catch(() => { setProjectOptions([]); setCategoryOptions([]); });
+      setProjectOptionsReady(true);
+    }).catch(() => { setProjectOptions([]); setProjectCodeOptions([]); setCategoryOptions([]); setProjectOptionsReady(true); });
   }, [type]);
+  useEffect(() => {
+    if (type !== 'admin' || !approveDetails || !projectOptionsReady || projectMappingTouched) return;
+    const project = projectOptions.find((item) => item.name === approveDetails.site);
+    const customers = projectCustomerNames(project, projectCodeOptions);
+    const storedCustomer = approveDetails.customerName || '';
+    const expectedCustomer = customers.length === 1
+      ? customers[0]
+      : customers.includes(storedCustomer) ? storedCustomer : customers.length ? '' : storedCustomer;
+    if (correctedSite !== approveDetails.site) return;
+    setCorrectedCustomerName(expectedCustomer);
+    setCorrectedProjectCodes(initialCorrectedProjectCodes(
+      approveDetails.expenses || [], projectCodeOptions, approveDetails.site || '', expectedCustomer,
+    ));
+  }, [type, approveDetails, projectOptions, projectOptionsReady, projectCodeOptions, correctedSite, projectMappingTouched]);
+  useEffect(() => {
+    if (type !== 'admin' || !approveDetails || !approveModal || !projectWorksReady || correctedSite !== (approveDetails.site || '')) return;
+    const project = projectOptions.find((item) => item.name === correctedSite);
+    const works = projectWorks.filter((work) => work.active && work.project_id === project?.id);
+    if (correctedWorkId === (approveDetails.workId || '') && !works.some((work) => work.id === correctedWorkId)) {
+      setCorrectedWorkId(works.length === 1 ? works[0].id : '');
+    }
+  }, [type, approveDetails, approveModal, projectWorksReady, projectOptions, projectWorks, correctedSite, correctedWorkId]);
   useEffect(() => {
     if (viewClaim || approveModal) window.scrollTo({ top: 0, behavior: 'smooth' });
   }, [viewClaim, approveModal]);
 
+  const adminProjectMappingDirty = type === 'admin' && Boolean(approveDetails) && (
+    correctedSite !== (approveDetails?.site || '')
+    || correctedCustomerName !== (approveDetails?.customerName || '')
+    || correctedWorkId !== (approveDetails?.workId || '')
+    || (approveDetails?.expenses || []).some((expense: any) =>
+      (correctedProjectCodes[expense.id] ?? expense.projectCode ?? '') !== (expense.projectCode || ''),
+    )
+  );
+
+  const handleCorrectedProjectChange = (siteName: string) => {
+    setProjectMappingTouched(true);
+    const project = projectOptions.find((item) => item.name === siteName);
+    const customers = projectCustomerNames(project, projectCodeOptions);
+    const customer = customers.length === 1 ? customers[0] : '';
+    setCorrectedSite(siteName);
+    setCorrectedCustomerName(customer);
+    const works = projectWorks.filter((work) => work.active && work.project_id === project?.id);
+    setCorrectedWorkId(works.length === 1 ? works[0].id : '');
+    setCorrectedProjectCodes(initialCorrectedProjectCodes(approveDetails?.expenses || [], projectCodeOptions, siteName, customer));
+  };
+
+  const handleCorrectedCustomerChange = (customerName: string) => {
+    setProjectMappingTouched(true);
+    setCorrectedCustomerName(customerName);
+    const reconciled = Object.fromEntries((approveDetails?.expenses || []).map((expense: any) => {
+      const category = correctedCategories[expense.id] ?? expense.category;
+      const choices = availableProjectCodes(projectCodeOptions, correctedSite, category || '', customerName);
+      const currentCode = correctedProjectCodes[expense.id] ?? expense.projectCode ?? '';
+      const selectedCode = choices.some((choice) => choice.code === currentCode)
+        ? currentCode
+        : choices.length === 1 ? choices[0].code : '';
+      return [expense.id, selectedCode];
+    }));
+    setCorrectedProjectCodes(reconciled);
+  };
+
+  const handleSaveProjectMapping = async () => {
+    if (!approveModal || !approveDetails) return;
+    if ((approveDetails.expenses || []).some((expense: any) =>
+      (correctedCategories[expense.id] ?? expense.category) !== expense.category,
+    )) {
+      toast.error('Save expense category corrections before saving project cost codes');
+      return;
+    }
+    const project = projectOptions.find((item) => item.name === correctedSite);
+    if (!project) {
+      toast.error('Choose an active project');
+      return;
+    }
+    if (projectCustomerNames(project, projectCodeOptions).length > 0 && !correctedCustomerName) {
+      toast.error('Choose the customer mapped to this project');
+      return;
+    }
+
+    const expenseCodes = (approveDetails.expenses || []).map((expense: any) => {
+      const category = correctedCategories[expense.id] ?? expense.category;
+      const projectCode = correctedProjectCodes[expense.id] ?? expense.projectCode ?? '';
+      const choices = availableProjectCodes(projectCodeOptions, correctedSite, category || '', correctedCustomerName);
+      return { expense, projectCode, choices };
+    });
+    const incompleteCode = expenseCodes.find(({ projectCode, choices }) => choices.length > 0 && !projectCode);
+    if (incompleteCode) {
+      toast.error(`Choose a project cost code for ${incompleteCode.expense.category || 'each expense'} before saving`);
+      return;
+    }
+    const invalidCode = expenseCodes.find(({ projectCode, choices }) => projectCode && !choices.some((choice) => choice.code === projectCode));
+    if (invalidCode) {
+      toast.error(`Choose a project cost code valid for ${invalidCode.expense.category || 'this expense'} and customer`);
+      return;
+    }
+
+    setProcessing(true);
+    try {
+      await correctPendingClaimProject(
+        approveModal.internalId || approveModal.claimId,
+        correctedSite,
+        correctedCustomerName,
+        correctedWorkId || null,
+        expenseCodes.map(({ expense, projectCode }) => ({ id: expense.id, projectCode })),
+      );
+      const details = await getClaimById(approveModal.internalId || approveModal.claimId);
+      if (!details) throw new Error('Project details were saved, but the claim could not be reloaded. Refresh the claim.');
+      setApproveDetails(details);
+      setCorrectedSite(details.site || '');
+      setCorrectedCustomerName(details.customerName || '');
+      setCorrectedWorkId(details.workId || '');
+      setCorrectedProjectCodes(Object.fromEntries((details.expenses || []).map((expense: any) => [expense.id, expense.projectCode || ''])));
+      setProjectMappingTouched(false);
+      loadClaims();
+      toast.success('Project, customer, work routing, and expense cost codes updated');
+    } catch (error: any) {
+      toast.error(error.message || 'Could not update project details');
+    } finally {
+      setProcessing(false);
+    }
+  };
+
   const handleApprove = async () => {
     if (!approveModal) return;
+    if (adminProjectMappingDirty) {
+      toast.error('Save the project and cost code corrections before verifying this claim');
+      return;
+    }
     const amount = Number(verifiedAmount);
     if ((type === 'admin' || type === 'manager' || type === 'super-admin') && (!verifiedAmount || Number.isNaN(amount) || amount < 0)) {
       toast.error('Enter a valid final approved amount');
@@ -201,6 +369,10 @@ export default function ApprovalView({ type }: ApprovalViewProps) {
       setApproveModal(null);
       setApproveDetails(null);
       setApproveDescription('');
+      setCorrectedSite('');
+      setCorrectedCustomerName('');
+      setCorrectedProjectCodes({});
+      setProjectMappingTouched(false);
       setCorrectedWorkId('');
       setRowAmounts({});
       loadClaims();
@@ -239,11 +411,25 @@ export default function ApprovalView({ type }: ApprovalViewProps) {
     setApproveDetails(null);
     setApproveDescription('');
     setRowAmounts({});
+    setCorrectedSite('');
+    setCorrectedCustomerName('');
+    setCorrectedProjectCodes({});
+    setProjectMappingTouched(false);
+    setCorrectedWorkId('');
     // Fetch full claim details so approver can review attachments and line items in the same modal
     void (async () => {
       try {
         const details = await getClaimById(claim.claimIdInternal || claim.claimId);
         setApproveDetails(details);
+        setCorrectedSite(details?.site || '');
+        const claimProject = projectOptions.find((item) => item.name === details?.site);
+        const customers = projectCustomerNames(claimProject, projectCodeOptions);
+        const currentCustomer = details?.customerName || '';
+        const customer = customers.length === 1
+          ? customers[0]
+          : customers.includes(currentCustomer) ? currentCustomer : customers.length ? '' : currentCustomer;
+        setCorrectedCustomerName(customer);
+        setCorrectedProjectCodes(initialCorrectedProjectCodes(details?.expenses || [], projectCodeOptions, details?.site || '', customer));
         setCorrectedWorkId(details?.workId || '');
         setCorrectedCategories(Object.fromEntries((details?.expenses || []).map((expense: any) => [expense.id, expense.category])));
         setRowAmounts(initialRowAmounts((details?.expenses || []) as unknown as ApprovalExpense[], details?.verifiedAmount));
@@ -285,7 +471,7 @@ export default function ApprovalView({ type }: ApprovalViewProps) {
         </div>
 
         <ClaimDetailsOverview claim={viewClaim} />
-        <ClaimAttachmentsSection claim={viewClaim} />
+        <ClaimAttachmentsSection claim={viewClaim} inlinePreview />
         <ClaimApprovalTimeline claim={viewClaim} />
         <section className="rounded-xl border border-border bg-card p-4 shadow-sm sm:p-5">
           <h3 className="mb-4 text-base font-semibold">Expense Details</h3>
@@ -304,6 +490,10 @@ export default function ApprovalView({ type }: ApprovalViewProps) {
       setApproveModal(null);
       setApproveDetails(null);
       setApproveDescription('');
+      setCorrectedSite('');
+      setCorrectedCustomerName('');
+      setCorrectedProjectCodes({});
+      setProjectMappingTouched(false);
       setCorrectedWorkId('');
       setRowAmounts({});
     };
@@ -322,7 +512,7 @@ export default function ApprovalView({ type }: ApprovalViewProps) {
           </div>
           <div className="flex gap-2">
             <Button variant="outline" onClick={closeApprovalPage}>Cancel</Button>
-            <Button className="gradient-success text-success-foreground" onClick={handleApprove} disabled={processing || !approveDetails}>
+            <Button className="gradient-success text-success-foreground" onClick={handleApprove} disabled={processing || !approveDetails || adminProjectMappingDirty}>
               {processing ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Check className="mr-2 h-4 w-4" />} {approveLabel}
             </Button>
           </div>
@@ -337,45 +527,52 @@ export default function ApprovalView({ type }: ApprovalViewProps) {
           <>
             <ClaimDetailsOverview claim={approveDetails} />
             {type === 'admin' && (() => {
-              const project = projectOptions.find((item) => item.name === approveDetails.site);
+              const project = projectOptions.find((item) => item.name === correctedSite);
               const worksForProject = projectWorks.filter((work) => work.active && work.project_id === project?.id);
-              const workChanged = correctedWorkId !== (approveDetails.workId || '');
+              const customerNames = projectCustomerNames(project, projectCodeOptions);
               return (
                 <section className="rounded-xl border border-sky-200 bg-sky-50/50 p-4 dark:border-sky-900 dark:bg-sky-950/20">
-                  <Label>Work activity and manager routing</Label>
-                  <div className="mt-2 flex flex-col gap-2 sm:flex-row">
-                    <Select value={correctedWorkId} onValueChange={setCorrectedWorkId}>
-                      <SelectTrigger><SelectValue placeholder="Choose the correct work" /></SelectTrigger>
-                      <SelectContent>
-                        {worksForProject.map((work) => <SelectItem key={work.id} value={work.id}>{work.name}</SelectItem>)}
-                      </SelectContent>
-                    </Select>
-                    <Button
-                      type="button"
-                      variant="outline"
-                      disabled={!workChanged || !correctedWorkId || processing}
-                      onClick={async () => {
-                        setProcessing(true);
-                        try {
-                          await correctPendingClaimWork(approveModal.internalId || approveModal.claimId, correctedWorkId);
-                          const details = await getClaimById(approveModal.internalId || approveModal.claimId);
-                          setApproveDetails(details);
-                          setCorrectedWorkId(details?.workId || '');
-                          loadClaims();
-                          toast.success('Work activity updated; claim ID and expenses were kept');
-                        } catch (error: any) {
-                          toast.error(error.message || 'Could not update work activity');
-                        } finally {
-                          setProcessing(false);
-                        }
-                      }}
-                    >Update Work</Button>
+                  <div className="flex flex-col gap-1">
+                    <Label>Correct project and cost code mapping</Label>
+                    <p className="text-xs text-muted-foreground">Changing the project updates customer details, available expense codes, and manager routing together. Save corrections before verifying.</p>
                   </div>
-                  <p className="mt-2 text-xs text-muted-foreground">Changing the work updates the manager who receives this claim after verification.</p>
+                  <div className="mt-3 grid gap-3 md:grid-cols-3">
+                    <div className="space-y-1">
+                      <Label htmlFor="admin-correct-project">Project / Site</Label>
+                      <Select value={correctedSite} onValueChange={handleCorrectedProjectChange} disabled={processing || !projectOptionsReady || !projectWorksReady}>
+                        <SelectTrigger id="admin-correct-project"><SelectValue placeholder="Choose project / site" /></SelectTrigger>
+                        <SelectContent>{projectOptions.map((option) => <SelectItem key={option.id || option.name} value={option.name}>{option.name}</SelectItem>)}</SelectContent>
+                      </Select>
+                    </div>
+                    <div className="space-y-1">
+                      <Label htmlFor="admin-correct-customer">Customer</Label>
+                      {customerNames.length > 1 ? (
+                        <Select value={correctedCustomerName} onValueChange={handleCorrectedCustomerChange} disabled={processing}>
+                          <SelectTrigger id="admin-correct-customer"><SelectValue placeholder="Choose customer" /></SelectTrigger>
+                          <SelectContent>{customerNames.map((name: string) => <SelectItem key={name} value={name}>{name}</SelectItem>)}</SelectContent>
+                        </Select>
+                      ) : (
+                        <Input id="admin-correct-customer" value={customerNames[0] || 'No customer mapped'} readOnly className="bg-background" />
+                      )}
+                    </div>
+                    <div className="space-y-1">
+                      <Label htmlFor="admin-correct-work">Work activity / Manager routing</Label>
+                      <Select value={correctedWorkId} onValueChange={(value) => { setProjectMappingTouched(true); setCorrectedWorkId(value); }} disabled={processing || !projectWorksReady || worksForProject.length === 0}>
+                        <SelectTrigger id="admin-correct-work"><SelectValue placeholder={worksForProject.length ? 'Choose the correct work' : 'No active work for this project'} /></SelectTrigger>
+                        <SelectContent>{worksForProject.map((work) => <SelectItem key={work.id} value={work.id}>{work.name}</SelectItem>)}</SelectContent>
+                      </Select>
+                    </div>
+                  </div>
+                  <div className="mt-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                    <p className="text-xs text-muted-foreground">The assigned manager is updated from the selected work activity.</p>
+                    <Button type="button" variant="outline" onClick={handleSaveProjectMapping} disabled={processing || !projectOptionsReady || !projectWorksReady || !adminProjectMappingDirty}>
+                      {processing ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}Save Project & Cost Codes
+                    </Button>
+                  </div>
                 </section>
               );
             })()}
-            <ClaimAttachmentsSection claim={approveDetails} onRemove={type === 'admin' ? (fileId) => {
+            <ClaimAttachmentsSection claim={approveDetails} inlinePreview onRemove={type === 'admin' ? (fileId) => {
               if (!window.confirm('Remove this attachment from the claim? If no other claim uses it, the stored file will be permanently deleted.')) return;
               void (async () => {
                 setProcessing(true);
@@ -401,19 +598,37 @@ export default function ApprovalView({ type }: ApprovalViewProps) {
               {type === 'admin' && (
                 <div className="mb-4 space-y-3 rounded-lg border border-sky-200 bg-sky-50/50 p-3 dark:border-sky-900 dark:bg-sky-950/20">
                   <div>
-                    <h4 className="text-sm font-semibold">Correct expense categories</h4>
-                    <p className="mt-1 text-xs text-muted-foreground">Save a correction before verifying. Each change is recorded in the audit log.</p>
+                    <h4 className="text-sm font-semibold">Correct expense categories and project cost codes</h4>
+                    <p className="mt-1 text-xs text-muted-foreground">Save category changes here. Save project and cost code changes in the project section above; corrections are audited.</p>
                   </div>
                   {approveDetails.expenses.map((expense: any, index: number) => {
                     const currentCategory = correctedCategories[expense.id] ?? expense.category;
+                    const currentProjectCode = correctedProjectCodes[expense.id] ?? expense.projectCode ?? '';
+                    const codesForRow = availableProjectCodes(projectCodeOptions, correctedSite, currentCategory || '', correctedCustomerName);
                     return (
-                      <div key={expense.id} className="flex flex-col gap-2 rounded-md border border-border bg-background p-2 sm:flex-row sm:items-end">
-                        <div className="min-w-0 flex-1">
-                          <Label htmlFor={`claim-category-${expense.id}`}>Expense {index + 1}: {expense.category}</Label>
-                          <Select value={currentCategory} onValueChange={(value) => setCorrectedCategories((previous) => ({ ...previous, [expense.id]: value }))}>
+                      <div key={expense.id} className="grid gap-2 rounded-md border border-border bg-background p-2 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto] sm:items-end">
+                        <div className="min-w-0">
+                          <Label htmlFor={`claim-category-${expense.id}`}>Expense {index + 1}: Category</Label>
+                          <Select value={currentCategory} onValueChange={(value) => {
+                            setProjectMappingTouched(true);
+                            setCorrectedCategories((previous) => ({ ...previous, [expense.id]: value }));
+                            const choices = availableProjectCodes(projectCodeOptions, correctedSite, value, correctedCustomerName);
+                            const selectedCode = choices.some((choice) => choice.code === currentProjectCode)
+                              ? currentProjectCode
+                              : choices.length === 1 ? choices[0].code : '';
+                            setCorrectedProjectCodes((previous) => ({ ...previous, [expense.id]: selectedCode }));
+                          }}>
                             <SelectTrigger id={`claim-category-${expense.id}`} className="mt-1"><SelectValue placeholder="Choose category" /></SelectTrigger>
                             <SelectContent>{categoryOptions.map((category) => <SelectItem key={category} value={category}>{category}</SelectItem>)}</SelectContent>
                           </Select>
+                        </div>
+                        <div className="min-w-0">
+                          <Label htmlFor={`claim-project-code-${expense.id}`}>Project cost code</Label>
+                          <Select value={currentProjectCode} onValueChange={(value) => { setProjectMappingTouched(true); setCorrectedProjectCodes((previous) => ({ ...previous, [expense.id]: value })); }} disabled={processing || !correctedSite || !currentCategory}>
+                            <SelectTrigger id={`claim-project-code-${expense.id}`} className="mt-1"><SelectValue placeholder="Choose project cost code" /></SelectTrigger>
+                            <SelectContent>{codesForRow.map((option) => <SelectItem key={`${option.project}|${option.code}`} value={option.code}>{option.code} · {option.label}</SelectItem>)}</SelectContent>
+                          </Select>
+                          {codesForRow.length === 0 && <p className="mt-1 text-xs text-muted-foreground">No active cost codes are mapped to this project and category.</p>}
                         </div>
                         <Button
                           type="button"
@@ -426,6 +641,7 @@ export default function ApprovalView({ type }: ApprovalViewProps) {
                               const details = await getClaimById(approveModal.internalId || approveModal.claimId);
                               setApproveDetails(details);
                               setCorrectedCategories(Object.fromEntries((details?.expenses || []).map((row: any) => [row.id, row.category])));
+                              setCorrectedProjectCodes(initialCorrectedProjectCodes(details?.expenses || [], projectCodeOptions, correctedSite, correctedCustomerName));
                               loadClaims();
                               toast.success('Expense category updated; claim amounts and attachments were kept');
                             } catch (error: any) {
@@ -479,7 +695,7 @@ export default function ApprovalView({ type }: ApprovalViewProps) {
           </div>
           <div className="mt-5 flex flex-col-reverse gap-2 border-t border-border pt-4 sm:flex-row sm:justify-end">
             <Button variant="outline" onClick={closeApprovalPage}>Cancel</Button>
-            <Button className="gradient-success text-success-foreground" onClick={handleApprove} disabled={processing || !approveDetails}>
+            <Button className="gradient-success text-success-foreground" onClick={handleApprove} disabled={processing || !approveDetails || adminProjectMappingDirty}>
               {processing ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Check className="mr-2 h-4 w-4" />} Confirm {approveLabel}
             </Button>
           </div>
@@ -716,7 +932,7 @@ export default function ApprovalView({ type }: ApprovalViewProps) {
               {approveDetails.generalFileIds && approveDetails.generalFileIds.length > 0 && (
                 <div className="mt-3">
                   <h4 className="mb-2 flex items-center gap-2 text-sm font-semibold"><Paperclip className="h-4 w-4" /> General Attachments ({approveDetails.generalFileIds.length})</h4>
-                  <AttachmentPreview fileIds={approveDetails.generalFileIds} claimId={approveDetails.claimId} />
+                  <AttachmentPreview fileIds={approveDetails.generalFileIds} claimId={approveDetails.claimId} inlinePreview />
                 </div>
               )}
             </div>
@@ -804,7 +1020,7 @@ export default function ApprovalView({ type }: ApprovalViewProps) {
                 <h4 className="mb-3 flex items-center gap-2 text-sm font-semibold">
                   <Paperclip className="h-4 w-4" /> General Attachments ({viewClaim.generalFileIds.length})
                 </h4>
-                <AttachmentPreview fileIds={viewClaim.generalFileIds} claimId={viewClaim.claimId} />
+                <AttachmentPreview fileIds={viewClaim.generalFileIds} claimId={viewClaim.claimId} inlinePreview />
               </div>
             )}
 
