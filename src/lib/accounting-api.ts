@@ -82,7 +82,10 @@ export async function saveAccountingMaster(kind: string, id: string, values: Rec
 
 export async function saveVendorGstMaster(kind: 'vendor' | 'gst', id: string, values: Record<string, unknown>) {
   const { error } = await db.rpc('save_vendor_gst_master', { p_token: token(), p_kind: kind, p_id: id || null, p_values: values });
-  if (error) throw new Error(error.message);
+  if (error) {
+    if (error.message.includes('sap_vendors_short_form_unique')) throw new Error('That BP code (short form) is already assigned to another vendor.');
+    throw new Error(error.message);
+  }
 }
 
 export async function getActiveVendors() {

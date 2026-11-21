@@ -54,8 +54,8 @@ function VendorRow({ vendor, onSaved }: { vendor: NonNullable<SapMasters['vendor
   };
   return <form onSubmit={save} className="grid gap-3 rounded-lg border bg-card p-4 sm:grid-cols-2 xl:grid-cols-4">
     <label className="space-y-1 text-sm"><span>Vendor name</span><Input required value={values.vendor_name} onChange={e => setValues({ ...values, vendor_name: e.target.value })} /></label>
-    <label className="space-y-1 text-sm"><span>Short form</span><Input required value={values.short_form} onChange={e => setValues({ ...values, short_form: e.target.value })} /></label>
-    <label className="space-y-1 text-sm"><span>SAP vendor account code</span><Input required value={values.vendor_account_code} onChange={e => setValues({ ...values, vendor_account_code: e.target.value })} /></label>
+    <label className="space-y-1 text-sm"><span>BP code (unique short form)</span><Input required value={values.short_form} onChange={e => setValues({ ...values, short_form: e.target.value })} /></label>
+    <label className="space-y-1 text-sm"><span>Accounts payable GL code (shared)</span><Input required value={values.vendor_account_code} onChange={e => setValues({ ...values, vendor_account_code: e.target.value })} /></label>
     <div className="flex items-end gap-2"><Button disabled={busy}>{busy ? 'Saving…' : 'Save'}</Button><Button type="button" variant="outline" disabled={busy} onClick={() => void toggle()}>{vendor.active ? 'Deactivate' : 'Activate'}</Button><span className="pb-2 text-xs text-muted-foreground">{vendor.active ? 'Active' : 'Inactive'}</span></div>
   </form>;
 }
@@ -93,8 +93,8 @@ export default function AccountingSetupView() {
       <TabsContent value="vendors" className="space-y-3"><p className="text-sm text-muted-foreground">Add vendor details only after confirming the SAP vendor account. Referenced vendors are deactivated instead of deleted.</p>
         <form className="grid gap-3 rounded-lg border p-4 sm:grid-cols-2 xl:grid-cols-4" onSubmit={async e => { e.preventDefault(); setAdding(true); try { await saveVendorGstMaster('vendor','',newVendor); setNewVendor({ vendor_name:'',short_form:'',vendor_account_code:'' }); await load(); toast.success('Vendor added'); } catch (error) { toast.error(error instanceof Error ? error.message : String(error)); } finally { setAdding(false); } }}>
           <label className="space-y-1 text-sm"><span>Vendor name</span><Input required value={newVendor.vendor_name} onChange={e => setNewVendor({...newVendor,vendor_name:e.target.value})} /></label>
-          <label className="space-y-1 text-sm"><span>Short form</span><Input required value={newVendor.short_form} onChange={e => setNewVendor({...newVendor,short_form:e.target.value})} /></label>
-          <label className="space-y-1 text-sm"><span>SAP vendor account code</span><Input required value={newVendor.vendor_account_code} onChange={e => setNewVendor({...newVendor,vendor_account_code:e.target.value})} /></label>
+          <label className="space-y-1 text-sm"><span>BP code (unique short form)</span><Input required value={newVendor.short_form} onChange={e => setNewVendor({...newVendor,short_form:e.target.value})} /></label>
+          <label className="space-y-1 text-sm"><span>Accounts payable GL code (shared)</span><Input required value={newVendor.vendor_account_code} onChange={e => setNewVendor({...newVendor,vendor_account_code:e.target.value})} /></label>
           <Button disabled={adding} className="self-end justify-self-start">{adding ? 'Adding…' : 'Add Vendor'}</Button>
         </form>
         {(masters.vendors || []).filter(v => matches(v.vendor_name,v.short_form,v.vendor_account_code)).map(v => <VendorRow key={v.id} vendor={v} onSaved={load} />)}
