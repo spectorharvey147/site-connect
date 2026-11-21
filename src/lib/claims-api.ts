@@ -1443,12 +1443,16 @@ async function getSapExpenseReportConfig(): Promise<SapExpenseReportConfig> {
   const categoryGroups = new Map<string, string>();
   (categoriesResult.data || []).forEach((row: any) => categoryGroups.set(normalizeSapCategory(row.value), String(row.sap_expense_group || '')));
   const columns = (groupsResult.data || []).map((group: any) => ({ code: String(group.code), name: String(group.name), gl_code: String(group.gl_code) }));
+  const hasUnmappedCategories = [...categoryGroups.values()].some(groupCode => !groupCode || !columns.some(column => column.code === groupCode));
+  if (hasUnmappedCategories) columns.push({ code: 'unmapped', name: 'Unmapped / Requires GL', gl_code: '' });
   const knownGroups = new Set(columns.map(group => group.code));
   return {
     columns,
     resolve: (category: string) => {
-      const mapped = categoryGroups.get(normalizeSapCategory(category));
+      const key = normalizeSapCategory(category);
+      const mapped = categoryGroups.get(key);
       if (mapped && knownGroups.has(mapped)) return { bucket: mapped === 'boarding' || mapped === 'travel' || mapped === 'da' || mapped === 'other' ? mapped : 'custom', groupCode: mapped };
+      if (categoryGroups.has(key)) return { bucket: 'custom', groupCode: 'unmapped' };
       const fallback = sapBucketForCategory(category);
       return { bucket: fallback, groupCode: knownGroups.has(fallback) ? fallback : 'other' };
     },
