@@ -57,11 +57,17 @@ async function snapshotSignature(db: ReturnType<typeof createClient>, signatureU
 async function signedApprovalSignatures(db: ReturnType<typeof createClient>, actor: any, claimIds: unknown) {
   if (!Array.isArray(claimIds) || claimIds.length < 1 || claimIds.length > 100) throw new Error('Choose up to 100 claims');
   const ids = [...new Set(claimIds.map((id) => String(id || '').trim()).filter(Boolean))];
-  const { data: claims, error } = await db.from('claims').select('claim_id,user_email,manager_email').in('claim_id', ids);
+  const { data: claims, error } = await db.from('claims').select('claim_id,user_email,manager_email,department_id').in('claim_id', ids);
   if (error) throw error;
   if ((claims || []).length !== ids.length) throw new Error('One or more claims are unavailable');
-  const elevated = ['Admin', 'Super Admin', 'Accounts'].includes(actor.role);
-  const allowed = (claims || []).every((claim) => elevated || claim.user_email === actor.email || claim.manager_email === actor.email);
+  const central = ['Master Admin', 'Accounts'].includes(actor.role);
+  const scopedAdmin = ['Admin', 'Super Admin'].includes(actor.role)
+    && Boolean(actor.department_id)
+    && (claims || []).every((claim) => claim.department_id === actor.department_id);
+  const allowed = central || scopedAdmin || (claims || []).every((claim) => (
+    claim.department_id === actor.department_id
+    && (claim.user_email === actor.email || claim.manager_email === actor.email)
+  ));
   if (!allowed) throw new Error('You cannot view these approval signatures');
   const { data: events, error: eventError } = await db.from('claim_approval_events')
     .select('id,signature_snapshot_url').in('claim_id', ids).not('signature_snapshot_url', 'is', null);
