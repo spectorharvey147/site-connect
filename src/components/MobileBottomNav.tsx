@@ -1,7 +1,7 @@
 import { useAuth } from '@/contexts/AuthContext';
 import { cn } from '@/lib/utils';
 import {
-  BarChart3, History, UserCheck, ShieldCheck, Users, Menu, UserCircle, Plus, ArrowLeftRight, Scale, Receipt, Settings, Shield, LogOut, FileUp, FileSpreadsheet, Crown, Banknote, FileBarChart, UserRoundCog,
+  BarChart3, Building2, History, UserCheck, ShieldCheck, Users, Menu, UserCircle, Plus, ArrowLeftRight, Scale, Receipt, Settings, Shield, LogOut, FileUp, FileSpreadsheet, Crown, Banknote, FileBarChart, UserRoundCog,
 } from 'lucide-react';
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from '@/components/ui/sheet';
 import { useState } from 'react';
@@ -20,23 +20,24 @@ const sideNavItems = [
 
 const allNavItems = [
   { id: 'dashboard', icon: BarChart3, label: 'Dashboard', roles: ['all'] },
-  { id: 'submit', icon: FileUp, label: 'Submit Claim', roles: ['User', 'Manager', 'Admin', 'Super Admin'] },
+  { id: 'submit', icon: FileUp, label: 'Submit Claim', roles: ['User', 'Manager', 'Admin', 'Super Admin', 'Master Admin'] },
   { id: 'history', icon: History, label: 'Claim History', roles: ['all'] },
   { id: 'ledger', icon: ArrowLeftRight, label: 'Ledger Statement', roles: ['all'] },
   { id: 'balances', icon: Scale, label: 'User Balances', roles: ['all'] },
   { id: 'manager-approval', icon: UserCheck, iconClassName: 'text-indigo-600 dark:text-indigo-400', label: 'Manager Approval', roles: ['Manager', 'Super Admin'] },
   { id: 'admin-approval', icon: ShieldCheck, iconClassName: 'text-sky-600 dark:text-sky-400', label: 'Admin Verification', roles: ['Admin', 'Super Admin'] },
   { id: 'final-approval', icon: Crown, iconClassName: 'text-violet-600 dark:text-violet-400', label: 'Final Approval', roles: ['Super Admin'] },
-  { id: 'accounts-processing', icon: Receipt, iconClassName: 'text-emerald-600 dark:text-emerald-400', label: 'Accounts Processing', roles: ['Accounts', 'Super Admin'] },
-  { id: 'accounts-sap-entry', icon: FileSpreadsheet, label: 'Accounts SAP Entry', roles: ['Accounts', 'Super Admin'] },
-  { id: 'accounting-setup', icon: FileSpreadsheet, label: 'GL & Location Setup', roles: ['Accounts', 'Admin', 'Super Admin'] },
-  { id: 'work-allocation', icon: Users, label: 'Work Allocation', roles: ['Admin', 'Super Admin'] },
-  { id: 'voucher', icon: Banknote, label: 'Payment Voucher', roles: ['Accounts', 'Admin', 'Super Admin'] },
-  { id: 'user-allocation', icon: UserRoundCog, label: 'User Allocation', roles: ['Admin', 'Super Admin'] },
-  { id: 'reports', icon: FileBarChart, label: 'Reports', roles: ['Admin', 'Super Admin'] },
-  { id: 'users', icon: Users, label: 'User Management', roles: ['Admin', 'Super Admin'] },
-  { id: 'audit', icon: Shield, label: 'Audit Trail', roles: ['Admin', 'Super Admin'] },
-  { id: 'settings', icon: Settings, label: 'Settings', roles: ['Admin', 'Super Admin'] },
+  { id: 'accounts-processing', icon: Receipt, iconClassName: 'text-emerald-600 dark:text-emerald-400', label: 'Accounts Processing', roles: ['Accounts'] },
+  { id: 'accounts-sap-entry', icon: FileSpreadsheet, label: 'Accounts SAP Entry', roles: ['Accounts'] },
+  { id: 'accounting-setup', icon: FileSpreadsheet, label: 'GL & Location Setup', roles: ['Accounts', 'Admin', 'Master Admin'] },
+  { id: 'work-allocation', icon: Users, label: 'Work Allocation', roles: ['Admin', 'Super Admin', 'Master Admin'] },
+  { id: 'voucher', icon: Banknote, label: 'Payment Voucher', roles: ['Accounts'] },
+  { id: 'user-allocation', icon: UserRoundCog, label: 'User Allocation', roles: ['Admin', 'Super Admin', 'Master Admin'] },
+  { id: 'department-allocation', icon: Building2, label: 'Department Allocation', roles: ['Master Admin'] },
+  { id: 'reports', icon: FileBarChart, label: 'Reports', roles: ['Admin', 'Super Admin', 'Master Admin'] },
+  { id: 'users', icon: Users, label: 'User Management', roles: ['Admin', 'Super Admin', 'Master Admin'] },
+  { id: 'audit', icon: Shield, label: 'Audit Trail', roles: ['Admin', 'Super Admin', 'Master Admin'] },
+  { id: 'settings', icon: Settings, label: 'Settings', roles: ['Admin', 'Master Admin'] },
   { id: 'profile', icon: UserCircle, label: 'My Profile', roles: ['all'] },
 ];
 

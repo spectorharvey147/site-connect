@@ -80,7 +80,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, [token]);
 
   const role = user?.role;
-  const isAdmin = role === 'Admin' || role === 'Super Admin';
+  const isAdmin = role === 'Admin' || role === 'Super Admin' || role === 'Master Admin';
   const isManagerOrAbove = role === 'Manager' || role === 'Accounts' || isAdmin;
 
   return (

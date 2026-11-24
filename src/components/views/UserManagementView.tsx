@@ -33,15 +33,22 @@ export default function UserManagementView() {
   const [search, setSearch] = useState('');
   const [roleFilter, setRoleFilter] = useState('all');
   const [statusFilter, setStatusFilter] = useState('all');
+  const [departments, setDepartments] = useState<Array<{ id: string; name: string }>>([]);
+  const [newDepartmentName, setNewDepartmentName] = useState('');
 
-  const [form, setForm] = useState({ name: '', email: '', password: '', role: 'User', advance: '0', signatureUrl: '' });
+  const [form, setForm] = useState({ name: '', email: '', password: '', role: 'User', departmentId: '', advance: '0', signatureUrl: '' });
 
   const loadUsers = async () => {
     setLoading(true);
     setError(null);
     try {
-      const data = await getAllUsers();
+      const [data, departmentResult] = await Promise.all([
+        getAllUsers(),
+        supabase.from('departments').select('id,name').order('name'),
+      ]);
+      if (departmentResult.error) throw departmentResult.error;
       setUsers(data);
+      setDepartments(departmentResult.data || []);
     } catch (e) { 
       console.error('Error loading users:', e);
       setError((e as any).message || 'Failed to load users');
@@ -84,16 +91,21 @@ export default function UserManagementView() {
     }
     setProcessing(true);
     try {
-      await createUser({ ...form, advance: parseFloat(form.advance) || 0 });
+      if (user?.role === 'Master Admin' && !['Accounts', 'Master Admin'].includes(form.role) && !form.departmentId) throw new Error('Select a department for this user.');
+      await createUser({ ...form, departmentId: form.departmentId, advance: parseFloat(form.advance) || 0 });
       toast.success('User created');
       setShowCreate(false);
-      setForm({ name: '', email: '', password: '', role: 'User', advance: '0', signatureUrl: '' });
+      setForm({ name: '', email: '', password: '', role: 'User', departmentId: '', advance: '0', signatureUrl: '' });
       loadUsers();
     } catch (err: any) { toast.error(err.message); }
     setProcessing(false);
   };
 
   const handleUpdate = async () => {
+    if (user?.role === 'Master Admin' && !['Accounts', 'Master Admin'].includes(editUser.role) && !editUser.departmentId) {
+      toast.error('Select a department for this user.');
+      return;
+    }
     if (editUser?.password) {
       const passwordError = validatePassword(editUser.password);
       if (passwordError) {
@@ -108,6 +120,7 @@ export default function UserManagementView() {
         name: editUser.name,
         email: editUser.email,
         role: editUser.role,
+        departmentId: editUser.departmentId || '',
         password: editUser.password || undefined,
         signatureUrl: editUser.signatureUrl || '',
       });
@@ -115,6 +128,21 @@ export default function UserManagementView() {
       setEditUser(null);
       loadUsers();
     } catch (err: any) { toast.error(err.message); }
+    setProcessing(false);
+  };
+
+  const handleCreateDepartment = async () => {
+    const name = newDepartmentName.trim();
+    if (!name) return;
+    setProcessing(true);
+    try {
+      const code = name.toUpperCase().replace(/[^A-Z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 20);
+      const { data, error } = await supabase.from('departments').insert({ name, code }).select('id,name').single();
+      if (error) throw error;
+      setDepartments((current) => [...current, data].sort((a, b) => a.name.localeCompare(b.name)));
+      setNewDepartmentName('');
+      toast.success('Department added');
+    } catch (err: any) { toast.error(err.message || 'Could not add department'); }
     setProcessing(false);
   };
 
@@ -192,6 +220,18 @@ export default function UserManagementView() {
           </div>
         </div>
 
+        {user?.role === 'Master Admin' && (
+          <div className="border-b border-border p-3 sm:p-4">
+            <h3 className="font-semibold">Departments</h3>
+            <p className="mb-3 text-sm text-muted-foreground">Create departments here, then assign each person to the right department below.</p>
+            <div className="flex flex-col gap-2 sm:flex-row">
+              <Input value={newDepartmentName} onChange={(event) => setNewDepartmentName(event.target.value)} placeholder="Department name" onKeyDown={(event) => { if (event.key === 'Enter') { event.preventDefault(); void handleCreateDepartment(); } }} />
+              <Button type="button" onClick={() => void handleCreateDepartment()} disabled={processing || !newDepartmentName.trim()}><Plus className="mr-1 h-4 w-4" />Add Department</Button>
+            </div>
+            {departments.length > 0 && <p className="mt-2 text-xs text-muted-foreground">Current departments: {departments.map((department) => department.name).join(', ')}</p>}
+          </div>
+        )}
+
         <div className="border-b border-border bg-muted/20 p-3 sm:p-4">
           <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
             <div className="rounded-lg border border-border bg-card p-3"><p className="text-xs text-muted-foreground">Active Users</p><p className="mt-1 flex items-center gap-2 text-xl font-bold text-success"><UserCheck className="h-4 w-4" />{userSummary.active}</p></div>
@@ -244,6 +284,7 @@ export default function UserManagementView() {
               </div>
               <div className="flex flex-wrap gap-2 text-sm">
                 <Badge variant="secondary">{u.role}</Badge>
+                {u.departmentName && <Badge variant="outline">{u.departmentName}</Badge>}
               </div>
               <div className="rounded-lg border border-border bg-muted/20 p-3">
                 <Label className="mb-2 block text-xs">Signature</Label>
@@ -299,7 +340,7 @@ export default function UserManagementView() {
                 <tr key={u.email} className="border-b border-border hover:bg-muted/30 transition-colors">
                   <td className="p-3 font-medium">{u.name}</td>
                   <td className="p-3 text-sm">{u.email}</td>
-                  <td className="p-3">{u.role}</td>
+                  <td className="p-3">{u.role}{u.departmentName && <span className="block text-xs text-muted-foreground">{u.departmentName}</span>}</td>
                   <td className="p-3 text-center space-x-1 whitespace-nowrap">
                     <Button variant="ghost" size="sm" onClick={() => setEditUser({ ...u, originalEmail: u.email, password: '', signatureUrl: u.signatureUrl || '' })}><Edit className="h-4 w-4" /></Button>
                     <Button variant="ghost" size="sm" className="text-success" onClick={() => setAdvanceModal({ email: u.email, name: u.name })}><RupeeIcon className="h-4 w-4" /></Button>
@@ -364,8 +405,16 @@ export default function UserManagementView() {
                     <SelectItem value="Manager">Manager</SelectItem>
                     <SelectItem value="Admin">Admin</SelectItem>
                     <SelectItem value="Accounts">Accounts</SelectItem>
-                    <SelectItem value="Super Admin">Super Admin</SelectItem>
+                    {(user?.role === 'Master Admin' || (user?.role === 'Super Admin' && form.email.trim().toLowerCase() === user.email.toLowerCase())) && <SelectItem value="Super Admin">Super Admin</SelectItem>}
+                    {(user?.role === 'Master Admin' || (user?.role === 'Super Admin' && form.email.trim().toLowerCase() === user.email.toLowerCase())) && <SelectItem value="Master Admin">Master Admin</SelectItem>}
                   </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-2">
+                <Label>Department</Label>
+                <Select disabled={user?.role !== 'Master Admin'} value={form.departmentId || 'none'} onValueChange={(value) => setForm({ ...form, departmentId: value === 'none' ? '' : value })}>
+                  <SelectTrigger className="h-11 sm:h-10"><SelectValue placeholder="Select department" /></SelectTrigger>
+                  <SelectContent><SelectItem value="none">No department (central role)</SelectItem>{departments.map((department) => <SelectItem key={department.id} value={department.id}>{department.name}</SelectItem>)}</SelectContent>
                 </Select>
               </div>
               <div className="space-y-2">
@@ -417,8 +466,16 @@ export default function UserManagementView() {
                     <SelectItem value="Manager">Manager</SelectItem>
                     <SelectItem value="Admin">Admin</SelectItem>
                     <SelectItem value="Accounts">Accounts</SelectItem>
-                    <SelectItem value="Super Admin">Super Admin</SelectItem>
+                    {(user?.role === 'Master Admin' || (user?.role === 'Super Admin' && editUser.email?.toLowerCase() === user.email.toLowerCase())) && <SelectItem value="Super Admin">Super Admin</SelectItem>}
+                    {(user?.role === 'Master Admin' || (user?.role === 'Super Admin' && editUser.email?.toLowerCase() === user.email.toLowerCase())) && <SelectItem value="Master Admin">Master Admin</SelectItem>}
                   </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-2">
+                <Label>Department</Label>
+                <Select disabled={user?.role !== 'Master Admin'} value={editUser.departmentId || 'none'} onValueChange={(value) => setEditUser({ ...editUser, departmentId: value === 'none' ? '' : value })}>
+                  <SelectTrigger className="h-11 sm:h-10"><SelectValue placeholder="Select department" /></SelectTrigger>
+                  <SelectContent><SelectItem value="none">No department (central role)</SelectItem>{departments.map((department) => <SelectItem key={department.id} value={department.id}>{department.name}</SelectItem>)}</SelectContent>
                 </Select>
               </div>
               <div className="space-y-2">

@@ -115,7 +115,7 @@ function isPaidStatus(status?: string | null) {
 }
 
 function canViewAllFinanceData(role: string) {
-  return ['admin', 'super admin', 'accounts'].includes(role.toLowerCase());
+  return ['admin', 'super admin', 'master admin', 'accounts'].includes(role.toLowerCase());
 }
 
 function getClaimAmount(claim: any) {
@@ -536,12 +536,10 @@ async function getAdminVerifierEmails() {
   return getSuperAdminApproverEmails();
 }
 
-async function getSuperAdminApproverEmails() {
-  const { data } = await supabase
-    .from('users')
-    .select('email')
-    .eq('role', 'Super Admin')
-    .eq('active', true);
+async function getSuperAdminApproverEmails(departmentId?: string | null) {
+  let query = supabase.from('users').select('email').eq('role', 'Super Admin').eq('active', true);
+  query = departmentId ? query.eq('department_id', departmentId) : query.is('department_id', null);
+  const { data } = await query;
 
   return [...new Set<string>((data || []).map((user: { email: string }) => user.email).filter(Boolean))];
 }
@@ -749,6 +747,25 @@ export async function getCurrentBalance(email: string): Promise<number> {
   const { data: user } = await supabase.from('users').select('advance_amount').eq('email', email).maybeSingle();
   if (user) return parseFloat((user as any).advance_amount) || 0;
   return 0;
+}
+
+async function getUserBalanceSnapshots(emails: string[]) {
+  const normalizedEmails = [...new Set(emails.map((email) => email.trim().toLowerCase()).filter(Boolean))];
+  if (!normalizedEmails.length) return new Map<string, { balance: number; lastTransactionAt: string | null }>();
+
+  const { data, error } = await supabase.rpc('get_user_balance_snapshots', { p_user_emails: normalizedEmails });
+  if (error) throw error;
+  const snapshotRows = (data || []) as Array<{
+    user_email: string;
+    current_balance: number | string | null;
+    last_transaction_at: string | null;
+  }>;
+  return new Map<string, { balance: number; lastTransactionAt: string | null }>(
+    snapshotRows.map((row) => [
+      String(row.user_email || '').toLowerCase(),
+      { balance: Number(row.current_balance) || 0, lastTransactionAt: row.last_transaction_at || null },
+    ])
+  );
 }
 
 // ============= CLAIMS =============
@@ -988,7 +1005,7 @@ export async function getPendingAdminClaims() {
   }));
 }
 
-export async function getPendingSuperAdminClaims() {
+export async function getPendingSuperAdminClaims(userEmail = '', userRole = 'Super Admin') {
   if (isDemoMode()) {
     return demoClaims
       .filter((claim) => isPendingSuperAdminStatus(claim.status))
@@ -997,8 +1014,14 @@ export async function getPendingSuperAdminClaims() {
 
   const { data: claims } = await supabase.from('claims').select('*').order('created_at', { ascending: false });
   if (!claims) return [];
+  const { data: currentUser } = await supabase.from('users').select('department_id').eq('email', userEmail).maybeSingle();
+  const currentUserDepartmentId = currentUser?.department_id ?? null;
 
-  return (claims as any[]).filter(c => isPendingSuperAdminStatus(c.status)).map(c => ({
+  return (claims as any[]).filter(c => {
+    if (!isPendingSuperAdminStatus(c.status)) return false;
+    if (userRole.toLowerCase() !== 'super admin') return true;
+    return c.department_id === (currentUserDepartmentId || null);
+  }).map(c => ({
     claimId: c.claim_number || c.claim_id,
     claimIdInternal: c.claim_id,
     date: c.created_at,
@@ -1078,7 +1101,7 @@ export async function approveClaimAsManager(claimId: string, approverEmail: stri
 
   await logAudit('claim_manager_approved', approverEmail, 'claim', claimId, description || undefined);
   if (claim) {
-    const superAdminApprovers = await getSuperAdminApproverEmails();
+    const superAdminApprovers = await getSuperAdminApproverEmails(claimData.department_id);
     const appUrl = getAppUrl(await getCompanySettings());
     await createNotification(claimData.user_email, 'Claim Approved by Manager', `Your claim ${claimId} has been approved by the manager and sent for final approval.`, 'success', claimId);
     await Promise.all(superAdminApprovers.map((email) =>
@@ -1183,7 +1206,7 @@ export async function approveClaimAsAdmin(claimId: string, approverEmail: string
   const emailSummary = await getClaimEmailSummary(claimId, c);
 
   if (skipManagerStage) {
-    const superAdminApprovers = await getSuperAdminApproverEmails();
+    const superAdminApprovers = await getSuperAdminApproverEmails(c.department_id);
     await Promise.all(superAdminApprovers.map((email) =>
       createNotification(email, 'Claim Awaiting Final Approval', `${c.submitted_by} claim ${claimId} is pending final approval.`, 'info', claimId)
     ));
@@ -2735,28 +2758,49 @@ export async function getAllUsers() {
     }));
   }
 
-  const { data, error } = await supabase.from('users').select('id,email,name,role,manager_email,advance_amount,active,created_at,profile_picture_url,signature_url,employee_id,mobile_number,date_of_joining,sap_gl_code,sap_location_code').order('name');
+  const [{ data, error }, { data: departments, error: departmentsError }] = await Promise.all([
+    supabase.from('users').select('email,name,role,department_id,manager_email,advance_amount,active,created_at,signature_url,employee_id,mobile_number,date_of_joining').order('name'),
+    supabase.from('departments').select('id,name').order('name'),
+  ]);
   if (error) throw error;
-  
-  const users = [];
-  for (const u of (data || []) as any[]) {
-    const balance = await getCurrentBalance(u.email);
-    users.push({
+  if (departmentsError) throw departmentsError;
+  const departmentRows = (departments || []) as Array<{ id: string; name: string }>;
+  const departmentNames = new Map(departmentRows.map((department) => [department.id, department.name]));
+
+  const rows = (data || []) as Array<{
+    email: string;
+    name: string | null;
+    role: string;
+    department_id: string | null;
+    manager_email: string | null;
+    advance_amount: number | string | null;
+    active: boolean | null;
+    created_at: string;
+    employee_id: string | null;
+    mobile_number: string | null;
+    date_of_joining: string | null;
+    signature_url: string | null;
+  }>;
+  const balances = await getUserBalanceSnapshots(rows.map((u) => u.email));
+  return rows.map((u) => {
+    const email = String(u.email || '').toLowerCase();
+    return {
       name: u.name,
       email: u.email,
       role: u.role,
+      departmentId: u.department_id || '',
+      departmentName: departmentNames.get(u.department_id) || '',
       createdAt: u.created_at,
       advance: parseFloat(u.advance_amount) || 0,
-      balance,
+      balance: balances.get(email)?.balance ?? (parseFloat(u.advance_amount) || 0),
       manager: u.manager_email || '',
       active: u.active,
       employee_id: u.employee_id || '',
       mobile_number: u.mobile_number || '',
       date_of_joining: u.date_of_joining || '',
       signatureUrl: u.signature_url || '',
-    });
-  }
-  return users;
+    };
+  });
 }
 
 export async function createUser(newUser: {
@@ -2764,6 +2808,7 @@ export async function createUser(newUser: {
   password: string;
   name: string;
   role: string;
+  departmentId?: string;
   advance: number;
   employee_id?: string;
   mobile_number?: string;
@@ -2785,6 +2830,7 @@ export async function createUser(newUser: {
     password_hash: hashPassword(newUser.password),
     name: newUser.name.trim(),
     role: newUser.role || 'User',
+    department_id: newUser.departmentId || null,
     advance_amount: newUser.advance || 0,
     active: true,
     employee_id: newUser.employee_id?.trim() || null,
@@ -2828,7 +2874,7 @@ export async function createUser(newUser: {
   return { ok: true, message: `User ${newUser.name} created successfully.` };
 }
 
-export async function updateUser(payload: { originalEmail: string; name?: string; email?: string; role?: string; password?: string; signatureUrl?: string }) {
+export async function updateUser(payload: { originalEmail: string; name?: string; email?: string; role?: string; departmentId?: string; password?: string; signatureUrl?: string }) {
   if (payload.password) {
     const passwordError = validatePassword(payload.password);
     if (passwordError) throw new Error(passwordError);
@@ -2839,6 +2885,7 @@ export async function updateUser(payload: { originalEmail: string; name?: string
   const updates: any = {};
   if (payload.name) updates.name = payload.name;
   if (payload.role) updates.role = payload.role;
+  if (payload.departmentId !== undefined) updates.department_id = payload.departmentId || null;
   if (payload.password) updates.password_hash = hashPassword(payload.password);
   if (payload.signatureUrl !== undefined) updates.signature_url = payload.signatureUrl || null;
   if (payload.email && payload.email.toLowerCase() !== oldEmail) updates.email = payload.email.toLowerCase();
@@ -2908,63 +2955,69 @@ export async function getUserBalanceSummary(userEmail: string, userRole: string)
   }
 
   const role = userRole.toLowerCase();
-  const { data: users } = await supabase.from('users').select('id,email,name,role,manager_email,advance_amount,active,created_at,profile_picture_url,signature_url,employee_id,mobile_number,date_of_joining,sap_gl_code,sap_location_code');
-  const { data: claims } = await supabase.from('claims').select('*');
+  const { data: users, error: usersError } = await supabase.from('users').select('email,name,role,manager_email,advance_amount');
+  if (usersError) throw usersError;
 
   if (!users) return [];
 
-  const filteredUsers = (users as any[]).filter(u => {
+  const userRows = users as Array<{ email: string; name: string | null; role: string; manager_email: string | null; advance_amount: number | string | null }>;
+  const filteredUsers = userRows.filter(u => {
     const uEmail = u.email.toLowerCase();
     if (canViewAllFinanceData(role)) return true;
     if (role === 'manager') return uEmail === userEmail.toLowerCase() || u.manager_email?.toLowerCase() === userEmail.toLowerCase();
     return uEmail === userEmail.toLowerCase();
   });
 
-  const summary = [];
-  for (const u of filteredUsers) {
-    const uEmail = u.email.toLowerCase();
-    let total = 0, pending = 0, approved = 0, rejected = 0;
-    (claims || []).forEach((c: any) => {
-      if (c.user_email?.toLowerCase() === uEmail) {
-        const submitted = getSubmittedAmount(c);
-        const verified = c.verified_amount == null ? getClaimAmount(c) : parseFloat(c.verified_amount);
-        const status = String(c.status || '').toLowerCase();
-        total += submitted; // total claimed stays as submitted
-        if (status.includes('pending')) pending += submitted;
-        else if (isSettledStatus(status)) {
-          approved += verified;
-        } else if (status.includes('reject')) {
-          rejected += submitted;
-        }
-      }
-    });
+  if (!filteredUsers.length) return [];
+  const userEmails = filteredUsers.map((u) => String(u.email || '').toLowerCase());
+  const [claimsResult, balanceSnapshots, waivedResult] = await Promise.all([
+    supabase.from('claims').select('user_email,status,total_with_bill,total_without_bill,verified_amount,grand_total').in('user_email', userEmails),
+    getUserBalanceSnapshots(userEmails),
+    supabase.from('transactions').select('user_email,debit').eq('type', 'claim_waived').in('user_email', userEmails),
+  ]);
+  if (claimsResult.error) throw claimsResult.error;
+  if (waivedResult.error) throw waivedResult.error;
+  const summaries = new Map<string, { total: number; pending: number; approved: number; rejected: number }>();
+  for (const email of userEmails) summaries.set(email, { total: 0, pending: 0, approved: 0, rejected: 0 });
+  const claimRows = (claimsResult.data || []) as Array<{
+    user_email: string;
+    status: string | null;
+    total_with_bill: number | string | null;
+    total_without_bill: number | string | null;
+    verified_amount: number | string | null;
+    grand_total: number | string | null;
+  }>;
+  for (const c of claimRows) {
+    const summary = summaries.get(String(c.user_email || '').toLowerCase());
+    if (!summary) continue;
+    const submitted = getSubmittedAmount(c);
+    const verified = c.verified_amount == null ? getClaimAmount(c) : parseFloat(c.verified_amount);
+    const status = String(c.status || '').toLowerCase();
+    summary.total += submitted;
+    if (status.includes('pending')) summary.pending += submitted;
+    else if (isSettledStatus(status)) summary.approved += verified;
+    else if (status.includes('reject')) summary.rejected += submitted;
+  }
+  const waivedRows = (waivedResult.data || []) as Array<{ user_email: string; debit: number | string | null }>;
+  for (const waived of waivedRows) {
+    const summary = summaries.get(String(waived.user_email || '').toLowerCase());
+    if (summary) summary.rejected += Number(waived.debit) || 0;
+  }
 
-    // Additionally, compute rejected/deductions from transactions (claim_waived debits)
-    try {
-      const { data: waivedTxs } = await supabase.from('transactions').select('debit').eq('user_email', uEmail).eq('type', 'claim_waived');
-      if (waivedTxs) {
-        for (const wt of waivedTxs as any[]) {
-          rejected += parseFloat(wt.debit || 0);
-        }
-      }
-    } catch (e) {
-      // ignore
-    }
-
-    const balance = await getCurrentBalance(uEmail);
-    summary.push({
+  return filteredUsers.map((u) => {
+    const summary = summaries.get(String(u.email || '').toLowerCase()) || { total: 0, pending: 0, approved: 0, rejected: 0 };
+    return {
       name: u.name,
       email: u.email,
       role: u.role,
       initialAdvance: parseFloat(u.advance_amount || 0),
-      totalClaimAmount: total,
-      pendingClaims: pending,
-      approvedClaims: approved,
-      rejectedClaims: rejected,
-      currentBalance: balance,
-    });
-  }
-  return summary;
+      totalClaimAmount: summary.total,
+      pendingClaims: summary.pending,
+      approvedClaims: summary.approved,
+      rejectedClaims: summary.rejected,
+      currentBalance: balanceSnapshots.get(String(u.email || '').toLowerCase())?.balance || 0,
+    };
+  });
 }
 
 // ============= APP LISTS MANAGEMENT =============
@@ -3033,42 +3086,54 @@ export async function getManagerAssignedUsersWithBalances(managerEmail: string) 
       }));
   }
 
-  const { data: managedUsers } = await supabase.from('users')
+  const { data: managedUsers, error: managedUsersError } = await supabase.from('users')
     .select('id,email,name,role,manager_email,advance_amount,active,created_at,profile_picture_url,signature_url,employee_id,mobile_number,date_of_joining,sap_gl_code,sap_location_code')
     .eq('manager_email', managerEmail)
     .eq('active', true)
     .order('name');
   
+  if (managedUsersError) throw managedUsersError;
   if (!managedUsers?.length) return [];
-  const managedEmails = managedUsers.map((entry: any) => entry.email);
-  const { data: managedClaims } = await supabase
-    .from('claims')
-    .select('user_email,status')
-    .in('user_email', managedEmails);
-  
-  const usersWithBalance = [];
-  for (const u of (managedUsers || []) as any[]) {
-    const balance = await getCurrentBalance(u.email);
-    const { data: lastTx } = await supabase.from('transactions')
-      .select('created_at')
-      .eq('user_email', u.email)
-      .order('created_at', { ascending: false })
-      .limit(1)
-      .maybeSingle();
-    
-    usersWithBalance.push({
+  const managedUserRows = managedUsers as Array<{
+    email: string;
+    name: string | null;
+    advance_amount: number | string | null;
+    employee_id: string | null;
+    mobile_number: string | null;
+    date_of_joining: string | null;
+  }>;
+  const managedEmails = managedUserRows.map((entry) => entry.email);
+  const [balanceSnapshots, claimStats] = await Promise.all([
+    getUserBalanceSnapshots(managedEmails),
+    supabase.from('claims').select('user_email,status').in('user_email', managedEmails),
+  ]);
+  if (claimStats.error) throw claimStats.error;
+  const claimCounts = new Map<string, { total: number; pending: number }>();
+  const claimRows = (claimStats.data || []) as Array<{ user_email: string; status: string | null }>;
+  for (const claim of claimRows) {
+    const email = String(claim.user_email || '').toLowerCase();
+    const counts = claimCounts.get(email) || { total: 0, pending: 0 };
+    counts.total++;
+    if (!isSettledStatus(claim.status) && !normalizeStatus(claim.status).includes('reject')) counts.pending++;
+    claimCounts.set(email, counts);
+  }
+
+  return managedUserRows.map((u) => {
+    const email = String(u.email || '').toLowerCase();
+    const balance = balanceSnapshots.get(email);
+    const counts = claimCounts.get(email) || { total: 0, pending: 0 };
+    return {
       name: u.name,
       email: u.email,
-      balance,
-      lastTransactionDate: (lastTx as any)?.created_at || null,
+      balance: balance?.balance ?? (parseFloat(u.advance_amount) || 0),
+      lastTransactionDate: balance?.lastTransactionAt || null,
       employeeId: u.employee_id || '',
       mobileNumber: u.mobile_number || '',
       dateOfJoining: u.date_of_joining || '',
-      claimCount: (managedClaims || []).filter((claim: any) => claim.user_email === u.email).length,
-      pendingClaimCount: (managedClaims || []).filter((claim: any) => claim.user_email === u.email && !isSettledStatus(claim.status) && !normalizeStatus(claim.status).includes('reject')).length,
-    });
-  }
-  return usersWithBalance;
+      claimCount: counts.total,
+      pendingClaimCount: counts.pending,
+    };
+  });
 }
 
 // ============= USERS DIRECTORY (for dropdowns) =============

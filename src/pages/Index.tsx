@@ -10,7 +10,7 @@ import { useEffect } from 'react';
 
 const viewRoles: Record<string, string[]> = {
   dashboard: ['all'],
-  submit: ['User', 'Manager', 'Admin', 'Super Admin'],
+  submit: ['User', 'Manager', 'Admin', 'Super Admin', 'Master Admin'],
   history: ['all'],
   ledger: ['all'],
   transactions: ['all'],
@@ -18,22 +18,24 @@ const viewRoles: Record<string, string[]> = {
   'manager-approval': ['Manager', 'Super Admin'],
   'admin-approval': ['Admin', 'Super Admin'],
   'final-approval': ['Super Admin'],
-  'accounts-processing': ['Accounts', 'Super Admin'],
-  'accounts-sap-entry': ['Accounts', 'Super Admin'],
-  'accounting-setup': ['Accounts', 'Admin', 'Super Admin'],
-  'work-allocation': ['Admin', 'Super Admin'],
-  'user-allocation': ['Admin', 'Super Admin'],
-  reports: ['Admin', 'Super Admin'],
-  voucher: ['Accounts', 'Admin', 'Super Admin'],
-  users: ['Admin', 'Super Admin'],
-  settings: ['Admin', 'Super Admin'],
-  audit: ['Admin', 'Super Admin'],
+  'accounts-processing': ['Accounts'],
+  'accounts-sap-entry': ['Accounts'],
+  'accounting-setup': ['Accounts', 'Admin', 'Master Admin'],
+  'work-allocation': ['Admin', 'Super Admin', 'Master Admin'],
+  'user-allocation': ['Admin', 'Super Admin', 'Master Admin'],
+  'department-allocation': ['Master Admin'],
+  reports: ['Admin', 'Super Admin', 'Master Admin'],
+  voucher: ['Accounts'],
+  users: ['Admin', 'Super Admin', 'Master Admin'],
+  settings: ['Admin', 'Master Admin'],
+  audit: ['Admin', 'Super Admin', 'Master Admin'],
   profile: ['all'],
 };
 
 function canAccessView(view: string, role?: string) {
   const roles = viewRoles[view] || ['all'];
   const normalizedRole = normalizeRole(role) || '';
+  if (view === 'department-allocation') return normalizedRole === 'Master Admin';
   return roles.includes('all') || roles.includes(normalizedRole);
 }
 

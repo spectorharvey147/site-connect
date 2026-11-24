@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { ComponentType, SVGProps } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { getClaimsHistory, getDashboardChartData, getDashboardSummary, getManagerAssignedUsersWithBalances } from '@/lib/claims-api';
-import { CheckCircle2, CreditCard, FileText, Users, Clock, UserCheck, ShieldCheck, RefreshCw, CalendarDays, ArrowRight, Plus, History, WalletCards } from 'lucide-react';
+import { CheckCircle2, CreditCard, FileBarChart, FileText, Users, Clock, UserCheck, ShieldCheck, RefreshCw, CalendarDays, ArrowRight, Plus, History, WalletCards } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -239,7 +239,8 @@ function QuickActions({ role, onNavigate }: { role: string; onNavigate: (path: s
     User: [{ label: 'New Claim', path: '/submit', icon: Plus }, ...common],
     Manager: [{ label: 'Manager Queue', path: '/manager-approval', icon: UserCheck }, ...common],
     Admin: [{ label: 'Admin Queue', path: '/admin-approval', icon: ShieldCheck }, { label: 'Payment Vouchers', path: '/voucher', icon: CreditCard }, common[0]],
-    'Super Admin': [{ label: 'Final Approval', path: '/final-approval', icon: CheckCircle2 }, { label: 'Accounts Queue', path: '/accounts-processing', icon: CreditCard }, common[0]],
+    'Super Admin': [{ label: 'Final Approval', path: '/final-approval', icon: CheckCircle2 }, common[0]],
+    'Master Admin': [{ label: 'User Management', path: '/users', icon: Users }, { label: 'Reports', path: '/reports', icon: FileBarChart }, common[0]],
     Accounts: [{ label: 'Accounts Queue', path: '/accounts-processing', icon: CreditCard }, { label: 'SAP Entry', path: '/accounts-sap-entry', icon: FileText }, { label: 'Payment Vouchers', path: '/voucher', icon: WalletCards }],
   };
   const actions = byRole[role] || common;

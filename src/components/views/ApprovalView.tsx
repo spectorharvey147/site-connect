@@ -203,7 +203,7 @@ export default function ApprovalView({ type }: ApprovalViewProps) {
         ? await getPendingManagerClaims(user.email, user.role)
         : type === 'admin'
           ? await getPendingAdminClaims()
-          : await getPendingSuperAdminClaims();
+          : await getPendingSuperAdminClaims(user.email, user.role);
       setClaims(data);
       setPage(1);
     } catch (e) {

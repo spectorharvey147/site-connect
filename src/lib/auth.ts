@@ -2,8 +2,8 @@ import SHA256 from 'crypto-js/sha256';
 import { supabase } from '@/integrations/supabase/client';
 import { validatePassword } from '@/lib/password-validation';
 
-export type UserRole = 'User' | 'Manager' | 'Admin' | 'Super Admin' | 'Accounts';
-export interface AppUser { email: string; name: string; role: UserRole; profile_picture_url?: string | null; signature_url?: string | null }
+export type UserRole = 'User' | 'Manager' | 'Admin' | 'Super Admin' | 'Master Admin' | 'Accounts';
+export interface AppUser { email: string; name: string; role: UserRole; department_id?: string | null; profile_picture_url?: string | null; signature_url?: string | null }
 export interface SessionData { token: string; user: AppUser }
 export function isDemoEmail(_email?: string | null) { return false; }
 // Used only by authorized account administration. Password verification runs on the server.
@@ -16,6 +16,9 @@ const ROLE_ALIASES: Record<string, UserRole> = {
   superadmin: 'Super Admin',
   'super admin': 'Super Admin',
   super_admin: 'Super Admin',
+  masteradmin: 'Master Admin',
+  'master admin': 'Master Admin',
+  master_admin: 'Master Admin',
   accounts: 'Accounts',
   account: 'Accounts',
   finance: 'Accounts',
@@ -26,11 +29,16 @@ export function normalizeRole(role: unknown): UserRole | null {
   return ROLE_ALIASES[normalized] || ROLE_ALIASES[normalized.replace(/\s+/g, '_')] || null;
 }
 
-function normalizeUser(user: any): AppUser | null {
-  if (!user) return null;
+function normalizeUser(user: unknown): AppUser | null {
+  if (!user || typeof user !== 'object' || Array.isArray(user)) return null;
+  const userData = user as Record<string, unknown>;
   return {
-    ...user,
-    role: normalizeRole(user.role) || 'User',
+    email: typeof userData.email === 'string' ? userData.email : '',
+    name: typeof userData.name === 'string' ? userData.name : '',
+    role: normalizeRole(userData.role) || 'User',
+    department_id: typeof userData.department_id === 'string' ? userData.department_id : null,
+    profile_picture_url: typeof userData.profile_picture_url === 'string' ? userData.profile_picture_url : null,
+    signature_url: typeof userData.signature_url === 'string' ? userData.signature_url : null,
   };
 }
 
@@ -73,8 +81,8 @@ export async function logout(token: string) {
     if (error) throw new Error(error.message);
   }
 }
-export function isAdmin(role: UserRole) { return role === 'Admin' || role === 'Super Admin'; }
-export function isManagerOrAbove(role: UserRole) { return ['Manager', 'Admin', 'Super Admin'].includes(role); }
+export function isAdmin(role: UserRole) { return role === 'Admin' || role === 'Super Admin' || role === 'Master Admin'; }
+export function isManagerOrAbove(role: UserRole) { return ['Manager', 'Admin', 'Super Admin', 'Master Admin'].includes(role); }
 export async function changePassword(currentPassword: string, newPassword: string) {
   const passwordError = validatePassword(newPassword);
   if (passwordError) throw new Error(passwordError);

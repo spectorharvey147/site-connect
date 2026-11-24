@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { cn } from '@/lib/utils';
 import {
-  ArrowLeftRight, Banknote, BarChart3, ChevronLeft, Crown, FileSpreadsheet,
+  ArrowLeftRight, Banknote, BarChart3, Building2, ChevronLeft, Crown, FileSpreadsheet,
   FileUp, History, LogOut, Menu, Receipt, Scale, Settings, Shield, ShieldCheck,
   FileBarChart, UserCheck, UserCircle, UserRoundCog, Users,
 } from 'lucide-react';
@@ -15,7 +15,7 @@ interface SidebarProps {
 const navGroups = [
   { label: 'Claims', items: [
     { id: 'dashboard', icon: BarChart3, label: 'Dashboard', roles: ['all'] },
-    { id: 'submit', icon: FileUp, label: 'Submit Claim', roles: ['User', 'Manager', 'Admin', 'Super Admin'] },
+    { id: 'submit', icon: FileUp, label: 'Submit Claim', roles: ['User', 'Manager', 'Admin', 'Super Admin', 'Master Admin'] },
     { id: 'history', icon: History, label: 'Claim History', roles: ['all'] },
     { id: 'ledger', icon: ArrowLeftRight, label: 'Ledger Statement', roles: ['all'] },
     { id: 'balances', icon: Scale, label: 'User Balances', roles: ['all'] },
@@ -26,18 +26,19 @@ const navGroups = [
     { id: 'final-approval', icon: Crown, iconClassName: 'text-violet-200', label: 'Final Approval', roles: ['Super Admin'] },
   ] },
   { label: 'Accounts', items: [
-    { id: 'accounts-processing', icon: Receipt, iconClassName: 'text-emerald-200', label: 'Accounts Processing', roles: ['Accounts', 'Super Admin'] },
-    { id: 'accounts-sap-entry', icon: FileSpreadsheet, label: 'Accounts SAP Entry', roles: ['Accounts', 'Super Admin'] },
-    { id: 'accounting-setup', icon: FileSpreadsheet, label: 'GL & Location Setup', roles: ['Accounts', 'Admin', 'Super Admin'] },
-    { id: 'work-allocation', icon: Users, label: 'Work Allocation', roles: ['Admin', 'Super Admin'] },
-    { id: 'voucher', icon: Banknote, label: 'Payment Voucher', roles: ['Accounts', 'Admin', 'Super Admin'] },
+    { id: 'accounts-processing', icon: Receipt, iconClassName: 'text-emerald-200', label: 'Accounts Processing', roles: ['Accounts'] },
+    { id: 'accounts-sap-entry', icon: FileSpreadsheet, label: 'Accounts SAP Entry', roles: ['Accounts'] },
+    { id: 'accounting-setup', icon: FileSpreadsheet, label: 'GL & Location Setup', roles: ['Accounts', 'Admin', 'Master Admin'] },
+    { id: 'work-allocation', icon: Users, label: 'Work Allocation', roles: ['Admin', 'Super Admin', 'Master Admin'] },
+    { id: 'voucher', icon: Banknote, label: 'Payment Voucher', roles: ['Accounts'] },
   ] },
   { label: 'Administration', items: [
-    { id: 'user-allocation', icon: UserRoundCog, label: 'User Allocation', roles: ['Admin', 'Super Admin'] },
-    { id: 'reports', icon: FileBarChart, label: 'Reports', roles: ['Admin', 'Super Admin'] },
-    { id: 'users', icon: Users, label: 'User Management', roles: ['Admin', 'Super Admin'] },
-    { id: 'audit', icon: Shield, label: 'Audit Trail', roles: ['Admin', 'Super Admin'] },
-    { id: 'settings', icon: Settings, label: 'Settings', roles: ['Admin', 'Super Admin'] },
+    { id: 'user-allocation', icon: UserRoundCog, label: 'User Allocation', roles: ['Admin', 'Super Admin', 'Master Admin'] },
+    { id: 'department-allocation', icon: Building2, label: 'Department Allocation', roles: ['Master Admin'] },
+    { id: 'reports', icon: FileBarChart, label: 'Reports', roles: ['Admin', 'Super Admin', 'Master Admin'] },
+    { id: 'users', icon: Users, label: 'User Management', roles: ['Admin', 'Super Admin', 'Master Admin'] },
+    { id: 'audit', icon: Shield, label: 'Audit Trail', roles: ['Admin', 'Super Admin', 'Master Admin'] },
+    { id: 'settings', icon: Settings, label: 'Settings', roles: ['Admin', 'Master Admin'] },
   ] },
   { label: 'Account', items: [
     { id: 'profile', icon: UserCircle, label: 'My Profile', roles: ['all'] },
