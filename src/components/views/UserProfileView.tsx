@@ -19,6 +19,7 @@ export default function UserProfileView() {
   const [balance, setBalance] = useState(0);
   const [claimCount, setClaimCount] = useState(0);
   const [txCount, setTxCount] = useState(0);
+  const [departmentName, setDepartmentName] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
   // Password change
@@ -34,15 +35,21 @@ export default function UserProfileView() {
     const load = async () => {
       setLoading(true);
       setError(null);
+      setDepartmentName(null);
       try {
-        const [bal, claims, txs] = await Promise.all([
+        const [bal, claims, txs, departmentResult] = await Promise.all([
           getCurrentBalance(user.email),
           getClaimsHistory(user.email, user.role),
           getTransactions(user.email, 'User'),
+          user.department_id
+            ? supabase.from('departments').select('name').eq('id', user.department_id).maybeSingle()
+            : Promise.resolve({ data: null, error: null }),
         ]);
+        if (departmentResult.error) console.warn('Department name could not be loaded:', departmentResult.error.message);
         setBalance(bal);
         setClaimCount(claims.length);
         setTxCount(txs.length);
+        setDepartmentName(departmentResult.error ? null : departmentResult.data?.name ?? null);
       } catch (e) { 
         console.error('Error loading profile:', e);
         setError(e instanceof Error ? e.message : 'Failed to load profile');
@@ -105,7 +112,7 @@ export default function UserProfileView() {
             variant="avatar"
             fallbackText={user.name?.charAt(0)?.toUpperCase() || '?'}
           />
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 flex-1">
+          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4 flex-1">
             <div>
               <Label className="text-xs text-muted-foreground">Name</Label>
               <p className="font-medium text-foreground">{user.name}</p>
@@ -117,6 +124,14 @@ export default function UserProfileView() {
             <div>
               <Label className="text-xs text-muted-foreground">Role</Label>
               <Badge variant="secondary" className="mt-1">{user.role}</Badge>
+            </div>
+            <div>
+              <Label className="text-xs text-muted-foreground">Department</Label>
+              <p className="font-medium text-foreground">
+                {user.department_id
+                  ? departmentName || (loading ? 'Loading…' : 'Department unavailable')
+                  : user.role === 'Accounts' || user.role === 'Master Admin' ? 'Central' : 'Not assigned'}
+              </p>
             </div>
           </div>
         </div>

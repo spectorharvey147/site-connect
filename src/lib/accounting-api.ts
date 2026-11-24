@@ -52,12 +52,27 @@ export async function correctPendingClaimProject(
   if (error) throw new Error(error.message);
 }
 
-export async function correctPendingClaimExpenseCategory(claimId: string, expenseId: string, category: string) {
-  const { error } = await db.rpc('admin_correct_pending_claim_expense_category', {
+export type PendingExpenseCorrection = {
+  id: string;
+  category: string;
+  claimDate: string;
+  description: string;
+  amountWithBill: number;
+  amountWithoutBill: number;
+};
+
+export async function correctPendingClaimExpenses(claimId: string, expenses: PendingExpenseCorrection[]) {
+  const { error } = await db.rpc('admin_correct_pending_claim_expenses', {
     p_token: token(),
     p_claim_id: claimId,
-    p_expense_id: expenseId,
-    p_category: category,
+    p_expenses: expenses.map((expense) => ({
+      id: expense.id,
+      category: expense.category,
+      expense_date: expense.claimDate,
+      description: expense.description,
+      amount_with_bill: expense.amountWithBill,
+      amount_without_bill: expense.amountWithoutBill,
+    })),
   });
   if (error) throw new Error(error.message);
 }

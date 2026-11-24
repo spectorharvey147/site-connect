@@ -1,15 +1,20 @@
 import { Input } from '@/components/ui/input';
+import { Textarea } from '@/components/ui/textarea';
 import { Button } from '@/components/ui/button';
 import { approvedRows, type ApprovalExpense, type RowAmounts } from '@/lib/expense-approval';
 import type { SapVendor } from '@/lib/sap-journal';
 
 export type VendorAllocationForm = { vendor_id: string; amount: string };
 export type AccountingRowForm = { has_tax_invoice: boolean; vendor_available: boolean | null; vendor_id: string; vendor_allocations: VendorAllocationForm[]; taxable_amount: string; cgst_amount: string; sgst_amount: string; igst_amount: string };
+export type ExpenseDetailDraft = { category: string; claimDate: string; description: string; amountWithBill: string; amountWithoutBill: string };
 
-export default function ExpenseApprovalEditor({ expenses, amounts, onChange, disabled = false, vendors = [], accounting, onAccountingChange, onAddVendor }: {
+export default function ExpenseApprovalEditor({ expenses, amounts, onChange, disabled = false, vendors = [], accounting, onAccountingChange, onAddVendor, detailDrafts, categoryOptions = [], onDetailChange, detailsDirty, savingDetails, onSaveDetails }: {
   expenses: ApprovalExpense[]; amounts: RowAmounts; onChange: (amounts: RowAmounts) => void; disabled?: boolean;
   vendors?: SapVendor[]; accounting?: Record<string, AccountingRowForm>; onAccountingChange?: (rows: Record<string, AccountingRowForm>) => void;
   onAddVendor?: (expenseId: string) => void;
+  detailDrafts?: Record<string, ExpenseDetailDraft>; categoryOptions?: string[];
+  onDetailChange?: (expenseId: string, patch: Partial<ExpenseDetailDraft>) => void;
+  detailsDirty?: boolean; savingDetails?: boolean; onSaveDetails?: () => void;
 }) {
   let total = '—', error = '';
   try { total = approvedRows(expenses, amounts).total.toFixed(2); }
@@ -22,6 +27,14 @@ export default function ExpenseApprovalEditor({ expenses, amounts, onChange, dis
     type="number" min="0" max={row.amount} step="0.01" disabled={disabled}
     value={amounts[row.id] ?? ''} onChange={e => onChange({ ...amounts, [row.id]: e.target.value })} />;
   const bills = (row: ApprovalExpense) => row.attachmentIds?.length ? `${row.attachmentIds.length} file(s) shown in Attachments` : 'No bill';
+  const details = (row: ApprovalExpense): ExpenseDetailDraft => detailDrafts?.[row.id] || {
+    category: row.category,
+    claimDate: row.claimDate || '',
+    description: row.description || '',
+    amountWithBill: money(row.amountWithBill),
+    amountWithoutBill: money(row.amountWithoutBill),
+  };
+  const editableDetails = Boolean(detailDrafts && onDetailChange);
   const taxControls = (row: ApprovalExpense) => {
     if (!accounting || !onAccountingChange) return null;
     const value = accounting[row.id] || { has_tax_invoice: false, vendor_available: null, vendor_id: '', vendor_allocations: [], taxable_amount: '', cgst_amount: '', sgst_amount: '', igst_amount: '' };
@@ -49,27 +62,50 @@ export default function ExpenseApprovalEditor({ expenses, amounts, onChange, dis
       </>}
     </div>;
   };
-  return <div className="space-y-2">
-    <p className="text-sm text-muted-foreground">Review the selected expense rows. Enter a value for each vendor shown on the bills; any remaining amount posts to the expense category GL.</p>
-    <div className="space-y-3 sm:hidden">{expenses.map((row, index) => <div key={row.id} className="space-y-2 rounded border border-border bg-card p-3 text-sm">
-      <p className="font-semibold">{row.category}</p>
-      <p><span className="text-muted-foreground">Project code: </span>{row.projectCode || '-'}</p>
-      <p><span className="text-muted-foreground">Claim date: </span>{row.claimDate || '-'}</p>
-      <p className="whitespace-pre-wrap break-words"><span className="text-muted-foreground">Description / remarks: </span>{[row.description, row.remarks].filter(Boolean).join('\n') || '-'}</p>
-      <p>With bill: Rs. {money(row.amountWithBill)} · Without bill: Rs. {money(row.amountWithoutBill)}</p>
-      <p className="text-xs text-muted-foreground">{bills(row)}</p>
-      <p className="font-semibold">Submitted: Rs. {money(row.amount)}</p>
-      <label className="block space-y-1"><span>Final approved amount (Rs.)</span>{input(row, index, true)}</label>
-      {taxControls(row)}
-    </div>)}</div>
-    <div className="hidden overflow-x-auto sm:block"><table className="w-full min-w-[1180px] border text-sm">
+  return <div className="space-y-3">
+    <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+      <p className="text-sm text-muted-foreground">Review and correct the expense rows below. Enter a value for each vendor shown on the bills; any remaining amount posts to the expense category GL.</p>
+      {editableDetails && <Button type="button" variant="outline" onClick={onSaveDetails} disabled={disabled || savingDetails || !detailsDirty}>
+        {savingDetails ? 'Updating…' : 'Update Expense Details'}
+      </Button>}
+    </div>
+    <div className="space-y-3 sm:hidden">{expenses.map((row, index) => {
+      const draft = details(row);
+      return <div key={row.id} className="space-y-2 rounded border border-border bg-card p-3 text-sm">
+        {editableDetails ? <label className="block space-y-1"><span>Expense category</span><select aria-label={`Expense ${index + 1} category`} className="h-10 w-full rounded-md border border-input bg-background px-3" disabled={disabled} value={draft.category} onChange={event => onDetailChange?.(row.id, { category: event.target.value })}><option value="">Select category</option>{categoryOptions.map(category => <option key={category} value={category}>{category}</option>)}</select></label> : <p className="font-semibold">{row.category}</p>}
+        <p><span className="text-muted-foreground">Project code: </span>{row.projectCode || '-'}</p>
+        {editableDetails ? <>
+          <label className="block space-y-1"><span>Expense date</span><Input aria-label={`Expense ${index + 1} date`} type="date" disabled={disabled} value={draft.claimDate} onChange={event => onDetailChange?.(row.id, { claimDate: event.target.value })} /></label>
+          <label className="block space-y-1"><span>Description / remarks</span><Textarea aria-label={`Expense ${index + 1} description`} disabled={disabled} value={draft.description} onChange={event => onDetailChange?.(row.id, { description: event.target.value })} rows={2} /></label>
+          <div className="grid grid-cols-2 gap-2">
+            <label className="block space-y-1"><span>With bill (Rs.)</span><Input aria-label={`Expense ${index + 1} with bill`} type="number" min="0" step="0.01" disabled={disabled} value={draft.amountWithBill} onChange={event => onDetailChange?.(row.id, { amountWithBill: event.target.value })} /></label>
+            <label className="block space-y-1"><span>Without bill (Rs.)</span><Input aria-label={`Expense ${index + 1} without bill`} type="number" min="0" step="0.01" disabled={disabled} value={draft.amountWithoutBill} onChange={event => onDetailChange?.(row.id, { amountWithoutBill: event.target.value })} /></label>
+          </div>
+        </> : <>
+          <p><span className="text-muted-foreground">Claim date: </span>{row.claimDate || '-'}</p>
+          <p className="whitespace-pre-wrap break-words"><span className="text-muted-foreground">Description / remarks: </span>{[row.description, row.remarks].filter(Boolean).join('\n') || '-'}</p>
+          <p>With bill: Rs. {money(row.amountWithBill)} · Without bill: Rs. {money(row.amountWithoutBill)}</p>
+        </>}
+        <p className="text-xs text-muted-foreground">{bills(row)}</p>
+        <p className="font-semibold">Submitted: Rs. {money(row.amount)}</p>
+        <label className="block space-y-1"><span>Final approved amount (Rs.)</span>{input(row, index, true)}</label>
+        {taxControls(row)}
+      </div>;
+    })}</div>
+    <div className="hidden overflow-x-auto sm:block"><table className={`w-full border text-sm ${editableDetails ? 'min-w-[1400px]' : 'min-w-[1180px]'}`}>
       <thead><tr className="bg-muted">{['Category', 'Project code', 'Claim date', 'Description / remarks', 'With bill (Rs.)', 'Without bill (Rs.)', 'Bills', 'Submitted total (Rs.)', 'Final approved amount (Rs.)'].map(label => <th key={label} className="border p-2 text-left">{label}</th>)}</tr></thead>
-      <tbody>{expenses.map((row, index) => <tr key={row.id}>
-        <td className="border p-2">{row.category}</td><td className="border p-2">{row.projectCode || '-'}</td><td className="border p-2">{row.claimDate || '-'}</td>
-        <td className="min-w-48 whitespace-pre-wrap break-words border p-2">{[row.description, row.remarks].filter(Boolean).join('\n') || '-'}</td>
-        <td className="border p-2 text-right">{money(row.amountWithBill)}</td><td className="border p-2 text-right">{money(row.amountWithoutBill)}</td>
-        <td className="border p-2 text-xs">{bills(row)}</td><td className="border p-2 text-right font-medium">{money(row.amount)}</td><td className="border p-2">{input(row, index)}{taxControls(row)}</td>
-      </tr>)}</tbody>
+      <tbody>{expenses.map((row, index) => {
+        const draft = details(row);
+        return <tr key={row.id}>
+          <td className="min-w-44 border p-2">{editableDetails ? <select aria-label={`Expense ${index + 1} category`} className="h-10 w-full rounded-md border border-input bg-background px-2" disabled={disabled} value={draft.category} onChange={event => onDetailChange?.(row.id, { category: event.target.value })}><option value="">Select category</option>{categoryOptions.map(category => <option key={category} value={category}>{category}</option>)}</select> : row.category}</td>
+          <td className="border p-2">{row.projectCode || '-'}</td>
+          <td className="min-w-40 border p-2">{editableDetails ? <Input aria-label={`Expense ${index + 1} date`} type="date" disabled={disabled} value={draft.claimDate} onChange={event => onDetailChange?.(row.id, { claimDate: event.target.value })} /> : row.claimDate || '-'}</td>
+          <td className="min-w-56 whitespace-pre-wrap break-words border p-2">{editableDetails ? <Textarea aria-label={`Expense ${index + 1} description`} disabled={disabled} value={draft.description} onChange={event => onDetailChange?.(row.id, { description: event.target.value })} rows={2} /> : [row.description, row.remarks].filter(Boolean).join('\n') || '-'}</td>
+          <td className="min-w-36 border p-2 text-right">{editableDetails ? <Input aria-label={`Expense ${index + 1} with bill`} type="number" min="0" step="0.01" disabled={disabled} value={draft.amountWithBill} onChange={event => onDetailChange?.(row.id, { amountWithBill: event.target.value })} /> : money(row.amountWithBill)}</td>
+          <td className="min-w-36 border p-2 text-right">{editableDetails ? <Input aria-label={`Expense ${index + 1} without bill`} type="number" min="0" step="0.01" disabled={disabled} value={draft.amountWithoutBill} onChange={event => onDetailChange?.(row.id, { amountWithoutBill: event.target.value })} /> : money(row.amountWithoutBill)}</td>
+          <td className="border p-2 text-xs">{bills(row)}</td><td className="border p-2 text-right font-medium">{money(row.amount)}</td><td className="min-w-40 border p-2">{input(row, index)}{taxControls(row)}</td>
+        </tr>;
+      })}</tbody>
       <tfoot><tr className="bg-muted/50 font-semibold"><td colSpan={4} className="border p-2 text-right">TOTAL</td><td className="border p-2 text-right">{sum('amountWithBill')}</td><td className="border p-2 text-right">{sum('amountWithoutBill')}</td><td className="border p-2" /><td className="border p-2 text-right">{sum('amount')}</td><td className="border p-2 text-right">{total}</td></tr></tfoot>
     </table></div>
     <p className="text-right font-semibold">Final total approved (Rs.): <span aria-label="Final total approved">{total}</span></p>
