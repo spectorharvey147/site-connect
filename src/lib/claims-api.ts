@@ -642,6 +642,29 @@ export async function updateCompanySettings(settings: any) {
 }
 
 // ============= DASHBOARD =============
+async function getScopedDashboardClaims(userEmail: string, role: string, columns: string) {
+  let query = supabase.from('claims').select(columns);
+
+  if (role === 'admin' || role === 'super admin') {
+    const { data: account, error: accountError } = await supabase
+      .from('users')
+      .select('department_id')
+      .eq('email', userEmail)
+      .maybeSingle();
+    if (accountError) throw accountError;
+    if (!account?.department_id) throw new Error('This admin account is not assigned to a department. Ask a Master Admin to assign one.');
+    query = query.eq('department_id', account.department_id);
+  } else if (role === 'manager') {
+    query = query.or(`user_email.eq.${userEmail},manager_email.eq.${userEmail}`);
+  } else if (!canViewAllFinanceData(role)) {
+    query = query.eq('user_email', userEmail);
+  }
+
+  const { data, error } = await query;
+  if (error) throw error;
+  return data || [];
+}
+
 export async function getDashboardSummary(userEmail: string, userRole: string) {
   if (isDemoEmail(userEmail)) {
     const claims = visibleDemoClaims(userEmail, userRole);
@@ -673,11 +696,11 @@ export async function getDashboardSummary(userEmail: string, userRole: string) {
 
   const role = userRole.toLowerCase();
 
-  const { data: claims } = await supabase.from('claims').select('*');
-  const { data: txs } = await supabase.from('transactions').select('reference_id, user_email').eq('type', 'claim_submitted');
-
-  const claimOwnerMap: Record<string, string> = {};
-  txs?.forEach((t: any) => { if (t.reference_id) claimOwnerMap[t.reference_id] = String(t.user_email || '').toLowerCase(); });
+  const claims = await getScopedDashboardClaims(
+    userEmail,
+    role,
+    'claim_id,user_email,manager_email,status,manager_approval_status,verified_amount,grand_total,total_with_bill,total_without_bill'
+  );
 
   const processedClaims = (claims || []).map((c: any) => ({
     id: c.claim_id,
@@ -685,7 +708,7 @@ export async function getDashboardSummary(userEmail: string, userRole: string) {
     status: String(c.status || '').toLowerCase(),
     managerStatus: String(c.manager_approval_status || '').toLowerCase(),
     managerEmail: String(c.manager_email || '').toLowerCase(),
-    userEmail: c.user_email?.toLowerCase() || claimOwnerMap[c.claim_id] || '',
+    userEmail: c.user_email?.toLowerCase() || '',
   }));
 
   if (canViewAllFinanceData(role) || role === 'manager') {
@@ -715,7 +738,8 @@ export async function getDashboardSummary(userEmail: string, userRole: string) {
       if (isPaidStatus(c.status)) paid++;
     }
 
-    const { count: userCount } = await supabase.from('users').select('id,email,name,role,manager_email,advance_amount,active,created_at,profile_picture_url,signature_url,employee_id,mobile_number,date_of_joining,sap_gl_code,sap_location_code', { count: 'exact', head: true });
+    const { count: userCount, error: userCountError } = await supabase.from('users').select('email', { count: 'exact', head: true });
+    if (userCountError) throw userCountError;
 
     return { role: userRole, totalClaims: total, totalUsers: userCount || 0, totalAmount, pendingClaims: pending, pendingManagerClaims: pendingManager, pendingAdminClaims: pendingAdmin, pendingFinalClaims: pendingFinal, pendingAccountsClaims: pendingAccounts, accountsProcessingClaims: accountsProcessing, paidClaims: paid };
   } else {
@@ -2081,7 +2105,27 @@ export async function getClaimsHistory(userEmail: string, userRole: string, filt
   }
 
   const role = userRole.toLowerCase();
-  let query = supabase.from('claims').select('*, expense_items(*)');
+  const isDepartmentScopedAdmin = role === 'admin' || role === 'super admin';
+  let departmentId: string | null = null;
+
+  if (isDepartmentScopedAdmin) {
+    const { data: account, error: accountError } = await supabase
+      .from('users')
+      .select('department_id')
+      .eq('email', userEmail)
+      .maybeSingle();
+    if (accountError) throw accountError;
+    departmentId = account?.department_id || null;
+    if (!departmentId) throw new Error('This admin account is not assigned to a department. Ask a Master Admin to assign one.');
+  }
+
+  // History needs a small display projection; fetching every claim and expense
+  // column makes department history requests time out on the live dataset.
+  let query = supabase.from('claims').select(
+    'claim_id,claim_number,created_at,submitted_by,user_email,site_name,work_id,work_name,customer_name,grand_total,verified_amount,total_with_bill,total_without_bill,status,manager_email,rejection_reason,payment_voucher_code,payment_voucher_generated_at,drive_file_ids,expense_items(category,project_code,customer_name,expense_date,description,amount_with_bill,amount_without_bill,attachment_ids)'
+  );
+
+  if (departmentId) query = query.eq('department_id', departmentId);
 
   if (canViewAllFinanceData(role)) {
     if (filters?.userEmail) query = query.eq('user_email', filters.userEmail);
@@ -2100,6 +2144,7 @@ export async function getClaimsHistory(userEmail: string, userRole: string, filt
 
   query = query.order('created_at', { ascending: false });
   const result = await query;
+  if (result.error) throw result.error;
   return (result.data || []).map((c: any) => {
     const rawExpenses = (c.expense_items || []).map((e: any) => ({
       category: e.category,
@@ -3280,16 +3325,11 @@ export async function getDashboardChartData(userEmail: string, userRole: string)
   }
 
   const role = userRole.toLowerCase();
-  let claimsQuery = supabase.from('claims').select('*');
-  
-  if (role === 'user') {
-    claimsQuery = claimsQuery.eq('user_email', userEmail);
-  } else if (role === 'manager') {
-    claimsQuery = claimsQuery.or(`user_email.eq.${userEmail},manager_email.eq.${userEmail}`);
-  }
-
-  const { data: claims } = await claimsQuery;
-  if (!claims) return { monthly: [], byCategory: [], byStatus: [] };
+  const claims = await getScopedDashboardClaims(
+    userEmail,
+    role,
+    'claim_id,created_at,total_with_bill,total_without_bill,status'
+  );
   if (claims.length === 0) return { monthly: [], byCategory: [], byStatus: [] };
 
   // Monthly trend: show only months that actually have claims, capped to the latest 6.
@@ -3319,10 +3359,11 @@ export async function getDashboardChartData(userEmail: string, userRole: string)
 
   // By category from the same claim scope used by the dashboard.
   const claimIds = (claims as any[]).map((claim) => claim.claim_id).filter(Boolean);
-  const { data: expenses } = await supabase
+  const { data: expenses, error: expensesError } = await supabase
     .from('expense_items')
     .select('category, amount_with_bill, amount_without_bill')
     .in('claim_id', claimIds);
+  if (expensesError) throw expensesError;
   const catMap: Record<string, number> = {};
   for (const e of (expenses || []) as any[]) {
     const cat = e.category || 'Other';

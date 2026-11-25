@@ -474,7 +474,7 @@ export default function DashboardView() {
       }
     } catch (error) {
       console.error(error);
-      setError('Dashboard data could not be loaded. Please refresh and try again.');
+      setError(error instanceof Error ? error.message : 'Dashboard data could not be loaded. Please refresh and try again.');
     } finally {
       setLoading(false);
     }

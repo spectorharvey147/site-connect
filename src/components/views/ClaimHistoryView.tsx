@@ -247,6 +247,7 @@ export default function ClaimHistoryView() {
   const navigate = useNavigate();
   const [claims, setClaims] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState('');
   const [selectedClaim, setSelectedClaim] = useState<any>(null);
   const [filters, setFilters] = useState({ userEmail: '', startDate: '', endDate: '' });
   const [users, setUsers] = useState<any[]>([]);
@@ -303,6 +304,7 @@ export default function ClaimHistoryView() {
   const loadHistory = async (activeFilters = filters) => {
     if (!user) return;
     setLoading(true);
+    setLoadError('');
     try {
       const data = await getClaimsHistory(user.email, user.role, activeFilters.userEmail || activeFilters.startDate || activeFilters.endDate ? activeFilters : undefined);
       setClaims(data);
@@ -310,8 +312,11 @@ export default function ClaimHistoryView() {
       setPage(1);
     } catch (e) {
       console.error(e);
+      setClaims([]);
+      setLoadError(e instanceof Error ? e.message : 'Unable to load claim history. Please try again.');
+    } finally {
+      setLoading(false);
     }
-    setLoading(false);
   };
 
   useEffect(() => { loadHistory(); }, [user]);
@@ -472,6 +477,15 @@ export default function ClaimHistoryView() {
             </Button>
           </div>
         </div>
+
+        {loadError && (
+          <div role="alert" className="m-3 rounded-md border border-destructive/30 bg-destructive/5 p-3 text-sm text-destructive sm:m-4">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <span>Claim history could not be loaded: {loadError}</span>
+              <Button variant="outline" size="sm" onClick={() => void loadHistory()}>Try again</Button>
+            </div>
+          </div>
+        )}
 
         <div className="grid grid-cols-1 gap-2 border-b border-border bg-muted/20 p-3 sm:grid-cols-2 lg:grid-cols-[minmax(240px,1fr)_180px_200px_180px_auto] sm:p-4">
           <div className="relative sm:col-span-2 lg:col-span-1">
