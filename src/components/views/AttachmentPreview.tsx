@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { Button } from '@/components/ui/button';
-import { ResponsiveOverlay } from '@/components/ui/responsive-overlay';
+import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Image, FileText, Download, ExternalLink, X } from 'lucide-react';
 import { supabase } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
@@ -9,7 +9,6 @@ interface AttachmentPreviewProps {
   fileIds: string[];
   claimId: string;
   compact?: boolean;
-  inlinePreview?: boolean;
   onRemove?: (fileId: string) => void;
 }
 
@@ -34,7 +33,7 @@ function getFileName(fileId: string) {
   return `${timestampAndIndex[1]}-${timestampAndIndex[2]}${extension ? `.${extension}` : ''}`;
 }
 
-export default function AttachmentPreview({ fileIds, compact = false, inlinePreview = false, onRemove }: AttachmentPreviewProps) {
+export default function AttachmentPreview({ fileIds, compact = false, onRemove }: AttachmentPreviewProps) {
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [previewFileId, setPreviewFileId] = useState<string | null>(null);
   const [previewType, setPreviewType] = useState<'image' | 'pdf' | 'other'>('other');
@@ -163,50 +162,36 @@ export default function AttachmentPreview({ fileIds, compact = false, inlinePrev
         })}
       </div>
 
-      {inlinePreview && previewUrl && (
-        <section className="mt-4 overflow-hidden rounded-lg border border-primary/30 bg-background" aria-label={`Preview of ${getFileName(previewFileId || '')}`}>
-          <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border bg-muted/30 p-2">
-            <p className="min-w-0 flex-1 truncate text-sm font-medium" title={getFileName(previewFileId || '')}>{getFileName(previewFileId || '')}</p>
-            <div className="flex flex-wrap gap-2">
-              <Button type="button" variant="outline" size="sm" onClick={() => previewFileId && void downloadFile(previewFileId)}><Download className="mr-1 h-4 w-4" />Download</Button>
-              <Button type="button" variant="outline" size="sm" onClick={closePreview}>Close preview</Button>
-            </div>
-          </div>
-          <div className="flex max-h-[75vh] min-h-48 items-center justify-center overflow-auto bg-muted/10 p-2 sm:p-4">
-            {previewType === 'image' && <img src={previewUrl} alt={getFileName(previewFileId || '')} className="max-h-[70vh] max-w-full rounded object-contain" />}
-            {previewType === 'pdf' && <iframe src={previewUrl} className="h-[70vh] w-full rounded border bg-white" title={`Preview of ${getFileName(previewFileId || '')}`} />}
-            {previewType === 'other' && <div className="p-8 text-center"><FileText className="mx-auto mb-4 h-16 w-16 text-muted-foreground" /><p className="text-muted-foreground">Preview not available for this file type.</p><Button type="button" variant="outline" className="mt-4" onClick={() => previewFileId && void downloadFile(previewFileId)}><Download className="mr-1 h-4 w-4" />Download file</Button></div>}
-          </div>
-        </section>
-      )}
-
-      {!inlinePreview && <ResponsiveOverlay
+      <Dialog
         open={!!previewUrl}
         onOpenChange={(open) => {
           if (!open) closePreview();
         }}
-        title="Attachment Preview"
-        desktopClassName="max-w-6xl"
-        mobileClassName="max-h-[94svh]"
-        bodyClassName="overflow-auto max-h-[70vh] flex items-center justify-center"
-        footer={previewUrl ? footer : undefined}
       >
-        {previewType === 'image' && previewUrl && (
-          <img src={previewUrl} alt="Preview" className="max-h-[65vh] max-w-full rounded object-contain" />
-        )}
-        {previewType === 'pdf' && previewUrl && (
-          <iframe src={previewUrl} className="h-[65vh] w-full rounded border" title="PDF Preview" />
-        )}
-        {previewType === 'other' && (
-          <div className="p-8 text-center">
-            <FileText className="mx-auto mb-4 h-16 w-16 text-muted-foreground" />
-            <p className="text-muted-foreground">Preview not available for this file type.</p>
-            <Button variant="outline" className="mt-4" onClick={() => previewFileId && void downloadFile(previewFileId)}>
-              <Download className="mr-1 h-4 w-4" /> Download File
-            </Button>
+        <DialogContent className="max-h-[92svh] max-w-6xl overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Attachment Preview</DialogTitle>
+          </DialogHeader>
+          <div className="flex max-h-[70vh] items-center justify-center overflow-auto">
+            {previewType === 'image' && previewUrl && (
+              <img src={previewUrl} alt={getFileName(previewFileId || '')} className="max-h-[65vh] max-w-full rounded object-contain" />
+            )}
+            {previewType === 'pdf' && previewUrl && (
+              <iframe src={previewUrl} className="h-[65vh] w-full rounded border" title={`Preview of ${getFileName(previewFileId || '')}`} />
+            )}
+            {previewType === 'other' && (
+              <div className="p-8 text-center">
+                <FileText className="mx-auto mb-4 h-16 w-16 text-muted-foreground" />
+                <p className="text-muted-foreground">Preview not available for this file type.</p>
+                <Button variant="outline" className="mt-4" onClick={() => previewFileId && void downloadFile(previewFileId)}>
+                  <Download className="mr-1 h-4 w-4" /> Download File
+                </Button>
+              </div>
+            )}
           </div>
-        )}
-      </ResponsiveOverlay>}
+          {previewUrl && <DialogFooter>{footer}</DialogFooter>}
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

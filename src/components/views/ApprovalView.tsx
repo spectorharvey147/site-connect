@@ -554,7 +554,7 @@ export default function ApprovalView({ type }: ApprovalViewProps) {
         </div>
 
         <ClaimDetailsOverview claim={viewClaim} />
-        <ClaimAttachmentsSection claim={viewClaim} inlinePreview />
+        <ClaimAttachmentsSection claim={viewClaim} />
         <ClaimApprovalTimeline claim={viewClaim} />
         <section className="rounded-xl border border-border bg-card p-4 shadow-sm sm:p-5">
           <h3 className="mb-4 text-base font-semibold">Expense Details</h3>
@@ -656,7 +656,7 @@ export default function ApprovalView({ type }: ApprovalViewProps) {
                 </section>
               );
             })()}
-            <ClaimAttachmentsSection claim={approveDetails} inlinePreview onRemove={type === 'admin' ? (fileId) => {
+            <ClaimAttachmentsSection claim={approveDetails} onRemove={type === 'admin' ? (fileId) => {
               if (!window.confirm('Remove this attachment from the claim? If no other claim uses it, the stored file will be permanently deleted.')) return;
               void (async () => {
                 setProcessing(true);
@@ -965,7 +965,7 @@ export default function ApprovalView({ type }: ApprovalViewProps) {
               {approveDetails.generalFileIds && approveDetails.generalFileIds.length > 0 && (
                 <div className="mt-3">
                   <h4 className="mb-2 flex items-center gap-2 text-sm font-semibold"><Paperclip className="h-4 w-4" /> General Attachments ({approveDetails.generalFileIds.length})</h4>
-                  <AttachmentPreview fileIds={approveDetails.generalFileIds} claimId={approveDetails.claimId} inlinePreview />
+                  <AttachmentPreview fileIds={approveDetails.generalFileIds} claimId={approveDetails.claimId} />
                 </div>
               )}
             </div>
@@ -1053,7 +1053,7 @@ export default function ApprovalView({ type }: ApprovalViewProps) {
                 <h4 className="mb-3 flex items-center gap-2 text-sm font-semibold">
                   <Paperclip className="h-4 w-4" /> General Attachments ({viewClaim.generalFileIds.length})
                 </h4>
-                <AttachmentPreview fileIds={viewClaim.generalFileIds} claimId={viewClaim.claimId} inlinePreview />
+                <AttachmentPreview fileIds={viewClaim.generalFileIds} claimId={viewClaim.claimId} />
               </div>
             )}
 

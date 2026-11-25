@@ -26,11 +26,11 @@ const navGroups = [
     { id: 'final-approval', icon: Crown, iconClassName: 'text-violet-200', label: 'Final Approval', roles: ['Super Admin'] },
   ] },
   { label: 'Accounts', items: [
-    { id: 'accounts-processing', icon: Receipt, iconClassName: 'text-emerald-200', label: 'Accounts Processing', roles: ['Accounts'] },
-    { id: 'accounts-sap-entry', icon: FileSpreadsheet, label: 'Accounts SAP Entry', roles: ['Accounts'] },
-    { id: 'accounting-setup', icon: FileSpreadsheet, label: 'GL & Location Setup', roles: ['Accounts', 'Admin', 'Master Admin'] },
+    { id: 'accounts-processing', icon: Receipt, iconClassName: 'text-emerald-200', label: 'Accounts Processing', roles: ['Accounts', 'Super Admin'] },
+    { id: 'accounts-sap-entry', icon: FileSpreadsheet, label: 'Accounts SAP Entry', roles: ['Accounts', 'Super Admin'] },
+    { id: 'accounting-setup', icon: FileSpreadsheet, label: 'GL & Location Setup', roles: ['Accounts', 'Admin', 'Super Admin'] },
     { id: 'work-allocation', icon: Users, label: 'Work Allocation', roles: ['Admin', 'Super Admin', 'Master Admin'] },
-    { id: 'voucher', icon: Banknote, label: 'Payment Voucher', roles: ['Accounts'] },
+    { id: 'voucher', icon: Banknote, label: 'Payment Voucher', roles: ['Accounts', 'Admin', 'Super Admin'] },
   ] },
   { label: 'Administration', items: [
     { id: 'user-allocation', icon: UserRoundCog, label: 'User Allocation', roles: ['Admin', 'Super Admin', 'Master Admin'] },
@@ -38,7 +38,7 @@ const navGroups = [
     { id: 'reports', icon: FileBarChart, label: 'Reports', roles: ['Admin', 'Super Admin', 'Master Admin'] },
     { id: 'users', icon: Users, label: 'User Management', roles: ['Admin', 'Super Admin', 'Master Admin'] },
     { id: 'audit', icon: Shield, label: 'Audit Trail', roles: ['Admin', 'Super Admin', 'Master Admin'] },
-    { id: 'settings', icon: Settings, label: 'Settings', roles: ['Admin', 'Master Admin'] },
+    { id: 'settings', icon: Settings, label: 'Settings', roles: ['Admin', 'Super Admin'] },
   ] },
   { label: 'Account', items: [
     { id: 'profile', icon: UserCircle, label: 'My Profile', roles: ['all'] },
