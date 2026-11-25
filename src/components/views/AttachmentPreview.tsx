@@ -1,7 +1,7 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef, type PointerEvent, type WheelEvent } from 'react';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
-import { Image, FileText, Download, ExternalLink, X } from 'lucide-react';
+import { Image, FileText, Download, ExternalLink, X, ZoomIn, ZoomOut, RotateCcw } from 'lucide-react';
 import { supabase } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
 
@@ -37,6 +37,15 @@ export default function AttachmentPreview({ fileIds, compact = false, onRemove }
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [previewFileId, setPreviewFileId] = useState<string | null>(null);
   const [previewType, setPreviewType] = useState<'image' | 'pdf' | 'other'>('other');
+  const [previewLoading, setPreviewLoading] = useState(false);
+  const [previewError, setPreviewError] = useState('');
+  const [imageZoom, setImageZoom] = useState(1);
+  const [imageOffset, setImageOffset] = useState({ x: 0, y: 0 });
+  const [imageDragging, setImageDragging] = useState(false);
+  const [pdfZoom, setPdfZoom] = useState(100);
+  const previewObjectUrl = useRef<string | null>(null);
+  const previewRequestId = useRef(0);
+  const lastPointerPosition = useRef<{ x: number; y: number } | null>(null);
 
   const [signedUrls, setSignedUrls] = useState<Record<string,string>>({});
   const fileKey = JSON.stringify(fileIds || []);
@@ -56,18 +65,99 @@ export default function AttachmentPreview({ fileIds, compact = false, onRemove }
     return <p className="text-sm italic text-muted-foreground">No attachments</p>;
   }
 
-  const openPreview = (fileId: string) => {
+  const openPreview = async (fileId: string) => {
     const url = signedUrls[fileId] || '';
     if (!url) { toast.error('Attachment is still loading or access was denied'); return; }
-    setPreviewType(isImage(fileId) ? 'image' : isPdf(fileId) ? 'pdf' : 'other');
+    const requestId = ++previewRequestId.current;
+    if (previewObjectUrl.current) URL.revokeObjectURL(previewObjectUrl.current);
+    previewObjectUrl.current = null;
+    const type = isImage(fileId) ? 'image' : isPdf(fileId) ? 'pdf' : 'other';
+    setPreviewType(type);
     setPreviewFileId(fileId);
-    setPreviewUrl(url);
+    setPreviewUrl(type === 'pdf' ? null : url);
+    setPreviewError('');
+    setImageZoom(1);
+    setImageOffset({ x: 0, y: 0 });
+    setPdfZoom(100);
+
+    if (type !== 'pdf') return;
+
+    setPreviewLoading(true);
+    try {
+      // Load the private PDF through Supabase and embed a local blob URL. This
+      // avoids frame restrictions on the signed storage URL and keeps the PDF
+      // viewer's built-in scrolling and zoom controls available.
+      const { data, error } = await supabase.storage.from('claim-attachments').download(fileId);
+      if (error || !data) throw error || new Error('PDF download failed');
+      if (requestId !== previewRequestId.current) return;
+      const objectUrl = URL.createObjectURL(data);
+      previewObjectUrl.current = objectUrl;
+      setPreviewUrl(objectUrl);
+    } catch (error) {
+      if (requestId !== previewRequestId.current) return;
+      console.error('PDF preview failed:', error);
+      setPreviewError('Could not load the PDF preview. You can still download the file.');
+    } finally {
+      if (requestId === previewRequestId.current) setPreviewLoading(false);
+    }
   };
 
   const closePreview = () => {
+    previewRequestId.current += 1;
+    if (previewObjectUrl.current) URL.revokeObjectURL(previewObjectUrl.current);
+    previewObjectUrl.current = null;
+    setPreviewLoading(false);
+    setPreviewError('');
     setPreviewUrl(null);
     setPreviewFileId(null);
+    setImageZoom(1);
+    setImageOffset({ x: 0, y: 0 });
+    setImageDragging(false);
+    lastPointerPosition.current = null;
   };
+
+  useEffect(() => () => {
+    previewRequestId.current += 1;
+    if (previewObjectUrl.current) URL.revokeObjectURL(previewObjectUrl.current);
+  }, []);
+
+  const changeImageZoom = (amount: number) => {
+    const nextZoom = Math.min(5, Math.max(0.5, imageZoom + amount));
+    setImageZoom(nextZoom);
+    if (nextZoom <= 1) setImageOffset({ x: 0, y: 0 });
+  };
+
+  const handleImageWheel = (event: WheelEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    changeImageZoom(event.deltaY < 0 ? 0.15 : -0.15);
+  };
+
+  const handleImagePointerDown = (event: PointerEvent<HTMLDivElement>) => {
+    if (imageZoom <= 1) return;
+    event.currentTarget.setPointerCapture(event.pointerId);
+    lastPointerPosition.current = { x: event.clientX, y: event.clientY };
+    setImageDragging(true);
+  };
+
+  const handleImagePointerMove = (event: PointerEvent<HTMLDivElement>) => {
+    const last = lastPointerPosition.current;
+    if (!imageDragging || !last) return;
+    setImageOffset((offset) => ({ x: offset.x + event.clientX - last.x, y: offset.y + event.clientY - last.y }));
+    lastPointerPosition.current = { x: event.clientX, y: event.clientY };
+  };
+
+  const handleImagePointerUp = (event: PointerEvent<HTMLDivElement>) => {
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
+    lastPointerPosition.current = null;
+    setImageDragging(false);
+  };
+
+  const resetImageView = () => {
+    setImageZoom(1);
+    setImageOffset({ x: 0, y: 0 });
+  };
+
+  const changePdfZoom = (amount: number) => setPdfZoom((zoom) => Math.min(300, Math.max(50, zoom + amount)));
 
   const downloadFile = async (fileId: string) => {
     try {
@@ -81,7 +171,7 @@ export default function AttachmentPreview({ fileIds, compact = false, onRemove }
       document.body.appendChild(link);
       link.click();
       document.body.removeChild(link);
-      URL.revokeObjectURL(objectUrl);
+      window.setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
     } catch (error) {
       console.error('Attachment download failed:', error);
       toast.error('Attachment download failed');
@@ -120,7 +210,7 @@ export default function AttachmentPreview({ fileIds, compact = false, onRemove }
               key={fileId}
               className="group relative overflow-hidden rounded-lg border border-border transition-all hover:ring-2 hover:ring-primary/50"
             >
-              <div className="cursor-pointer" onClick={() => openPreview(fileId)}>
+              <div className="cursor-pointer" onClick={() => void openPreview(fileId)}>
                 {imageFile && url ? (
                   <div className="aspect-square overflow-hidden bg-muted/30">
                     <img src={url} alt={name} className="h-full w-full object-cover transition-transform group-hover:scale-105" loading="lazy" />
@@ -163,7 +253,7 @@ export default function AttachmentPreview({ fileIds, compact = false, onRemove }
       </div>
 
       <Dialog
-        open={!!previewUrl}
+        open={!!previewFileId}
         onOpenChange={(open) => {
           if (!open) closePreview();
         }}
@@ -172,12 +262,55 @@ export default function AttachmentPreview({ fileIds, compact = false, onRemove }
           <DialogHeader>
             <DialogTitle>Attachment Preview</DialogTitle>
           </DialogHeader>
-          <div className="flex max-h-[70vh] items-center justify-center overflow-auto">
+          <div className="flex max-h-[72vh] min-h-48 flex-col items-center gap-3 overflow-auto">
             {previewType === 'image' && previewUrl && (
-              <img src={previewUrl} alt={getFileName(previewFileId || '')} className="max-h-[65vh] max-w-full rounded object-contain" />
+              <>
+                <div className="flex w-full items-center justify-end gap-2">
+                  <span className="mr-auto text-xs text-muted-foreground">Scroll to zoom · Drag to pan when zoomed</span>
+                  <Button type="button" variant="outline" size="icon" aria-label="Zoom out" onClick={() => changeImageZoom(-0.25)} disabled={imageZoom <= 0.5}><ZoomOut className="h-4 w-4" /></Button>
+                  <span className="min-w-12 text-center text-xs tabular-nums">{Math.round(imageZoom * 100)}%</span>
+                  <Button type="button" variant="outline" size="icon" aria-label="Zoom in" onClick={() => changeImageZoom(0.25)} disabled={imageZoom >= 5}><ZoomIn className="h-4 w-4" /></Button>
+                  <Button type="button" variant="outline" size="icon" aria-label="Reset image zoom" onClick={resetImageView}><RotateCcw className="h-4 w-4" /></Button>
+                </div>
+                <div
+                  className={`flex min-h-40 w-full flex-1 items-center justify-center overflow-hidden rounded bg-muted/20 ${imageZoom > 1 ? (imageDragging ? 'cursor-grabbing' : 'cursor-grab') : 'cursor-zoom-in'}`}
+                  onWheel={handleImageWheel}
+                  onPointerDown={handleImagePointerDown}
+                  onPointerMove={handleImagePointerMove}
+                  onPointerUp={handleImagePointerUp}
+                  onPointerCancel={handleImagePointerUp}
+                  style={{ touchAction: 'none' }}
+                >
+                  <img
+                    src={previewUrl}
+                    alt={getFileName(previewFileId || '')}
+                    draggable={false}
+                    className="max-h-[62vh] max-w-full select-none rounded object-contain"
+                    style={{ transform: `translate(${imageOffset.x}px, ${imageOffset.y}px) scale(${imageZoom})`, transformOrigin: 'center', transition: imageDragging ? 'none' : 'transform 120ms ease-out' }}
+                  />
+                </div>
+              </>
             )}
-            {previewType === 'pdf' && previewUrl && (
-              <iframe src={previewUrl} className="h-[65vh] w-full rounded border" title={`Preview of ${getFileName(previewFileId || '')}`} />
+            {previewType === 'pdf' && previewLoading && (
+              <div className="p-8 text-sm text-muted-foreground" role="status">Loading PDF preview…</div>
+            )}
+            {previewType === 'pdf' && previewError && (
+              <div className="p-8 text-center" role="alert">
+                <p className="text-sm text-destructive">{previewError}</p>
+                {previewFileId && <Button type="button" variant="outline" className="mt-3" onClick={() => void downloadFile(previewFileId)}><Download className="mr-1 h-4 w-4" />Download PDF</Button>}
+              </div>
+            )}
+            {previewType === 'pdf' && previewUrl && !previewLoading && (
+              <div className="flex min-h-[65vh] w-full flex-col gap-2">
+                <div className="flex items-center justify-end gap-2">
+                  <span className="mr-auto text-xs text-muted-foreground">Scroll inside the document to move through pages</span>
+                  <Button type="button" variant="outline" size="icon" aria-label="Zoom out PDF" onClick={() => changePdfZoom(-25)} disabled={pdfZoom <= 50}><ZoomOut className="h-4 w-4" /></Button>
+                  <span className="min-w-12 text-center text-xs tabular-nums">{pdfZoom}%</span>
+                  <Button type="button" variant="outline" size="icon" aria-label="Zoom in PDF" onClick={() => changePdfZoom(25)} disabled={pdfZoom >= 300}><ZoomIn className="h-4 w-4" /></Button>
+                  <Button type="button" variant="outline" size="icon" aria-label="Reset PDF zoom" onClick={() => setPdfZoom(100)}><RotateCcw className="h-4 w-4" /></Button>
+                </div>
+                <iframe src={`${previewUrl}#toolbar=1&navpanes=1&scrollbar=1&zoom=${pdfZoom}`} className="min-h-[60vh] w-full flex-1 rounded border bg-white" title={`Preview of ${getFileName(previewFileId || '')}`} />
+              </div>
             )}
             {previewType === 'other' && (
               <div className="p-8 text-center">
@@ -189,7 +322,7 @@ export default function AttachmentPreview({ fileIds, compact = false, onRemove }
               </div>
             )}
           </div>
-          {previewUrl && <DialogFooter>{footer}</DialogFooter>}
+          {previewUrl && !previewLoading && <DialogFooter>{footer}</DialogFooter>}
         </DialogContent>
       </Dialog>
     </div>
